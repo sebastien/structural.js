@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor</title>
+    <style>
+      .focus {
+        outline: 1px solid #0000FF;
+      }
+      .placeholder {
+          background-color: #F0F0F0;
+          padding: 0.25em;
+      }
+      .mention {
+        border-radius: 1.25em;
+          padding: 0.25em 0.75em;
+        background-color: #E0E0E0;
+      }
+      			.atom {
+      				border-radius: 0.25em;
+      				padding: 0.125em 0.5em;
+      				background-color: #D0D0D0;
+      			}
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <h1>Structural Model</h1>
+    <div id="editor">
+      <p>Structural support the following types:</p>
+      <dl>
+        <div>
+          <dt><code>text</code></dt>
+          <dd>Plain text content, you can edit it as you want.</dd>
+        </div>
+        <div>
+          <dt><code>skip</code></dt>
+          <dd>Plain text can contain <code class="skip">skip</code> elements
+            that are not editable nor selectable.</dd>
+        </div>
+        <div>
+          <dt><code class="atom">atom</code></dt>
+          <dd>Atomic element <code class="atom">atom</code> that is not editable but selectable.
+          </div>
+          <div>
+            <dt><code class="skip">container</code></dt>
+            <dd>Container elements, like  a <code class="container placeholder">a placeholder</code> are selectable and have text inside that can be edited. The cursor entering/exiting will first select the placeholder before proceeding to the next text.</dd>
+          </div>
+          <div>
+            <dt><code>templates</code></dt>
+            <dd>Templates are like containers however their content is skipped
+              unless there's a slot defined. For instance <code class="template placeholder">template:<code class="slot">slot</code></code>.</dd>
+          </div>
+        </dl>
+      </div>
+      <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
+      <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+      <script type="module">
+        import { Editor } from "structural/editor";
+        const editor = new Editor(document.getElementById("editor"));
+        const cursor = editor.input.cursor;
+        const nodeLabel = node => {
+          if (!node) {
+            return "null";
+          }
+          if (node.nodeType === Node.TEXT_NODE) {
+            const preview = (node.data ?? "").replace(/\s/g, " ").slice(0, 12);
+            return `#text(\"${preview}\")`;
+          }
+          const tag = node.nodeName.toLowerCase();
+          const klass = node.className ? `.${String(node.className).trim().replace(/\s+/g, ".")}` : "";
+          return `${tag}${klass}`;
+        };
+        editor.root.addEventListener("CursorMove", event => {
+          const { current } = event.detail;
+          console.log("CursorMove", {
+            offset: current.offset,
+            requestedOffset: current.requestedOffset,
+            delta: current.delta,
+            kind: current.kind,
+            anchor: nodeLabel(current.anchor),
+            boundary: {
+              left: nodeLabel(current.boundary?.leftNode),
+              right: nodeLabel(current.boundary?.rightNode),
+            },
+            char: current.char,
+            remap: current.remap,
+            caretSource: current.caretSource,
+          });
+          event.detail.previous.anchor.classList.remove("focus");
+          event.detail.current.anchor.classList.add("focus");
+          event.detail.current.anchor.classList.add("focus");
+        })
+      </script>
+    </body>
+  </html>

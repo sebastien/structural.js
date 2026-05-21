@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Annotations</title>
+    <style>
+      .focus {
+           outline: 1px solid #0000FF;
+         }
+
+         main {
+           font-family: system-ui, sans-serif;
+           padding: 2rem;
+         }
+         article {
+           max-width: 55ch;
+         }
+         .comment {
+           background-color: #fffae6;
+           user-select: none;
+           &:before {
+             content: "💬";
+             margin-right: 0.25rem;
+           }
+          &.collapsed {
+             width: 2ch;
+               display: inline-block;
+             text-overflow: ellipsis;
+               overflow: hidden;
+                 height: 1lh;
+           }
+         }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <main class="page">
+      <h1 class="title">Annotations</h1>
+      <p class="subtitle">DOM-backed contentEditable editor with mentions and hashtags stored inline in HTML.</p>
+      <article id="editor">
+        <section class="diary-entry">
+          <h2>4 May 2026 - Initial Client Meeting</h2>
+          <p>
+            Met with Michael and Sarah to discuss refinancing their existing home loan
+            and releasing equity for planned renovations. The clients advised that their
+            current fixed rate expires in July 2026 and they would like to explore
+            options before the rollover date.
+            <span class="comment suggestion atom">
+              Good context, but consider noting whether the clients initiated the review
+              or whether this was adviser-led.
+            </span>
+          </p>
+          <p>
+            The clients estimate the renovation budget to be approximately $85,000,
+            covering kitchen upgrades, bathroom improvements, and minor landscaping.
+            <span class="comment missing-info atom">
+              Ask for a builder quote or itemised budget. An estimate alone may not be
+              sufficient for lender assessment.
+            </span>
+          </p>
+          <p>
+            Discussed their preference to maintain repayments close to their current
+            level, while avoiding excessive extension of the loan term.
+            <span class="comment atom">
+              This is useful evidence of client objectives. Consider recording the
+              current repayment amount and preferred maximum repayment.
+            </span>
+          </p>
+        </section>
+        <section class="diary-entry">
+          <h2>7 May 2026 - Fact Find Review</h2>
+          <p>
+            Reviewed the completed fact find. Michael is employed full-time as an
+            operations manager earning $118,000 per annum. Sarah works part-time as a
+            registered nurse earning approximately $54,000 per annum.
+          </p>
+          <p>
+            The clients have two dependent children, aged 8 and 11. Regular household
+            expenses appear broadly consistent with declared income and bank statement
+            activity.
+            <span class="comment missing-info atom">
+              “Broadly consistent” is vague. Include specific observations from the bank
+              statements or expense analysis.
+            </span>
+          </p>
+          <p>
+            Existing liabilities include the current home loan, one credit card with a
+            $12,000 limit, and a vehicle loan with an outstanding balance of $18,400.
+            The clients stated that the credit card is generally paid in full each month.
+            <span class="comment risk atom">
+              Verify this against statements. A lender may assess the full card limit,
+              not the monthly balance.
+            </span>
+          </p>
+        </section>
+        <section class="diary-entry">
+          <h2>10 May 2026 - Preliminary Lending Options</h2>
+          <p>
+            Presented three potential lender options based on indicative servicing,
+            interest rates, fees, and suitability for equity release. Discussed the
+            difference between topping up the current facility and refinancing to a new
+            lender.
+            <span class="comment atom">
+              Good. Add whether any lender options were excluded and why.
+            </span>
+          </p>
+          <ul>
+            <li>
+              Option A: Refinance existing loan and release $85,000 for renovations.
+              <span class="comment suggestion atom">
+                Add total proposed lending amount and estimated LVR.
+              </span>
+            </li>
+            <li>
+              Option B: Retain current lender and apply for a loan top-up.
+            </li>
+            <li>
+              Option C: Split facility with fixed and floating portions to provide
+              repayment certainty and flexibility.
+              <span class="comment atom">
+                Explain why the split structure may suit the clients’ objectives.
+              </span>
+            </li>
+          </ul>
+          <p>
+            The clients indicated a preference for Option C, subject to confirmation of
+            final rates and approval conditions.
+          </p>
+        </section>
+        <section class="diary-entry">
+          <h2>13 May 2026 - Risk Discussion</h2>
+          <p>
+            Discussed risks associated with increasing total debt, including higher
+            repayments, potential cost overruns on renovations, and the possibility that
+            interest rates may increase when the fixed portion expires.
+            <span class="comment suggestion atom">
+              Strong risk disclosure. Consider adding the clients’ response and whether
+              they accepted these risks.
+            </span>
+          </p>
+          <p>
+            Sarah noted that they have approximately $22,000 in emergency savings and
+            intend to retain this buffer rather than contribute it to renovation costs.
+            <span class="comment atom">
+              This supports responsible lending rationale. Mention where the savings are
+              held and whether they are accessible.
+            </span>
+          </p>
+          <p>
+            Michael advised that his employer has recently completed a restructure but
+            said his role was not affected.
+            <span class="comment risk atom">
+              This may require further clarification. Consider documenting employment
+              stability and obtaining recent payslips or employer confirmation if needed.
+            </span>
+          </p>
+        </section>
+        <section class="diary-entry">
+          <h2>18 May 2026 - Recommendation Confirmed</h2>
+          <p>
+            Recommended proceeding with a refinance to Lender B using a split loan
+            structure: $520,000 fixed for two years and $65,000 floating to provide
+            flexibility during the renovation period.
+            <span class="comment missing-info atom">
+              Explain why Lender B was selected over the alternatives, especially if its
+              rate was not the lowest.
+            </span>
+          </p>
+          <p>
+            The clients confirmed they understood the proposed structure, estimated
+            repayments, lender fees, and the implications of increasing their mortgage
+            balance. They asked to proceed with the application.
+            <span class="comment suggestion atom">
+              Consider recording how understanding was confirmed, for example by email,
+              signed disclosure, or meeting notes.
+            </span>
+          </p>
+          <p>
+            Next steps are to collect updated payslips, the latest mortgage statement,
+            renovation quotes, identification documents, and three months of transaction
+            account statements.
+          </p>
+        </section>
+      </article>
+      <pre id="dump" class="dump"></pre>
+    </main>
+    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
+    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+    <script type="module">
+      import { Editor } from "structural/editor";
+      const editor = new Editor(document.getElementById("editor"));
+      const cursor = editor.input.cursor;
+      editor.root.addEventListener("CursorMove", event => {
+        const { current } = event.detail;
+        console.log("CursorMove", {
+          offset: current.offset,
+          delta: current.delta,
+          char: current.char,
+        });
+        event.detail.previous.anchor.classList.remove("focus");
+        event.detail.current.anchor.classList.add("focus");
+        event.detail.current.anchor.classList.add("focus");
+      })
+    </script>
+  </body>
+</html>

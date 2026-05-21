@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor</title>
+    <style>
+      .focus {
+        outline: 1px solid #0000FF;
+      }
+      .mention {
+        border-radius: 1.25em;
+          padding: 0.25em 0.75em;
+        background-color: #E0E0E0;
+      }
+      			.atom {
+      				border-radius: 0.25em;
+      				padding: 0.125em 0.5em;
+      				background-color: #D0D0D0;
+      			}
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="editor">
+      <p>Task for <span class="C mention"><span class="skipped">@</span>alice</span></p>
+      <p>Buy some milk and <span class="atom">{ItemName}</span></p>
+    </div>
+    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
+    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+    <script type="module">
+      import { Editor } from "structural/editor";
+      const editor = new Editor(document.getElementById("editor"));
+      const cursor = editor.input.cursor;
+      const nodeLabel = node => {
+        if (!node) {
+          return "null";
+        }
+        if (node.nodeType === Node.TEXT_NODE) {
+          const preview = (node.data ?? "").replace(/\s/g, " ").slice(0, 12);
+          return `#text(\"${preview}\")`;
+        }
+        const tag = node.nodeName.toLowerCase();
+        const klass = node.className ? `.${String(node.className).trim().replace(/\s+/g, ".")}` : "";
+        return `${tag}${klass}`;
+      };
+      editor.root.addEventListener("CursorMove", event => {
+        const { current } = event.detail;
+        console.log("CursorMove", {
+          offset: current.offset,
+          requestedOffset: current.requestedOffset,
+          delta: current.delta,
+          kind: current.kind,
+          anchor: nodeLabel(current.anchor),
+          boundary: {
+            left: nodeLabel(current.boundary?.leftNode),
+            right: nodeLabel(current.boundary?.rightNode),
+          },
+          char: current.char,
+          remap: current.remap,
+          caretSource: current.caretSource,
+        });
+        event.detail.previous.anchor.classList.remove("focus");
+        event.detail.current.anchor.classList.add("focus");
+        event.detail.current.anchor.classList.add("focus");
+      })
+    </script>
+  </body>
+</html>

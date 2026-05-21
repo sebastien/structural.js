@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor</title>
+    <style>
+      .focus {
+        outline: 1px solid #0000FF;
+      }
+      ins.placeholder {
+        border-radius: 1.25em;
+        padding: 0.25em 0.75em;
+        background-color: #00bfff10;
+        color: #04789c;
+        font-size: 12px;
+        font-family: monospace;
+        user-select: none;
+        &:before { content:"{ "; }
+        &:after { content:" }"; }
+      }
+      details[data-block] {
+        border-radius: 1.25em;
+        margin-top: 1em;
+        margin-bottom: 1em;
+          border: 10px solid #00bfff20;
+            padding: 10px;
+          summary {
+            margin: -10px;
+            border-radius: 0em;
+            background: #00bfff20;
+            padding: 0.25em 0.75em;
+            color: #04789c;
+            font-size: 12px;
+            font-family: monospace;
+          }
+      }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <h1>Email Template Editor</h1>
+    <main
+    data-template="order-confirmation"
+    data-template-version="1.0"
+    data-editor-root
+    id="editor"
+  >
+      <section data-block="metadata">
+        <p class="container">
+          <span class="skipped">Subject:</span>
+          <span data-field="subject">
+            Order confirmation for
+            <ins class="placeholder atomic">order.number</ins>
+          </span>
+        </p>
+        <p class="container">
+          <span class="skipped">Preview text:</span>
+          <span data-field="preview_text">
+            Thanks
+            <ins class="placeholder atomic">customer.first_name</ins>
+            — your order is confirmed.
+          </span>
+        </p>
+      </section>
+      <header data-block="header">
+        <h1>
+          Thanks for your order,
+          <ins class="placeholder atomic">customer.first_name</ins>!
+        </h1>
+        <p>
+          Order
+          <strong>
+            <ins class="placeholder atomic">order.number</ins>
+          </strong>
+          was placed on
+          <time class="data" data-datetime="order.date_iso">
+            <ins class="placeholder atomic">order.date</ins>
+          </time>.
+        </p>
+      </header>
+      <details open data-block="conditional" data-condition="customer.is_first_order">
+        <summary class="atomic">
+          Conditional block:
+          <code>customer.is_first_order</code>
+        </summary>
+        <section data-block-content>
+          <h2>
+            Welcome to
+            <ins class="placeholder atomic">store.name</ins>
+          </h2>
+          <p>
+            Since this is your first order, we added a
+            <strong>
+              <ins class="placeholder atomic">welcome_offer.discount_percent</ins>%
+            </strong>
+            discount code for your next purchase:
+            <code>
+              <ins class="placeholder atomic">welcome_offer.code</ins>
+            </code>
+          </p>
+        </section>
+      </details>
+      <details open data-block="conditional" data-condition="order.has_digital_items">
+        <summary class="atomic">
+          Conditional block:
+          <code>order.has_digital_items</code>
+        </summary>
+        <section data-block-content>
+          <h2>Your downloads</h2>
+          <p>Digital items are available immediately from your account.</p>
+          <details open data-block="repeat" data-repeat="digital_item in order.digital_items">
+            <summary class="atomic">
+              Repetition block:
+              <code>digital_item in order.digital_items</code>
+            </summary>
+            <article data-repeat-item>
+              <h3>
+                <ins class="placeholder atomic">digital_item.name</ins>
+              </h3>
+              <p>
+                Download:
+                <a class="data" data-href="digital_item.download_url">
+                  <ins class="placeholder atomic">digital_item.download_label</ins>
+                </a>
+              </p>
+              <p>
+                License key:
+                <code>
+                  <ins class="placeholder atomic">digital_item.license_key</ins>
+                </code>
+              </p>
+            </article>
+          </details>
+        </section>
+      </details>
+      <details open data-block="repeat" data-repeat="item in order.items">
+        <summary class="atomic">
+          Repetition block:
+          <code>item in order.items</code>
+        </summary>
+        <article data-repeat-item data-block="order-item">
+          <h2>
+            <ins class="placeholder atomic">item.name</ins>
+          </h2>
+          <p>
+            SKU:
+            <ins class="placeholder atomic">item.sku</ins>
+          </p>
+          <p>
+            Quantity:
+            <ins class="placeholder atomic">item.quantity</ins>
+          </p>
+          <p>
+            Price:
+            <ins class="placeholder atomic">item.price</ins>
+          </p>
+          <details data-block="conditional" data-condition="item.has_variant">
+            <summary class="atomic">
+              Conditional block:
+              <code>item.has_variant</code>
+            </summary>
+            <p data-block-content>
+              Variant:
+              <ins class="placeholder atomic">item.variant</ins>
+            </p>
+          </details>
+          <details data-block="conditional" data-condition="item.is_gift">
+            <summary class="atomic">
+              Conditional block:
+              <code>item.is_gift</code>
+            </summary>
+            <section data-block-content>
+              <p>This item is marked as a gift.</p>
+              <blockquote>
+                <ins class="placeholder atomic">item.gift_message</ins>
+              </blockquote>
+            </section>
+          </details>
+        </article>
+      </details>
+      <details open data-block="conditional" data-condition="order.has_shipping_address">
+        <summary class="atomic">
+          Conditional block:
+          <code>order.has_shipping_address</code>
+        </summary>
+        <section data-block-content data-block="shipping">
+          <h2>Shipping address</h2>
+          <address>
+            <ins class="placeholder atomic">shipping.name</ins><br>
+            <ins class="placeholder atomic">shipping.line1</ins><br>
+            <span data-optional-placeholder atomic="shipping.line2">
+              <ins class="placeholder atomic">shipping.line2</ins><br>
+            </span>
+            <ins class="placeholder atomic">shipping.city</ins>,
+            <ins class="placeholder atomic">shipping.region</ins>
+            <ins class="placeholder atomic">shipping.postal_code</ins><br>
+            <ins class="placeholder atomic">shipping.country</ins>
+          </address>
+          <details data-block="conditional" data-condition="shipping.has_tracking">
+            <summary class="atomic">
+              Conditional block:
+              <code>shipping.has_tracking</code>
+            </summary>
+            <p data-block-content>
+              Tracking number:
+              <a class="data" data-href="shipping.tracking_url">
+                <ins class="placeholder atomic">shipping.tracking_number</ins>
+              </a>
+            </p>
+          </details>
+        </section>
+      </details>
+      <details open data-block="repeat" data-repeat="discount in order.discounts">
+        <summary class="atomic">
+          Repetition block:
+          <code>discount in order.discounts</code>
+        </summary>
+        <p data-repeat-item>
+          Discount:
+          <strong>
+            <ins class="placeholder atomic">discount.label</ins>
+          </strong>
+          —
+          <ins class="placeholder atomic">discount.amount</ins>
+        </p>
+      </details>
+      <section data-block="totals">
+        <h2>Order summary</h2>
+        <dl>
+          <dt>Subtotal</dt>
+          <dd>
+            <ins class="placeholder atomic">order.subtotal</ins>
+          </dd>
+          <dt>Shipping</dt>
+          <dd>
+            <ins class="placeholder atomic">order.shipping_total</ins>
+          </dd>
+          <dt>Tax</dt>
+          <dd>
+            <ins class="placeholder atomic">order.tax_total</ins>
+          </dd>
+          <dt>Total</dt>
+          <dd>
+            <strong>
+              <ins class="placeholder atomic">order.total</ins>
+            </strong>
+          </dd>
+        </dl>
+      </section>
+      <details data-block="conditional" data-condition="customer.has_loyalty_account">
+        <summary class="atomic">
+          Conditional block:
+          <code>customer.has_loyalty_account</code>
+        </summary>
+        <section data-block-content>
+          <h2>Loyalty points</h2>
+          <p>
+            You earned
+            <strong>
+              <ins class="placeholder atomic">loyalty.points_earned</ins>
+            </strong>
+            points with this order.
+          </p>
+          <p>
+            Your new balance is
+            <strong>
+              <ins class="placeholder atomic">loyalty.points_balance</ins>
+            </strong>
+            points.
+          </p>
+        </section>
+      </details>
+      <footer data-block="footer">
+        <p>
+          Need help?
+          <a class="data" data-href="support.url">
+            Contact
+            <ins class="placeholder atomic">support.team_name</ins>
+          </a>.
+        </p>
+        <p>
+          <ins class="placeholder atomic">store.name</ins><br>
+          <ins class="placeholder atomic">store.address</ins>
+        </p>
+        <p>
+          <a class="data" data-href="unsubscribe.url">Unsubscribe</a>
+          or
+          <a class="data" data-href="preferences.url">manage email preferences</a>.
+        </p>
+      </footer>
+    </main>
+    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
+    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+    <script type="module">
+      import { Editor } from "structural/editor";
+      const editor = new Editor(document.getElementById("editor"));
+      const cursor = editor.input.cursor;
+      editor.root.addEventListener("CursorMove", event => {
+        const { current } = event.detail;
+        console.log("CursorMove", {
+          offset: current.offset,
+          requestedOffset: current.requestedOffset,
+          delta: current.delta,
+          kind: current.kind,
+          char: current.char,
+          remap: current.remap,
+          caretSource: current.caretSource,
+        });
+        event.detail.previous.anchor.classList.remove("focus");
+        event.detail.current.anchor.classList.add("focus");
+        event.detail.current.anchor.classList.add("focus");
+      })
+    </script>
+  </body>
+</html>

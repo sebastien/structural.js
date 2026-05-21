@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rich Text Editor — Structural.js</title>
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
+    <style>
+      :root {
+        --toolbar-bg: #1e1e1e;
+        --button-hover: #3a3a3a;
+        --button-active: #0e639c;
+        --fg: #cccccc;
+        --fg-hover: #ffffff;
+        --editor-bg: #ffffff;
+        --editor-fg: #1e1e1e;
+        --border: #3a3a3a;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      .toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        padding: 6px 8px;
+        background: var(--toolbar-bg);
+        border-bottom: 1px solid var(--border);
+      }
+      .toolbar button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+        font-size: 20px;
+        transition: background 0.15s, color 0.15s;
+      }
+      .toolbar button:hover {
+        background: var(--button-hover);
+        color: var(--fg-hover);
+      }
+      .toolbar button.active {
+        background: var(--button-active);
+        color: var(--fg-hover);
+      }
+      .toolbar .sep {
+        width: 1px;
+        margin: 4px 4px;
+        background: var(--border);
+        align-self: stretch;
+        flex-shrink: 0;
+      }
+      .editor {
+        max-width: 680px;
+        margin: 32px auto;
+        padding: 0 24px;
+        color: var(--editor-fg);
+        line-height: 1.6;
+        font-size: 16px;
+      }
+      .editor h1 { font-size: 2em; margin: 0.67em 0; }
+      .editor h2 { font-size: 1.5em; margin: 0.75em 0; }
+      .editor h3 { font-size: 1.17em; margin: 0.83em 0; }
+      .editor p { margin: 0.5em 0; }
+      .editor ul, .editor ol { margin: 0.5em 0; padding-left: 2em; }
+      .editor li { margin: 0.25em 0; }
+      .editor blockquote {
+        margin: 0.5em 0;
+        padding: 0.25em 1em;
+        border-left: 3px solid #0e639c;
+        background: #f5f8fc;
+      }
+      .editor code {
+        font-family: monospace;
+        background: #f0f0f0;
+        padding: 0.1em 0.3em;
+        border-radius: 3px;
+        font-size: 0.9em;
+      }
+      .editor strong { font-weight: 600; }
+      .editor em { font-style: italic; }
+      .focus {
+        outline: 2px solid var(--button-active);
+        outline-offset: 2px;
+      }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js",
+        "structural/modification": "../src/js/structural/modification.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div class="toolbar" id="toolbar">
+      <button data-kind="inline" data-tag="strong" title="Bold (Ctrl+B)">
+        <iconify-icon icon="mdi:format-bold"></iconify-icon>
+      </button>
+      <button data-kind="inline" data-tag="em" title="Italic (Ctrl+I)">
+        <iconify-icon icon="mdi:format-italic"></iconify-icon>
+      </button>
+      <button data-kind="inline" data-tag="code" title="Monospace (Ctrl+\`)">
+        <iconify-icon icon="mdi:code-tags"></iconify-icon>
+      </button>
+      <span class="sep"></span>
+      <button data-kind="block" data-tag="h1" title="Heading 1 (Ctrl+1)">
+        <iconify-icon icon="mdi:format-header-1"></iconify-icon>
+      </button>
+      <button data-kind="block" data-tag="h2" title="Heading 2 (Ctrl+2)">
+        <iconify-icon icon="mdi:format-header-2"></iconify-icon>
+      </button>
+      <button data-kind="block" data-tag="h3" title="Heading 3 (Ctrl+3)">
+        <iconify-icon icon="mdi:format-header-3"></iconify-icon>
+      </button>
+      <span class="sep"></span>
+      <button data-kind="block" data-tag="ul" title="Bullet List">
+        <iconify-icon icon="mdi:format-list-bulleted"></iconify-icon>
+      </button>
+      <button data-kind="block" data-tag="ol" title="Numbered List">
+        <iconify-icon icon="mdi:format-list-numbered"></iconify-icon>
+      </button>
+      <span class="sep"></span>
+      <button data-kind="block" data-tag="blockquote" title="Blockquote">
+        <iconify-icon icon="mdi:format-quote-open"></iconify-icon>
+      </button>
+    </div>
+
+    <div class="editor" id="editor">
+      <h1>Rich Text Editor</h1>
+      <p>This is a <strong>rich text</strong> editor built with <em>Structural.js</em>. Try formatting text using the toolbar above or keyboard shortcuts.</p>
+      <p>Select some text and toggle <strong>bold</strong>, <em>italic</em>, or <code>monospace</code> inline styles. You can also click a word to format it without selecting.</p>
+      <h2>Block Formatting</h2>
+      <p>Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.</p>
+      <blockquote>
+        <p>Blockquotes are great for highlighting quotes, citations, or callout content. Toggle the button again to remove.</p>
+      </blockquote>
+      <h3>Try It Out</h3>
+      <p>Place your cursor anywhere and click the toolbar buttons. The active format is highlighted in blue. Keyboard shortcuts work too: <code>Ctrl+B</code> for bold, <code>Ctrl+I</code> for italic, <code>Ctrl+\`</code> for monospace, and <code>Ctrl+1/2/3</code> for headings.</p>
+    </div>
+
+    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
+    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+
+    <script type="module">
+      import { Editor } from "structural/editor";
+      import { Modification } from "structural/modification";
+
+      const editor = new Editor(document.getElementById("editor"));
+      const mod = new Modification(editor);
+
+      const toolbar = document.getElementById("toolbar");
+
+      function updateToolbar() {
+        const state = mod.formats();
+        for (const btn of toolbar.querySelectorAll('button[data-tag]')) {
+          btn.classList.toggle('active', !!state[btn.dataset.tag]);
+        }
+      }
+
+      toolbar.addEventListener('mousedown', (e) => e.stopPropagation());
+
+      toolbar.addEventListener('click', (event) => {
+        const btn = event.target.closest('button');
+        if (!btn) return;
+        const tag = btn.dataset.tag;
+        if (btn.dataset.kind === 'inline') {
+          mod.toggleInline(tag);
+        } else {
+          mod.toggleBlock(tag);
+        }
+        updateToolbar();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+        let handled = true;
+        switch (event.key) {
+          case 'b': mod.toggleInline('strong'); break;
+          case 'i': mod.toggleInline('em'); break;
+          case '`': mod.toggleInline('code'); break;
+          case '1': mod.toggleBlock('h1'); break;
+          case '2': mod.toggleBlock('h2'); break;
+          case '3': mod.toggleBlock('h3'); break;
+          default: handled = false; break;
+        }
+        if (handled) {
+          event.preventDefault();
+          event.stopPropagation();
+          updateToolbar();
+        }
+      }, true);
+
+      editor.root.addEventListener('CursorMove', (event) => {
+        const { previous, current } = event.detail;
+        previous.anchor?.classList?.remove('focus');
+        current.anchor?.classList?.add('focus');
+        updateToolbar();
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1232 @@
+import { TextSelection } from "structural/selection";
+
+class Caret {
+	constructor(node) {
+		this.node = node ?? null;
+		this._measureCanvas = document.createElement("canvas");
+		this._onSelectionChange = this._onSelectionChange.bind(this);
+		document.addEventListener("selectionchange", this._onSelectionChange);
+	}
+
+	_onSelectionChange() {
+		const sel = window.getSelection();
+		if (sel && !sel.isCollapsed) {
+			this._hide();
+		}
+	}
+
+	_pointRect(node, offset) {
+		const range = document.createRange();
+		try {
+			range.setStart(node, offset);
+			range.collapse(true);
+			return { rect: range.getBoundingClientRect(), range, source: "range" };
+		} catch (e) {
+			return null;
+		}
+	}
+
+	_edgeRect(node, edge) {
+		if (!node) {
+			return null;
+		}
+		if (node.nodeType === Node.TEXT_NODE) {
+			const offset = edge === "start" ? 0 : node.data.length;
+			const result = this._pointRect(node, offset);
+			if (result && (result.rect.width !== 0 || result.rect.height !== 0)) {
+				return { ...result, source: `text-${edge}` };
+			}
+			if (node.data.length === 0) {
+				return result ? { ...result, source: `text-${edge}` } : null;
+			}
+			const range = document.createRange();
+			try {
+				if (edge === "start") {
+					range.setStart(node, 0);
+					range.setEnd(node, 1);
+				} else {
+					range.setStart(node, node.data.length - 1);
+					range.setEnd(node, node.data.length);
+				}
+				return {
+					rect: range.getBoundingClientRect(),
+					range,
+					source: `text-${edge}-char`,
+				};
+			} catch (e) {
+				return result ? { ...result, source: `text-${edge}` } : null;
+			}
+		}
+		if (node.nodeType === Node.ELEMENT_NODE) {
+			const rect = node.getBoundingClientRect();
+			return { rect, range: null, source: `element-${edge}` };
+		}
+		return null;
+	}
+
+	_deepCaretPoint(node, edge) {
+		let current = node;
+		while (current) {
+			if (current.nodeType === Node.TEXT_NODE) {
+				return {
+					node: current,
+					offset: edge === "start" ? 0 : current.data.length,
+				};
+			}
+			if (current.nodeType !== Node.ELEMENT_NODE) {
+				return null;
+			}
+			const children = current.childNodes;
+			if (children.length === 0) {
+				return { node: current, offset: edge === "start" ? 0 : children.length };
+			}
+			current =
+				edge === "start"
+					? children[0] ?? null
+					: children[children.length - 1] ?? null;
+		}
+		return null;
+	}
+
+	_visibleEdgeRect(node, edge) {
+		let current = node;
+		while (current) {
+			const result = this._edgeRect(current, edge);
+			if (result && (result.rect.width !== 0 || result.rect.height !== 0)) {
+				return { ...result, node: current };
+			}
+			current = edge === "end" ? current.previousSibling : current.nextSibling;
+		}
+		return null;
+	}
+
+	_boundaryRect(position) {
+		const leftNode = position?.boundary?.leftNode;
+		const left = this._visibleEdgeRect(leftNode, "end");
+		if (left && (left.rect.width !== 0 || left.rect.height !== 0)) {
+			const point =
+				left.node?.nodeType === Node.ELEMENT_NODE
+					? this._edgeRect(this._deepCaretPoint(left.node, "end")?.node, "end")
+					: null;
+			return {
+				x: left.rect.right + window.scrollX,
+				y: (point?.rect.top ?? left.rect.top) + window.scrollY,
+				height: left.rect.height,
+				source: "left-boundary",
+			};
+		}
+		const rightNode = position?.boundary?.rightNode;
+		const right = this._visibleEdgeRect(rightNode, "start");
+		if (right && (right.rect.width !== 0 || right.rect.height !== 0)) {
+			const point =
+				right.node?.nodeType === Node.ELEMENT_NODE
+					? this._edgeRect(this._deepCaretPoint(right.node, "start")?.node, "start")
+					: null;
+			return {
+				x: right.rect.left + window.scrollX,
+				y: (point?.rect.top ?? right.rect.top) + window.scrollY,
+				height: right.rect.height,
+				source: "right-boundary",
+			};
+		}
+		return null;
+	}
+
+	_hide() {
+		if (this.node) {
+			this.node.style.visibility = "hidden";
+		}
+	}
+
+	_showAt(x, y, height) {
+		if (this.node) {
+			this.node.style.left = `${x}px`;
+			this.node.style.top = `${y}px`;
+			if (height !== undefined) {
+				this.node.style.height = `${height}px`;
+			}
+			this.node.style.visibility = "visible";
+		}
+	}
+
+	_measureTextWidth(text, node) {
+		if (!text) {
+			return 0;
+		}
+		const element =
+			node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+		if (!element) {
+			return 0;
+		}
+		const context = this._measureCanvas.getContext("2d");
+		if (!context) {
+			return 0;
+		}
+		const style = window.getComputedStyle(element);
+		context.font = style.font;
+		let width = context.measureText(text).width;
+		const letterSpacing = Number.parseFloat(style.letterSpacing);
+		if (Number.isFinite(letterSpacing)) {
+			width += Math.max(0, text.length - 1) * letterSpacing;
+		}
+		const wordSpacing = Number.parseFloat(style.wordSpacing);
+		if (Number.isFinite(wordSpacing)) {
+			const spaces = text.match(/ /g)?.length ?? 0;
+			width += spaces * wordSpacing;
+		}
+		return width;
+	}
+
+	_collapsedTrailingSpaceWidth(position) {
+		const pointNode = position?.point?.node;
+		const pointOffset = position?.point?.offset ?? 0;
+		const whitespaceNodes = [];
+		let trailingSpaces = "";
+		if (
+			pointNode?.nodeType === Node.TEXT_NODE &&
+			pointOffset === pointNode.data.length &&
+			pointNode.nextSibling === null
+		) {
+			const match = pointNode.data.slice(0, pointOffset).match(/ +$/);
+			if (!match) {
+				return 0;
+			}
+			trailingSpaces = match[0];
+			whitespaceNodes.unshift(pointNode);
+			let current = pointNode.previousSibling;
+			while (current?.nodeType === Node.TEXT_NODE && /^[ ]+$/.test(current.data)) {
+				trailingSpaces = `${current.data}${trailingSpaces}`;
+				whitespaceNodes.unshift(current);
+				current = current.previousSibling;
+			}
+		} else {
+			const leftNode = position?.boundary?.leftNode;
+			if (
+				leftNode?.nodeType !== Node.TEXT_NODE ||
+				position?.boundary?.rightNode ||
+				!/^[ ]+$/.test(leftNode.data ?? "")
+			) {
+				return 0;
+			}
+			trailingSpaces = leftNode.data;
+			whitespaceNodes.unshift(leftNode);
+			let current = leftNode.previousSibling;
+			while (current?.nodeType === Node.TEXT_NODE && /^[ ]+$/.test(current.data)) {
+				trailingSpaces = `${current.data}${trailingSpaces}`;
+				whitespaceNodes.unshift(current);
+				current = current.previousSibling;
+			}
+		}
+		const referenceNode = whitespaceNodes[0] ?? pointNode;
+		return this._measureTextWidth(trailingSpaces, referenceNode);
+	}
+
+	setVirtual(position, options = {}) {
+		const editable = options.editable === true;
+		const point = position?.point;
+		if (!point) {
+			this._hide();
+			return { visible: false, editable: false, source: null };
+		}
+		const result =
+			point.node?.nodeType === Node.TEXT_NODE ||
+			point.node?.nodeType === Node.ELEMENT_NODE
+				? this._pointRect(point.node, point.offset)
+				: null;
+		const rect = result?.rect;
+		if (rect && (rect.width !== 0 || rect.height !== 0)) {
+			const x = rect.left + window.scrollX;
+			const y = rect.top + window.scrollY;
+			if (editable) {
+				this._showAt(x, y, rect.height);
+			} else {
+				this._hide();
+			}
+			return { x, y, source: result.source, visible: editable, editable };
+		}
+		const boundary = this._boundaryRect(position);
+		if (boundary) {
+			const x = boundary.x + this._collapsedTrailingSpaceWidth(position);
+			if (editable) {
+				this._showAt(x, boundary.y, boundary.height);
+			} else {
+				this._hide();
+			}
+			return { ...boundary, x, visible: editable, editable };
+		}
+		this._hide();
+		return { visible: false, editable, source: result?.source ?? null };
+	}
+
+	set(node, offset, focus = true) {
+		if (!node) {
+			return;
+		}
+		const selection = window.getSelection();
+		const range = document.createRange();
+		try {
+			range.setStart(node, offset);
+			range.collapse(true);
+			selection.removeAllRanges();
+			selection.addRange(range);
+			if (focus && node.parentElement) {
+				node.parentElement.focus();
+			}
+			return range;
+		} catch (e) {
+			console.error(
+				`[hed] Unable to set caret: ${e}`,
+				{ node, offset },
+				e,
+			);
+		}
+	}
+}
+
+class Cursor {
+	// ========================================================================
+	// LIFECYCLE
+	// ========================================================================
+
+	constructor(input, options = {}) {
+		this.direction = undefined;
+		this.anchor = undefined;
+		this.offset = undefined;
+		this.delta = 0;
+		this.selectionKind = "caret";
+		this.selection = new TextSelection(this, options.selection ?? options);
+		this.selectedNode = null;
+		this.selectedOffset = null;
+		this.selectedDirection = 0;
+		this.selectedBehavior = null;
+		this._desiredX = null;
+		this.skipWhitespace = false;
+		this.skipFormattingWhitespace = options.skipFormattingWhitespace;
+		this.preserveSemanticBoundaries =
+			options.preserveSemanticBoundaries !== false;
+		this.collapseBoundary = options.collapseBoundary !== false;
+		this.caret = new Caret(document.getElementById("caret"));
+		this._input = input;
+		this._eventFocusedNode = null;
+		this._eventActivePath = [];
+	}
+
+	get editor() {
+		return this._input.editor;
+	}
+
+	get text() {
+		const text = this.editor.text;
+		text.ensurePositions();
+		return text;
+	}
+
+	// ========================================================================
+	// TEXT OPERATIONS
+	// ========================================================================
+
+	insertText(text) {
+		if (this.selectionKind === "range") {
+			const next = this.selection.replaceWithText(text);
+			if (next) {
+				this._desiredX = null;
+				this.moveTo(next.index);
+			}
+			return;
+		}
+		if (this.selectionKind === "node") {
+			this.replaceSelectedNode(text);
+			return;
+		}
+		const position = this.text.positionSlotAt(this.offset);
+		if (!this.text.acceptsText(position)) {
+			return;
+		}
+		const next = this.text.insertAtIndex(this.offset, text);
+		this._desiredX = null;
+		this.moveTo(next.index);
+	}
+
+	backspace() {
+		if (this.selectionKind === "range") {
+			const next = this.selection.replaceWithText("");
+			if (next) {
+				this._desiredX = null;
+				this.moveTo(next.index);
+			}
+			return;
+		}
+		if (this.selectionKind === "node") {
+			this.removeSelectedNode();
+			return;
+		}
+		const next = this.text.deleteBackwardAtIndex(this.offset);
+		this._desiredX = null;
+		this.moveTo(next.index);
+	}
+
+	delete() {
+		if (this.selectionKind === "range") {
+			const next = this.selection.replaceWithText("");
+			if (next) {
+				this._desiredX = null;
+				this.moveTo(next.index);
+			}
+			return;
+		}
+		if (this.selectionKind === "node") {
+			this.removeSelectedNode();
+			return;
+		}
+		const next = this.text.deleteForwardAtIndex(this.offset);
+		this._desiredX = null;
+		this.moveTo(next.index);
+	}
+
+	// ========================================================================
+	// POSITIONING
+	// ========================================================================
+
+	offsetFromPoint(x, y) {
+		return this.text.indexFromPoint(x, y);
+	}
+
+	_shouldSkipFormattingWhitespace() {
+		if (this.skipFormattingWhitespace !== undefined) {
+			return this.skipFormattingWhitespace;
+		}
+		if (this.text.skipFormattingWhitespaceConfigured) {
+			return this.text.skipFormattingWhitespace;
+		}
+		return true;
+	}
+
+	_isSemanticBoundarySlot(index) {
+		const slot = this.text.positionSlotAt(index);
+		if (
+			!slot ||
+			slot.kind !== "element-boundary" ||
+			slot.point.node?.nodeType !== Node.ELEMENT_NODE
+		) {
+			return false;
+		}
+		const node = slot.point.node;
+		const childCount = node.childNodes.length;
+		return (
+			node !== this.editor.root &&
+			(slot.point.offset === 0 || slot.point.offset === childCount)
+		);
+	}
+
+	_isSkippableFormattingWhitespaceSlot(index) {
+		if (!this.text.isFormattingWhitespaceSlot(index)) {
+			return false;
+		}
+		if (
+			this.preserveSemanticBoundaries &&
+			this._isSemanticBoundarySlot(index)
+		) {
+			return false;
+		}
+		return true;
+	}
+
+	_remapFormattingWhitespace(offset, direction) {
+		const clamped = this.text.clampIndex(offset);
+		if (!this._shouldSkipFormattingWhitespace()) {
+			return { offset: clamped, reason: null };
+		}
+		if (!this._isSkippableFormattingWhitespaceSlot(clamped)) {
+			return { offset: clamped, reason: null };
+		}
+		const scan = step => {
+			let current = clamped;
+			while (this._isSkippableFormattingWhitespaceSlot(current)) {
+				const next = this.text.clampIndex(current + step);
+				if (next === current) {
+					return current;
+				}
+				current = next;
+			}
+			return current;
+		};
+		if (direction !== 0) {
+			const primary = scan(direction);
+			if (!this._isSkippableFormattingWhitespaceSlot(primary)) {
+				return { offset: primary, reason: "formatting-whitespace-skip" };
+			}
+		}
+		const fallbackDirection = direction === 0 ? 1 : -direction;
+		const fallback = scan(fallbackDirection);
+		return this._isSkippableFormattingWhitespaceSlot(fallback)
+			? { offset: clamped, reason: null }
+			: { offset: fallback, reason: "formatting-whitespace-skip" };
+	}
+
+	_isEquivalentBoundary(a, b) {
+		return (
+			a?.boundary?.leftNode === b?.boundary?.leftNode &&
+			b?.boundary?.rightNode === a?.boundary?.rightNode &&
+			a?.char?.before === b?.char?.before &&
+			a?.char?.after === b?.char?.after
+		);
+	}
+
+	_equivalentOffsetRange(offset) {
+		const positions = this.text.positions();
+		const clamped = this.text.clampIndex(offset);
+		const origin = positions[clamped];
+		let start = clamped;
+		let end = clamped;
+		while (start > 0 && this._isEquivalentBoundary(origin, positions[start - 1])) {
+			start -= 1;
+		}
+		while (
+			end + 1 < positions.length &&
+			this._isEquivalentBoundary(origin, positions[end + 1])
+		) {
+			end += 1;
+		}
+		return { start, end };
+	}
+
+	_visibleEquivalentOffset(offset, direction = 0) {
+		const clamped = this.text.clampIndex(offset);
+		if (this.text.hasVisibleRectAt(clamped)) {
+			return clamped;
+		}
+		const { start, end } = this._equivalentOffsetRange(clamped);
+		if (direction < 0) {
+			for (let i = end; i >= start; i -= 1) {
+				if (this.text.hasVisibleRectAt(i)) {
+					return i;
+				}
+			}
+		} else {
+			for (let i = start; i <= end; i += 1) {
+				if (this.text.hasVisibleRectAt(i)) {
+					return i;
+				}
+			}
+		}
+		return clamped;
+	}
+
+	_canonicalOffset(offset, direction = 0) {
+		const clamped = this.text.clampIndex(offset);
+		if (!this.collapseBoundary) {
+			return clamped;
+		}
+		const origin = this.text.positionSlotAt(clamped);
+		let current = clamped;
+		if (direction > 0) {
+			const positions = this.text.positions();
+			while (current + 1 < positions.length) {
+				const next = this.text.positionSlotAt(current + 1);
+				if (!next || !this._isEquivalentBoundary(origin, next)) {
+					break;
+				}
+				current += 1;
+			}
+			return current;
+		}
+		while (current > 0) {
+			const previous = this.text.positionSlotAt(current - 1);
+			if (!previous || !this._isEquivalentBoundary(origin, previous)) {
+				break;
+			}
+			current -= 1;
+		}
+		return current;
+	}
+
+	_isWithinNode(node, target) {
+		if (!node || !target) {
+			return false;
+		}
+		if (target === node) {
+			return true;
+		}
+		const element =
+			target.nodeType === Node.ELEMENT_NODE ? target : target.parentElement;
+		return element ? node.contains(element) : false;
+	}
+
+	_isTrackableNode(node) {
+		return (
+			node?.nodeType === Node.ELEMENT_NODE &&
+			(this.text.isAtom(node) || this.text.isContainer(node))
+		);
+	}
+
+	_trackableNodeType(node) {
+		if (!this._isTrackableNode(node)) {
+			return null;
+		}
+		return this.text.isAtom(node) ? "atom" : "container";
+	}
+
+	_trackableAncestorsFrom(node) {
+		const path = [];
+		let current = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+		while (current) {
+			if (this._isTrackableNode(current)) {
+				path.push(current);
+			}
+			if (current === this.editor.root) {
+				break;
+			}
+			current = current.parentElement;
+		}
+		return path.reverse();
+	}
+
+	_resolveFocusedTrackableNode(current) {
+		if (
+			current?.selectionKind === "node" &&
+			this._isTrackableNode(current.selectedNode)
+		) {
+			return current.selectedNode;
+		}
+		const path = this._trackableAncestorsFrom(current?.anchor);
+		return path[path.length - 1] ?? null;
+	}
+
+	_resolveActiveTrackablePath(current) {
+		if (
+			current?.selectionKind === "node" &&
+			this._isTrackableNode(current.selectedNode)
+		) {
+			return this._trackableAncestorsFrom(current.selectedNode);
+		}
+		return this._trackableAncestorsFrom(current?.anchor);
+	}
+
+	_dispatchCursorNodeEvent(type, node, detail) {
+		if (!this._isTrackableNode(node)) {
+			return;
+		}
+		node.dispatchEvent(
+			new CustomEvent(type, {
+				bubbles: true,
+				detail: {
+					...detail,
+					node,
+					nodeType: this._trackableNodeType(node),
+				},
+			}),
+		);
+	}
+
+	_syncCursorNodeEvents(previous, current) {
+		const previousPath = this._eventActivePath;
+		const currentPath = this._resolveActiveTrackablePath(current);
+		const previousFocusedNode = this._eventFocusedNode;
+		const currentFocusedNode = this._resolveFocusedTrackableNode(current);
+		let shared = 0;
+		while (
+			shared < previousPath.length &&
+			shared < currentPath.length &&
+			previousPath[shared] === currentPath[shared]
+		) {
+			shared += 1;
+		}
+		for (let i = previousPath.length - 1; i >= shared; i -= 1) {
+			this._dispatchCursorNodeEvent("CursorLeave", previousPath[i], {
+				previous,
+				current,
+				reason: current.selectionKind === "node" ? "node-selection" : "caret-move",
+			});
+		}
+		for (let i = shared; i < currentPath.length; i += 1) {
+			this._dispatchCursorNodeEvent("CursorEnter", currentPath[i], {
+				previous,
+				current,
+				reason: current.selectionKind === "node" ? "node-selection" : "caret-move",
+			});
+		}
+		if (previousFocusedNode !== currentFocusedNode && currentFocusedNode) {
+			this._dispatchCursorNodeEvent("CursorFocus", currentFocusedNode, {
+				previous,
+				current,
+				previousNode: previousFocusedNode,
+				currentNode: currentFocusedNode,
+				reason: current.selectionKind === "node" ? "node-selection" : "caret-move",
+			});
+		}
+		this._eventActivePath = currentPath;
+		this._eventFocusedNode = currentFocusedNode;
+	}
+
+	_structuralSelectionAt(index, direction) {
+		if (direction === 0) {
+			return null;
+		}
+		const slot = this.text.positionSlotAt(index);
+		if (slot?.kind !== "element-boundary") {
+			return null;
+		}
+		const candidate =
+			direction > 0 ? slot.boundary?.rightNode : slot.boundary?.leftNode;
+		if (candidate?.nodeType === Node.ELEMENT_NODE && this.text.isAtom(candidate)) {
+			return {
+				node: candidate,
+				offset: index,
+				direction,
+				behavior: "skip",
+			};
+		}
+		const pointNode = slot.point?.node;
+		if (
+			pointNode?.nodeType === Node.ELEMENT_NODE &&
+			this.text.isContainer(pointNode)
+		) {
+			const isLeadingEdge = slot.point.offset === 0;
+			const isTrailingEdge = slot.point.offset === pointNode.childNodes.length;
+			if ((direction > 0 && isLeadingEdge) || (direction < 0 && isTrailingEdge)) {
+				return {
+					node: pointNode,
+					offset: index,
+					direction,
+					behavior: "enter",
+				};
+			}
+		}
+		if (
+			candidate?.nodeType !== Node.ELEMENT_NODE ||
+			!this.text.isContainer(candidate)
+		) {
+			return null;
+		}
+		return {
+			node: candidate,
+			offset: index,
+			direction,
+			behavior: "enter",
+		};
+	}
+
+	_entryIndexForNode(node, direction) {
+		const positions = this.text.positions();
+		const matches = [];
+		for (let i = 0; i < positions.length; i += 1) {
+			const slot = positions[i];
+			if (!this.text.acceptsText(slot)) {
+				continue;
+			}
+			if (!this._isWithinNode(node, slot.point?.node)) {
+				continue;
+			}
+			matches.push(i);
+		}
+		if (matches.length === 0) {
+			return null;
+		}
+		return direction > 0 ? matches[0] : matches[matches.length - 1];
+	}
+
+	_exitIndexForNode(node, direction, fallback = this.offset ?? 0) {
+		const positions = this.text.positions();
+		for (let i = 0; i < positions.length; i += 1) {
+			const boundary = positions[i]?.boundary;
+			if (direction > 0 && boundary?.leftNode === node) {
+				return i;
+			}
+			if (direction < 0 && boundary?.rightNode === node) {
+				return i;
+			}
+		}
+		return fallback;
+	}
+
+	_boundaryIndexForNode(node, side, fallback = this.offset ?? 0) {
+		const positions = this.text.positions();
+		for (let i = 0; i < positions.length; i += 1) {
+			const boundary = positions[i]?.boundary;
+			if (side === "before" && boundary?.rightNode === node) {
+				return i;
+			}
+			if (side === "after" && boundary?.leftNode === node) {
+				return i;
+			}
+		}
+		return fallback;
+	}
+
+	_snapshot() {
+		const selection = this.selection.normalizedRange();
+		return {
+			offset: this.offset,
+			anchor: this.anchor,
+			delta: this.delta,
+			selectionKind: this.selectionKind,
+			selectedNode: this.selectedNode,
+			selectedOffset: this.selectedOffset,
+			selectedDirection: this.selectedDirection,
+			selectedBehavior: this.selectedBehavior,
+			selectionAnchorOffset: this.selection.anchorOffset,
+			selectionFocusOffset: this.selection.focusOffset,
+			selectionStart: selection.start,
+			selectionEnd: selection.end,
+			selectionCollapsed: selection.collapsed,
+			selectionMode: this.selection.mode,
+		};
+	}
+
+	_emitMove(previous, current) {
+		this._syncCursorNodeEvents(previous, current);
+		this.editor.root.dispatchEvent(
+			new CustomEvent("CursorMove", {
+				detail: { previous, current },
+			}),
+		);
+	}
+
+	_resolveMoveOffset(offset, options = {}) {
+		const positions = this.text.positions();
+		if (positions.length === 0) {
+			return null;
+		}
+		const requested = this.text.clampIndex(offset);
+		const requestedDirection =
+			this.offset === undefined
+				? 0
+				: requested > this.offset
+					? 1
+					: requested < this.offset
+						? -1
+						: 0;
+		const whitespaceRemap = this._remapFormattingWhitespace(
+			requested,
+			requestedDirection,
+		);
+		const remapped = whitespaceRemap.offset;
+		const canonical = this._canonicalOffset(remapped, requestedDirection);
+		const clamped = options.preserveVisibleEquivalent
+			? this._visibleEquivalentOffset(canonical, options.visibleDirection)
+			: canonical;
+		const reasons = [];
+		if (whitespaceRemap.reason) {
+			reasons.push(whitespaceRemap.reason);
+		}
+		if (canonical !== remapped) {
+			reasons.push("boundary-collapse");
+		}
+		if (clamped !== canonical) {
+			reasons.push("visible-equivalent");
+		}
+		const direction =
+			this.offset === undefined
+				? 0
+				: clamped === this.offset
+					? 0
+					: clamped > this.offset
+						? 1
+						: -1;
+		return {
+			requested,
+			clamped,
+			position: positions[clamped],
+			reasons,
+			direction,
+		};
+	}
+
+	_clearNodeSelection() {
+		this.selectedNode = null;
+		this.selectedOffset = null;
+		this.selectedDirection = 0;
+		this.selectedBehavior = null;
+	}
+
+	_setRangeSelection(anchorOffset, focusOffset, move, caretEditable = true) {
+		const previous = this._snapshot();
+		this._clearNodeSelection();
+		this.selection.set(anchorOffset, focusOffset);
+		const normalized = this.selection.normalizedRange();
+		this.offset = move.clamped;
+		this.anchor = move.position.focusNode;
+		this.delta = move.position.point.offset;
+		this.direction = move.direction;
+		if (normalized.collapsed) {
+			this.selectionKind = "caret";
+			this.selection.clear();
+			const caret = this.caret.setVirtual(move.position, {
+				editable: caretEditable,
+			});
+			const current = {
+				...this._snapshot(),
+				requestedOffset: move.requested,
+				kind: move.position.kind,
+				boundary: move.position.boundary,
+				char: move.position.char,
+				remap: {
+					from: move.requested,
+					to: move.clamped,
+					reasons: move.reasons,
+				},
+				caretEditable: caret?.editable ?? false,
+				caretVisible: caret?.visible ?? false,
+				caretSource: caret?.source ?? null,
+			};
+			this._emitMove(previous, current);
+			return;
+		}
+		this.selectionKind = "range";
+		this.caret.setVirtual(null);
+		const render = this.selection.apply();
+		const current = {
+			...this._snapshot(),
+			requestedOffset: move.requested,
+			kind: move.position.kind,
+			boundary: move.position.boundary,
+			char: move.position.char,
+			remap: {
+				from: move.requested,
+				to: move.clamped,
+				reasons: move.reasons,
+			},
+			caretEditable: false,
+			caretVisible: false,
+			caretSource: null,
+			selectionVisible: render.visible,
+		};
+		this._emitMove(previous, current);
+	}
+
+	_advanceHorizontalOffset(origin, direction) {
+		const current = this._canonicalOffset(origin, direction);
+		let next = this.text.moveIndex(current, direction, {
+			skipWhitespace: this.skipWhitespace,
+		});
+		next = this._remapFormattingWhitespace(next, direction).offset;
+		let canonical = this._canonicalOffset(next, direction);
+		const movesForward = value =>
+			direction > 0 ? value > current : value < current;
+		while (canonical === current) {
+			const advanced = this.text.moveIndex(next, direction, {
+				skipWhitespace: this.skipWhitespace,
+			});
+			if (advanced === next) {
+				break;
+			}
+			const remapped = this._remapFormattingWhitespace(advanced, direction).offset;
+			if (!movesForward(remapped)) {
+				break;
+			}
+			next = remapped;
+			canonical = this._canonicalOffset(next, direction);
+			if (!movesForward(canonical)) {
+				break;
+			}
+		}
+		return canonical;
+	}
+
+	_verticalTarget(origin, direction) {
+		const visibleOrigin = this._visibleEquivalentOffset(origin, direction);
+		const next = this.text.indexFromLineMove(
+			visibleOrigin,
+			direction,
+			this._desiredX,
+		);
+		this._desiredX = next.desiredX;
+		return this._resolveMoveOffset(next.index, {
+			preserveVisibleEquivalent: true,
+			visibleDirection: direction,
+		});
+	}
+
+	_nodeSelectionRange() {
+		if (!this.selectedNode) {
+			return null;
+		}
+		return {
+			start: this._boundaryIndexForNode(this.selectedNode, "before"),
+			end: this._boundaryIndexForNode(this.selectedNode, "after"),
+		};
+	}
+
+	_collapseRangeSelection(direction) {
+		const normalized = this.selection.normalizedRange();
+		const target = direction < 0 ? normalized.start : normalized.end;
+		this._desiredX = null;
+		this.moveTo(target);
+	}
+
+	_selectNode(node, offset, direction, behavior = "enter") {
+		const previous = this._snapshot();
+		this.selection.clear();
+		this.selectionKind = "node";
+		this.selectedNode = node;
+		this.selectedOffset = offset;
+		this.selectedDirection = direction;
+		this.selectedBehavior = behavior;
+		this.offset = offset;
+		this.anchor = node;
+		this.delta = null;
+		this.direction = direction;
+		this.caret.setVirtual(null);
+		const current = {
+			...this._snapshot(),
+			requestedOffset: offset,
+			kind: "node-selection",
+			boundary: null,
+			char: null,
+			remap: {
+				from: offset,
+				to: offset,
+				reasons: ["container-selection"],
+			},
+			caretEditable: false,
+			caretVisible: false,
+			caretSource: null,
+		};
+		this._emitMove(previous, current);
+	}
+
+	selectAtom(node, side = "before") {
+		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isAtom(node)) {
+			return false;
+		}
+		const direction = side === "after" ? -1 : 1;
+		const offset = this._boundaryIndexForNode(node, side);
+		this._selectNode(node, offset, direction, "skip");
+		return true;
+	}
+
+	selectContainer(node, side = "before") {
+		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isContainer(node)) {
+			return false;
+		}
+		const direction = side === "after" ? -1 : 1;
+		const offset = this._boundaryIndexForNode(node, side);
+		this._selectNode(node, offset, direction, "enter");
+		return true;
+	}
+
+	_moveFromSelectedNode(direction) {
+		const originOffset = this.selectedOffset ?? this.offset;
+		const selectedNode = this.selectedNode;
+		const selectedDirection = this.selectedDirection;
+		const selectedBehavior = this.selectedBehavior;
+		if (!selectedNode) {
+			this._clearNodeSelection();
+			this.selectionKind = "caret";
+			this.moveTo(originOffset);
+			return;
+		}
+		if (direction === selectedDirection) {
+			if (selectedBehavior === "skip") {
+				const exitIndex = this._exitIndexForNode(
+					selectedNode,
+					direction,
+					originOffset,
+				);
+				this._clearNodeSelection();
+				this.selectionKind = "caret";
+				this.moveTo(exitIndex);
+				return;
+			}
+			const entry = this._entryIndexForNode(selectedNode, direction);
+			this._clearNodeSelection();
+			this.selectionKind = "caret";
+			if (entry !== null) {
+				this.moveTo(entry);
+				return;
+			}
+		}
+		this._clearNodeSelection();
+		this.selectionKind = "caret";
+		this.moveTo(originOffset);
+	}
+
+	replaceSelectedNode(text) {
+		const node = this.selectedNode;
+		const offset = this.selectedOffset ?? this.offset;
+		if (!node?.parentNode) {
+			this._clearNodeSelection();
+			this.selectionKind = "caret";
+			this.moveTo(offset);
+			return;
+		}
+		const textNode = document.createTextNode(text);
+		node.replaceWith(textNode);
+		this.text.invalidatePositions();
+		this.text.ensurePositions();
+		const nextIndex = this.text.indexOfPoint({ node: textNode, offset: text.length });
+		this._desiredX = null;
+		this._clearNodeSelection();
+		this.selectionKind = "caret";
+		this.moveTo(nextIndex >= 0 ? nextIndex : offset);
+	}
+
+	removeSelectedNode() {
+		const node = this.selectedNode;
+		const offset = this.selectedOffset ?? this.offset;
+		if (node?.parentNode) {
+			node.remove();
+			this.text.invalidatePositions();
+			this.text.ensurePositions();
+		}
+		this._desiredX = null;
+		this._clearNodeSelection();
+		this.selectionKind = "caret";
+		this.moveTo(offset);
+	}
+
+	_moveHorizontal(direction, extend = false) {
+		if (extend) {
+			this._desiredX = null;
+			let anchorOffset = this.selection.isActive ? this.selection.anchorOffset : this.offset;
+			let focusOffset = this.selection.isActive ? this.selection.focusOffset : this.offset;
+			if (this.selectionKind === "node") {
+				const range = this._nodeSelectionRange();
+				if (!range) {
+					return;
+				}
+				anchorOffset = direction < 0 ? range.end : range.start;
+				focusOffset = direction < 0 ? range.start : range.end;
+			}
+			const target = this._advanceHorizontalOffset(focusOffset, direction);
+			const move = this._resolveMoveOffset(target);
+			if (!move) {
+				return;
+			}
+			this._setRangeSelection(anchorOffset, move.clamped, move);
+			return;
+		}
+		if (this.selectionKind === "range") {
+			this._collapseRangeSelection(direction);
+			return;
+		}
+		if (this.selectionKind === "node") {
+			this._moveFromSelectedNode(direction);
+			return;
+		}
+		this._desiredX = null;
+		const explicitSelection = this._structuralSelectionAt(this.offset, direction);
+		if (explicitSelection) {
+			this._selectNode(
+				explicitSelection.node,
+				explicitSelection.offset,
+				explicitSelection.direction,
+				explicitSelection.behavior,
+			);
+			return;
+		}
+		const current = this._canonicalOffset(this.offset, direction);
+		const structuralSelection = this._structuralSelectionAt(current, direction);
+		if (structuralSelection) {
+			this._selectNode(
+				structuralSelection.node,
+				structuralSelection.offset,
+				structuralSelection.direction,
+				structuralSelection.behavior,
+			);
+			return;
+		}
+		this.moveTo(this._advanceHorizontalOffset(current, direction));
+	}
+
+	_moveVertical(direction, extend = false) {
+		if (extend) {
+			let anchorOffset = this.selection.isActive ? this.selection.anchorOffset : this.offset;
+			let focusOffset = this.selection.isActive ? this.selection.focusOffset : this.offset;
+			if (this.selectionKind === "node") {
+				const range = this._nodeSelectionRange();
+				if (!range) {
+					return;
+				}
+				anchorOffset = direction < 0 ? range.end : range.start;
+				focusOffset = direction < 0 ? range.start : range.end;
+			}
+			const move = this._verticalTarget(focusOffset, direction);
+			if (!move) {
+				return;
+			}
+			this._setRangeSelection(anchorOffset, move.clamped, move);
+			return;
+		}
+		if (this.selectionKind === "range") {
+			this._collapseRangeSelection(direction);
+			return;
+		}
+		const move = this._verticalTarget(this.offset, direction);
+		if (!move) {
+			return;
+		}
+		this.moveTo(move.clamped, {
+			preserveVisibleEquivalent: true,
+			visibleDirection: direction,
+		});
+	}
+
+	moveTo(offset, options = {}) {
+		const previous = this._snapshot();
+		const move = this._resolveMoveOffset(offset, options);
+		if (!move) {
+			this._clearNodeSelection();
+			this.selection.clear();
+			this.selectionKind = "caret";
+			this.offset = 0;
+			this.anchor = this.editor.root;
+			this.delta = 0;
+			this.caret.setVirtual(null);
+			this._emitMove(previous, {
+				...this._snapshot(),
+				requestedOffset: this.offset,
+			});
+			return;
+		}
+		this.direction = move.direction;
+		this._clearNodeSelection();
+		this.selection.clear();
+		this.selectionKind = "caret";
+		this.offset = move.clamped;
+		this.anchor = move.position.focusNode;
+		this.delta = move.position.point.offset;
+		const caret = this.caret.setVirtual(move.position, {
+			editable: this.text.acceptsText(move.position),
+		});
+		const current = {
+			...this._snapshot(),
+			requestedOffset: move.requested,
+			kind: move.position.kind,
+			boundary: move.position.boundary,
+			char: move.position.char,
+			remap: {
+				from: move.requested,
+				to: move.clamped,
+				reasons: move.reasons,
+			},
+			caretEditable: caret?.editable ?? false,
+			caretVisible: caret?.visible ?? false,
+			caretSource: caret?.source ?? null,
+		};
+		this._emitMove(previous, current);
+	}
+
+	getContext() {
+		return this.text.contextAt(this.offset);
+	}
+
+	// ========================================================================
+	// NAVIGATION
+	// ========================================================================
+
+	left(extend = false) {
+		this._moveHorizontal(-1, extend);
+	}
+	right(extend = false) {
+		this._moveHorizontal(1, extend);
+	}
+	up(extend = false) {
+		this._moveVertical(-1, extend);
+	}
+	down(extend = false) {
+		this._moveVertical(1, extend);
+	}
+}
+
+export { Caret, Cursor };

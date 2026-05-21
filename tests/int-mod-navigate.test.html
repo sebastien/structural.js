@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Navigate Test</title>
+<script type="importmap">
+{ "imports": {
+  "structural/editor": "/src/js/structural/editor.js",
+  "structural/cursor": "/src/js/structural/cursor.js",
+  "structural/text": "/src/js/structural/text.js",
+  "structural/selection": "/src/js/structural/selection.js",
+  "structural/modification": "/src/js/structural/modification.js"
+}}
+</script></head><body>
+<div id="editor"><p>Select some text and toggle <strong>bold</strong>, <em>italic</em>, or <code>monospace</code> inline styles.</p></div>
+<div id="selection" style="position:absolute;visibility:hidden;pointer-events:none;"></div>
+<div id="caret" style="position:absolute;height:1lh;width:1px;background:red;visibility:hidden;pointer-events:none;"></div>
+<script type="module">
+import { Editor } from "structural/editor";
+import { Modification } from "structural/modification";
+const A = (c, m) => { if (!c) throw new Error("FAIL: " + m); };
+const editor = new Editor(document.getElementById("editor"));
+const mod = new Modification(editor);
+const { cursor, text } = mod;
+
+// Wire CursorMove — matches the real example
+editor.root.addEventListener("CursorMove", (event) => {
+  const { previous, current } = event.detail;
+  previous.anchor?.classList?.remove("focus");
+  current.anchor?.classList?.add("focus");
+});
+
+try {
+  text.ensurePositions();
+  const p = editor.root.querySelector("p");
+  const t = p.firstChild;
+  const pos = (n,o) => text.indexOfPoint({node:n, offset:o});
+
+  // Step 1: click "some" + toggle I
+  cursor.moveTo(pos(t, 9));
+  mod.toggleInline("em");
+  A(editor.root.querySelectorAll("em").length >= 2, "step1 em exists");
+
+  // Step 2: click "Select "@4, extend right to "te"
+  text.refresh();
+  const selN = [...p.childNodes].find(n => n.nodeType===Node.TEXT_NODE && n.textContent==="Select ");
+  const aftN = [...p.childNodes].find(n => n.nodeType===Node.TEXT_NODE && n.textContent.startsWith(" text"));
+  const teEnd = pos(aftN, 3);
+
+  // Simulate: click at Select @4 (clears previous selection)
+  cursor.moveTo(pos(selN, 4));
+
+  // Simulate: Shift+Right until we reach teEnd
+  for (let i = 0; cursor.offset < teEnd && i < 30; i++) cursor.right(true);
+
+  // Step 3: toggle I again
+  mod.toggleInline("em");
+
+  const ems = editor.root.querySelectorAll("em");
+  A(ems.length <= 2, `ems=${ems.length} html=${editor.root.innerHTML}`);
+  let nested = false;
+  for (const e of ems) if (e.querySelector("em")) nested = true;
+  A(!nested, `nested em! ${editor.root.innerHTML}`);
+
+  window.__result = { pass: true };
+} catch(e) { window.__result = { pass: false, error: e.message }; }
+</script></body></html>
