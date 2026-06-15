@@ -21,7 +21,7 @@ class Caret {
 			range.setStart(node, offset);
 			range.collapse(true);
 			return { rect: range.getBoundingClientRect(), range, source: "range" };
-		} catch (e) {
+		} catch (_e) {
 			return null;
 		}
 	}
@@ -53,7 +53,7 @@ class Caret {
 					range,
 					source: `text-${edge}-char`,
 				};
-			} catch (e) {
+			} catch (_e) {
 				return result ? { ...result, source: `text-${edge}` } : null;
 			}
 		}
@@ -273,11 +273,11 @@ class Caret {
 				node.parentElement.focus();
 			}
 			return range;
-		} catch (e) {
+		} catch (_e) {
 			console.error(
-				`[hed] Unable to set caret: ${e}`,
+				`[hed] Unable to set caret: ${_e}`,
 				{ node, offset },
-				e,
+				_e,
 			);
 		}
 	}
@@ -403,11 +403,7 @@ class Cursor {
 
 	_isSemanticBoundarySlot(index) {
 		const slot = this.text.positionSlotAt(index);
-		if (
-			!slot ||
-			slot.kind !== "element-boundary" ||
-			slot.point.node?.nodeType !== Node.ELEMENT_NODE
-		) {
+		if (slot?.kind !== "element-boundary" || slot.point.node?.nodeType !== Node.ELEMENT_NODE) {
 			return false;
 		}
 		const node = slot.point.node;

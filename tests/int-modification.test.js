@@ -19,15 +19,28 @@ async function loadTest(browser, pagePath) {
 		}
 	});
 	await page.goto(`http://localhost${pagePath}`);
+	return page;
+}
+
+async function loadResult(browser, pagePath) {
+	const page = await loadTest(browser, pagePath);
 	await page.waitForFunction(() => window.__result !== undefined);
 	const result = await page.evaluate(() => window.__result);
 	await page.close();
 	return result;
 }
 
+function normalizeHtml(html) {
+	return html.replace(/ class="[^"]*"/g, "");
+}
+
+async function pointForText(page, text, offset) {
+	return page.evaluate(({ text, offset }) => window.__test.pointForText(text, offset), { text, offset });
+}
+
 test("static: overlapping inline across existing <em>", async () => {
 	const browser = await chromium.launch();
-	const result = await loadTest(browser, "/tests/int-mod-static.test.html");
+	const result = await loadResult(browser, "/tests/int-mod-static.test.html");
 	await browser.close();
 	if (result.error) throw new Error(result.error);
 	expect(result.pass).toBe(true);
@@ -35,8 +48,33 @@ test("static: overlapping inline across existing <em>", async () => {
 
 test("navigate: simulate keystroke selection after toggle", async () => {
 	const browser = await chromium.launch();
-	const result = await loadTest(browser, "/tests/int-mod-navigate.test.html");
+	const result = await loadResult(browser, "/tests/int-mod-navigate.test.html");
 	await browser.close();
 	if (result.error) throw new Error(result.error);
 	expect(result.pass).toBe(true);
+});
+
+test("ui: native selection across existing <em>", async () => {
+	const browser = await chromium.launch();
+	const page = await loadTest(browser, "/tests/int-mod-ui.test.html");
+
+	const some = await pointForText(page, "some", 1);
+	await page.mouse.click(some.x, some.y);
+	await page.click('button[data-tag="em"]');
+
+	const start = await pointForText(page, "Select ", 4);
+	await page.mouse.click(start.x, start.y);
+	await page.evaluate(() => window.__test.selectRange("Select ", 4, " text", 3));
+
+	const selectedText = await page.evaluate(() => window.__test.selectionText());
+	const beforeHtml = normalizeHtml(await page.evaluate(() => window.__test.html()));
+	await page.click('button[data-tag="em"]');
+	const afterHtml = normalizeHtml(await page.evaluate(() => window.__test.html()));
+
+	await page.close();
+	await browser.close();
+
+	expect(selectedText).toBe("ct some te");
+	expect(beforeHtml).toBe("Select <em>some</em> text");
+	expect(afterHtml).toBe("Sele<em>ct some te</em>xt");
 });

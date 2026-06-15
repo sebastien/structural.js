@@ -32,7 +32,7 @@ class TextInput {
 		return this;
 	}
 
-	unbind(editor = this.editor) {
+	unbind(_editor = this.editor) {
 		const node = document; // editor?.root;
 		if (node) {
 			node.removeEventListener("keyup", this._onKeyUp);
@@ -47,7 +47,7 @@ class TextInput {
 	// EVENTS
 	// ========================================================================
 
-	onKeyUp(event) {
+	onKeyUp(_event) {
 		// Text input is handled during keydown so control keys can be
 		// swallowed before they perform browser-default actions.
 	}

@@ -184,7 +184,7 @@ class TextAdapter {
 			range.setStart(point.node, point.offset);
 			range.collapse(true);
 			return { index, rect: range.getBoundingClientRect() };
-		} catch (e) {
+		} catch (_e) {
 			return null;
 		}
 	}
@@ -428,7 +428,7 @@ class TextAdapter {
 			range.setStart(this.root, 0);
 			range.setEnd(target.node, target.offset);
 			return range.toString().length;
-		} catch (e) {
+		} catch (_e) {
 			return 0;
 		}
 	}
@@ -449,7 +449,7 @@ class TextAdapter {
 	}
 
 	positionAt(offset) {
-		let last = undefined;
+		let last;
 		for (const p of this.iwalk(this.root, { mode: "text" })) {
 			if (p.offset > offset) {
 				last.delta = offset - last.offset;

@@ -90,7 +90,7 @@ class Modification {
 			? container
 			: container.parentElement;
 		const wrapper = el?.closest(tag);
-		if (wrapper && wrapper.contains(range.startContainer) && wrapper.contains(range.endContainer)) {
+		if (wrapper?.contains(range.startContainer) && wrapper.contains(range.endContainer)) {
 			this.unwrapElement(wrapper);
 		} else {
 			const overlapping = this._overlappingTags(range, tag);
@@ -176,7 +176,48 @@ class Modification {
 	// RANGE & WORD UTILITIES
 	// ========================================================================
 
+	_syncNativeSelection() {
+		const selection = window.getSelection();
+		if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+			return null;
+		}
+
+		const range = selection.getRangeAt(0);
+		if (!this._containsPoint(range.startContainer) || !this._containsPoint(range.endContainer)) {
+			return null;
+		}
+
+		const start = this.text.indexOfPoint({
+			node: range.startContainer,
+			offset: range.startOffset,
+		});
+		const end = this.text.indexOfPoint({
+			node: range.endContainer,
+			offset: range.endOffset,
+		});
+		if (start < 0 || end < 0 || start === end) {
+			return null;
+		}
+
+		this.cursor.selection.set(start, end);
+		this.cursor.selectionKind = 'range';
+		this.cursor.offset = end;
+		this.cursor.anchor = this.text.focusNodeAt(end) || this.cursor.anchor;
+		this.cursor.caret.setVirtual(null);
+		return range;
+	}
+
+	_containsPoint(node) {
+		if (!node) return false;
+		const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+		return !!element && this.editor.root.contains(element);
+	}
+
 	rangeFromCursor() {
+		const nativeRange = this._syncNativeSelection();
+		if (nativeRange) {
+			return nativeRange;
+		}
 		if (this.cursor.selectionKind === 'range') {
 			return this.cursor.selection.toDomRange();
 		}

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>UI Modification Test</title>
+  <script type="importmap">
+  { "imports": {
+    "structural/editor": "/src/js/structural/editor.js",
+    "structural/cursor": "/src/js/structural/cursor.js",
+    "structural/text": "/src/js/structural/text.js",
+    "structural/selection": "/src/js/structural/selection.js",
+    "structural/modification": "/src/js/structural/modification.js"
+  }}
+  </script>
+</head>
+<body>
+  <div id="toolbar">
+    <button data-kind="inline" data-tag="em" type="button">I</button>
+  </div>
+  <div id="editor"><p>Select some text</p></div>
+  <div id="selection" style="position:absolute;visibility:hidden;pointer-events:none;"></div>
+  <div id="caret" style="position:absolute;height:1lh;width:1px;background:red;visibility:hidden;pointer-events:none;"></div>
+  <script type="module">
+    import { Editor } from "structural/editor";
+    import { Modification } from "structural/modification";
+
+    const editor = new Editor(document.getElementById("editor"));
+    const mod = new Modification(editor);
+    const toolbar = document.getElementById("toolbar");
+
+    toolbar.addEventListener("mousedown", event => event.stopPropagation());
+    toolbar.addEventListener("click", event => {
+      const button = event.target.closest("button[data-tag]");
+      if (!button) return;
+      mod.toggleInline(button.dataset.tag);
+    });
+
+    editor.root.addEventListener("CursorMove", event => {
+      const { previous, current } = event.detail;
+      previous.anchor?.classList?.remove("focus");
+      current.anchor?.classList?.add("focus");
+    });
+
+    window.__test = {
+      pointForText(text, offset) {
+        const paragraph = document.querySelector("#editor p");
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const index = node.data.indexOf(text);
+          if (index < 0) continue;
+          const range = document.createRange();
+          const start = index + offset;
+          range.setStart(node, start);
+          range.setEnd(node, Math.min(node.data.length, start + 1));
+          const rect = range.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+        return null;
+      },
+      html() {
+        return document.querySelector("#editor p").innerHTML;
+      },
+      selectionText() {
+        return window.getSelection()?.toString() ?? "";
+      },
+      selectRange(startText, startOffset, endText, endOffset) {
+        const paragraph = document.querySelector("#editor p");
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        let node;
+        while ((node = walker.nextNode())) textNodes.push(node);
+
+        let startNode = null;
+        let endNode = null;
+        let start = 0;
+        let end = 0;
+        for (const textNode of textNodes) {
+          if (!startNode) {
+            const index = textNode.data.indexOf(startText);
+            if (index >= 0) {
+              startNode = textNode;
+              start = index + startOffset;
+            }
+          }
+          if (!endNode) {
+            const index = textNode.data.indexOf(endText);
+            if (index >= 0) {
+              endNode = textNode;
+              end = index + endOffset;
+            }
+          }
+        }
+        if (!startNode || !endNode) return false;
+
+        const range = document.createRange();
+        range.setStart(startNode, start);
+        range.setEnd(endNode, end);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return true;
+      },
+    };
+  </script>
+</body>
+</html>

@@ -241,7 +241,7 @@ class TextSelection {
 			range.setStart(startPoint.node, startPoint.offset);
 			range.setEnd(endPoint.node, endPoint.offset);
 			return range;
-		} catch (e) {
+		} catch (_e) {
 			return null;
 		}
 	}
