@@ -42,6 +42,18 @@ async function pointForText(page, selector, text, offset) {
 	}, { selector, text, offset });
 }
 
+async function selectNodeRange(page, selector) {
+	await page.evaluate((selector) => {
+		const node = document.querySelector(selector);
+		if (!node) return;
+		const selection = window.getSelection();
+		const range = document.createRange();
+		range.selectNode(node);
+		selection.removeAllRanges();
+		selection.addRange(range);
+	}, selector);
+}
+
 test("richtext: block and inline focus and selection classes", async () => {
 	const browser = await chromium.launch();
 	const page = await loadPage(browser, "/examples/app-richtext.example.html");
@@ -172,4 +184,192 @@ test("richtext: block and inline focus and selection classes", async () => {
 	expect(inlineState.code2).not.toContain("selected");
 	expect(inlineState.code0).not.toContain("selected-within");
 	expect(inlineState.code1).not.toContain("selected-within");
+});
+
+test("richtext: enter and shift-enter keep block structure", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	let point = await pointForText(page, "#editor", "promote paragraphs", "promote".length);
+	await page.mouse.click(point.x, point.y);
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => {
+		const paragraphs = Array.from(document.querySelectorAll("#editor p"));
+		return paragraphs.some((node, index) =>
+			node.textContent.trim() === "Use the heading buttons to promote" &&
+			paragraphs[index + 1]?.textContent.trim() === "paragraphs into heading levels. Create bullet lists for structured content."
+		);
+	});
+
+	const splitState = await page.evaluate(() => {
+		const paragraphs = Array.from(document.querySelectorAll("#editor p"));
+		const index = paragraphs.findIndex(node => node.textContent.trim() === "Use the heading buttons to promote");
+		return {
+			first: paragraphs[index]?.textContent.trim(),
+			second: paragraphs[index + 1]?.textContent.trim(),
+		};
+	});
+
+	point = await pointForText(page, "#editor", "heading levels.", "heading".length);
+	await page.mouse.click(point.x, point.y);
+	await page.keyboard.press("Shift+Enter");
+
+	await page.waitForFunction(() => {
+		const paragraph = Array.from(document.querySelectorAll("#editor p")).find(node =>
+			node.innerHTML.includes("<br>") && node.textContent.includes("heading levels.")
+		);
+		return !!paragraph;
+	});
+
+	const lineBreakState = await page.evaluate(() => {
+		const paragraph = Array.from(document.querySelectorAll("#editor p")).find(node =>
+			node.innerHTML.includes("<br>") && node.textContent.includes("heading levels.")
+		);
+		return paragraph?.innerHTML ?? null;
+	});
+
+	await page.close();
+	await browser.close();
+
+	expect(splitState.first).toBe("Use the heading buttons to promote");
+	expect(splitState.second).toBe("paragraphs into heading levels. Create bullet lists for structured content.");
+	expect(lineBreakState).toContain("<br>");
+});
+
+test("richtext: tab, shift-tab, and delete operate on blocks", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	const point = await pointForText(page, "#editor", "Use the heading buttons", 1);
+	await page.mouse.click(point.x, point.y);
+	await page.click('button[data-tag="ul"]');
+	const endPoint = await pointForText(page, "#editor", "structured content", "structured content".length);
+	await page.mouse.click(endPoint.x, endPoint.y);
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => document.querySelectorAll("#editor ul > li").length === 2);
+	await page.keyboard.press("Delete");
+	await page.waitForFunction(() => document.querySelectorAll("#editor ul > li").length === 1);
+	await page.keyboard.press("Enter");
+	await page.keyboard.type("Nested item");
+	await page.keyboard.press("Tab");
+
+	await page.waitForFunction(() => {
+		const list = document.querySelector("#editor ul");
+		const first = list?.querySelector(":scope > li");
+		const nested = first?.querySelector("ul > li");
+		return nested?.textContent.trim() === "Nested item";
+	});
+
+	await page.keyboard.press("Shift+Tab");
+
+	await page.waitForFunction(() => {
+		const list = document.querySelector("#editor ul");
+		const items = Array.from(list?.querySelectorAll(":scope > li") ?? []);
+		return items.length === 2 && items[1]?.textContent.trim() === "Nested item";
+	});
+
+	await selectNodeRange(page, "#editor h3");
+	await page.keyboard.press("Delete");
+
+	await page.waitForFunction(() => !document.querySelector("#editor h3"));
+
+	const state = await page.evaluate(() => {
+		const list = document.querySelector("#editor ul");
+		const items = Array.from(list?.querySelectorAll(":scope > li") ?? []).map(node => node.textContent.trim());
+		return {
+			items,
+			hasHeading: !!document.querySelector("#editor h3"),
+		};
+	});
+
+	await page.close();
+	await browser.close();
+
+	expect(state.items).toEqual([
+		"Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.",
+		"Nested item",
+	]);
+	expect(state.hasHeading).toBe(false);
+});
+
+test("richtext: enter on empty blocks exits their container", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	let point = await pointForText(page, "blockquote p", "remove.", "remove.".length);
+	await page.mouse.click(point.x, point.y);
+	await page.keyboard.press("Enter");
+	await page.waitForFunction(() => document.querySelectorAll("blockquote p").length === 2);
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => {
+		const quote = document.querySelector("blockquote");
+		const next = quote?.nextElementSibling;
+		return quote?.querySelectorAll("p").length === 1 && next?.tagName === "P" && next.textContent.trim() === "";
+	});
+
+	await page.locator("blockquote + p").click();
+	await page.keyboard.type("Outside quote");
+	await page.waitForFunction(() => document.querySelector("blockquote + p")?.textContent === "Outside quote");
+
+	let state = await page.evaluate(() => {
+		const quote = document.querySelector("blockquote");
+		const next = quote?.nextElementSibling;
+		return {
+			quoteParagraphs: quote ? quote.querySelectorAll("p").length : 0,
+			nextTag: next?.tagName ?? null,
+			nextText: next?.textContent ?? null,
+			nextChildNodes: next ? Array.from(next.childNodes).map(node => ({
+				type: node.nodeType,
+				text: node.textContent,
+			})) : [],
+		};
+	});
+
+	point = await pointForText(page, "#editor", "Use the heading buttons", 1);
+	await page.mouse.click(point.x, point.y);
+	await page.click('button[data-tag="ul"]');
+	const endPoint = await pointForText(page, "#editor", "structured content", "structured content".length);
+	await page.mouse.click(endPoint.x, endPoint.y);
+	await page.keyboard.press("Enter");
+	await page.waitForFunction(() => document.querySelectorAll("#editor ul > li").length === 2);
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => {
+		const list = document.querySelector("#editor ul");
+		const next = list?.nextElementSibling;
+		return list?.querySelectorAll(":scope > li").length === 1 && next?.tagName === "P" && next.textContent.trim() === "";
+	});
+
+	await page.locator("#editor ul + p").click();
+	await page.keyboard.type("After list");
+	await page.waitForFunction(() => document.querySelector("#editor ul + p")?.textContent === "After list");
+
+	const listState = await page.evaluate(() => {
+		const list = document.querySelector("#editor ul");
+		const next = list?.nextElementSibling;
+		return {
+			items: list ? list.querySelectorAll(":scope > li").length : 0,
+			nextTag: next?.tagName ?? null,
+			nextText: next?.textContent ?? null,
+			nextChildNodes: next ? Array.from(next.childNodes).map(node => ({
+				type: node.nodeType,
+				text: node.textContent,
+			})) : [],
+		};
+	});
+
+	await page.close();
+	await browser.close();
+
+	expect(state.quoteParagraphs).toBe(1);
+	expect(state.nextTag).toBe("P");
+	expect(state.nextText).toBe("Outside quote");
+	expect(state.nextChildNodes).toEqual([{ type: 3, text: "Outside quote" }]);
+	expect(listState.items).toBe(1);
+	expect(listState.nextTag).toBe("P");
+	expect(listState.nextText).toBe("After list");
+	expect(listState.nextChildNodes).toEqual([{ type: 3, text: "After list" }]);
 });

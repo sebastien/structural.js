@@ -174,6 +174,20 @@ class TextAdapter {
 		return position?.focusNode ?? null;
 	}
 
+	_caretRectFromRect(rect, edge = "start") {
+		const x = edge === "end" ? rect.right : rect.left;
+		return {
+			x,
+			y: rect.top,
+			left: x,
+			right: x,
+			top: rect.top,
+			bottom: rect.bottom,
+			width: 0,
+			height: rect.height,
+		};
+	}
+
 	visualPositionAt(index) {
 		const point = this.pointAt(index);
 		if (!point) {
@@ -183,7 +197,30 @@ class TextAdapter {
 		try {
 			range.setStart(point.node, point.offset);
 			range.collapse(true);
-			return { index, rect: range.getBoundingClientRect() };
+			const rect = range.getBoundingClientRect();
+			if (rect.width !== 0 || rect.height !== 0) {
+				return { index, rect };
+			}
+			if (point.node?.nodeType === Node.ELEMENT_NODE) {
+				const nextSibling = point.node.childNodes[point.offset] ?? null;
+				const previousSibling = point.node.childNodes[point.offset - 1] ?? null;
+				const sibling = nextSibling ?? previousSibling;
+				const siblingRect = sibling?.getBoundingClientRect?.();
+				if (siblingRect && (siblingRect.width !== 0 || siblingRect.height !== 0)) {
+					return {
+						index,
+						rect: this._caretRectFromRect(
+							siblingRect,
+							nextSibling ? "start" : "end",
+						),
+					};
+				}
+				const nodeRect = point.node.getBoundingClientRect();
+				if (nodeRect.width !== 0 || nodeRect.height !== 0) {
+					return { index, rect: this._caretRectFromRect(nodeRect) };
+				}
+			}
+			return { index, rect };
 		} catch (_e) {
 			return null;
 		}
@@ -248,6 +285,9 @@ class TextAdapter {
 		let best = 0;
 		let bestDistance = Infinity;
 		for (let i = 0; i < this._positions.length; i += 1) {
+			if (!this.acceptsText(this._positions[i]) || this.isFormattingWhitespaceSlot(i)) {
+				continue;
+			}
 			const candidate = this.visualPositionAt(i);
 			if (!candidate) {
 				continue;
@@ -339,9 +379,13 @@ class TextAdapter {
 		let best = null;
 		let bestLineDistance = Infinity;
 		let bestHorizontalDistance = Infinity;
+		const lineEpsilon = 4;
 
 		for (let i = 0; i < this._positions.length; i += 1) {
 			if (i === clamped) {
+				continue;
+			}
+			if (!this.acceptsText(this._positions[i]) || this.isFormattingWhitespaceSlot(i)) {
 				continue;
 			}
 			const candidate = this.visualPositionAt(i);
@@ -349,17 +393,17 @@ class TextAdapter {
 				continue;
 			}
 			const y = candidate.rect.top;
-			if (direction < 0 && y >= currentTop) {
+			if (direction < 0 && y >= currentTop - lineEpsilon) {
 				continue;
 			}
-			if (direction > 0 && y <= currentTop) {
+			if (direction > 0 && y <= currentTop + lineEpsilon) {
 				continue;
 			}
 			const lineDistance = Math.abs(y - currentTop);
 			const horizontalDistance = Math.abs(candidate.rect.left - targetX);
 			if (
-				lineDistance < bestLineDistance ||
-				(lineDistance === bestLineDistance &&
+				lineDistance < bestLineDistance - lineEpsilon ||
+				(Math.abs(lineDistance - bestLineDistance) <= lineEpsilon &&
 					horizontalDistance < bestHorizontalDistance)
 			) {
 				best = candidate;

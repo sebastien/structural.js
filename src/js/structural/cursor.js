@@ -330,7 +330,7 @@ class Cursor {
 			const next = this.selection.replaceWithText(text);
 			if (next) {
 				this._desiredX = null;
-				this.moveTo(next.index);
+				this.moveTo(next.index, { skipBoundaryCollapse: true });
 			}
 			return;
 		}
@@ -344,7 +344,7 @@ class Cursor {
 		}
 		const next = this.text.insertAtIndex(this.offset, text);
 		this._desiredX = null;
-		this.moveTo(next.index);
+		this.moveTo(next.index, { skipBoundaryCollapse: true });
 	}
 
 	backspace() {
@@ -362,7 +362,10 @@ class Cursor {
 		}
 		const next = this.text.deleteBackwardAtIndex(this.offset);
 		this._desiredX = null;
-		this.moveTo(next.index);
+		this.moveTo(next.index, {
+			skipBoundaryCollapse: true,
+			skipFormattingWhitespace: true,
+		});
 	}
 
 	delete() {
@@ -380,7 +383,10 @@ class Cursor {
 		}
 		const next = this.text.deleteForwardAtIndex(this.offset);
 		this._desiredX = null;
-		this.moveTo(next.index);
+		this.moveTo(next.index, {
+			skipBoundaryCollapse: true,
+			skipFormattingWhitespace: true,
+		});
 	}
 
 	// ========================================================================
@@ -792,12 +798,16 @@ class Cursor {
 					: requested < this.offset
 						? -1
 						: 0;
-		const whitespaceRemap = this._remapFormattingWhitespace(
-			requested,
-			requestedDirection,
-		);
+		const whitespaceRemap = options.skipFormattingWhitespace
+			? { offset: requested, reason: null }
+			: this._remapFormattingWhitespace(
+				requested,
+				requestedDirection,
+			);
 		const remapped = whitespaceRemap.offset;
-		const canonical = this._canonicalOffset(remapped, requestedDirection);
+		const canonical = options.skipBoundaryCollapse
+			? remapped
+			: this._canonicalOffset(remapped, requestedDirection);
 		const clamped = options.preserveVisibleEquivalent
 			? this._visibleEquivalentOffset(canonical, options.visibleDirection)
 			: canonical;
@@ -928,6 +938,7 @@ class Cursor {
 		);
 		this._desiredX = next.desiredX;
 		return this._resolveMoveOffset(next.index, {
+			skipBoundaryCollapse: true,
 			preserveVisibleEquivalent: true,
 			visibleDirection: direction,
 		});
@@ -1153,6 +1164,7 @@ class Cursor {
 			return;
 		}
 		this.moveTo(move.clamped, {
+			skipBoundaryCollapse: true,
 			preserveVisibleEquivalent: true,
 			visibleDirection: direction,
 		});

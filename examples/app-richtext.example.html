@@ -74,6 +74,7 @@
       .editor p { margin: 0.5em 0; }
       .editor ul, .editor ol { margin: 0.5em 0; padding-left: 2em; }
       .editor li { margin: 0.25em 0; }
+      .editor :is(h1, h2, h3, p, li) { min-height: 1lh; }
       .editor :is(h1, h2, h3, p, li, blockquote, strong, em, code) {
         transition: background-color 0.15s, outline-color 0.15s;
       }
@@ -175,10 +176,27 @@
       const editor = new Editor(document.getElementById("editor"));
       const mod = new Modification(editor);
       const cursor = editor.input.cursor;
+      const structureSchema = {
+        ':root': { type: 'root', contains: ['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'blockquote'], default: 'p' },
+        '@inline': ['strong', 'em', 'code'],
+        blockquote: { type: 'block', contains: ['p', 'h1', 'h2', 'h3', 'ul', 'ol'], default: 'p' },
+        ul: { type: 'block', contains: ['li', 'ul', 'ol'], absorb: ['ul'], default: 'li' },
+        ol: { type: 'block', contains: ['li', 'ul', 'ol'], absorb: ['ol'], default: 'li' },
+        li: { type: 'block', contains: ['#text', '@inline', 'p', 'ul', 'ol'], wrapIn: 'ul', default: 'p' },
+        p: { type: 'block', contains: ['#text', '@inline'] },
+        h1: { type: 'block', contains: ['#text', '@inline'] },
+        h2: { type: 'block', contains: ['#text', '@inline'] },
+        h3: { type: 'block', contains: ['#text', '@inline'] },
+        strong: { type: 'inline', contains: ['#text', '@inline'] },
+        em: { type: 'inline', contains: ['#text', '@inline'] },
+        code: { type: 'inline', contains: ['#text'] },
+      };
 
       const toolbar = document.getElementById("toolbar");
       const trackedSelector = 'h1, h2, h3, p, li, blockquote, strong, em, code';
       const blockSelector = 'h1, h2, h3, p, li, blockquote';
+      let editorActive = false;
+      let currentBlock = null;
       const trackedState = {
         focus: new Set(),
         'focus-within': new Set(),
@@ -296,7 +314,470 @@
         }
       }
 
+      function nativeRange() {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          if (rangeWithinEditor(range)) return range.cloneRange();
+        }
+        if (cursor.selectionKind === 'range') {
+          return cursor.selection.toDomRange();
+        }
+        const point = editor.text.pointAt(cursor.offset ?? 0);
+        if (!point) return null;
+        const range = document.createRange();
+        range.setStart(point.node, point.offset);
+        range.collapse(true);
+        return range;
+      }
+
+      function selectionInEditor() {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return false;
+        return rangeWithinEditor(selection.getRangeAt(0));
+      }
+
+      function blockFor(node) {
+        const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        const block = el?.closest(blockSelector);
+        return block && editor.root.contains(block) ? block : null;
+      }
+
+      function schemaTag(nodeOrTag) {
+        if (!nodeOrTag) return null;
+        if (typeof nodeOrTag === 'string') return nodeOrTag;
+        if (nodeOrTag === editor.root) return ':root';
+        if (nodeOrTag.nodeType === Node.TEXT_NODE) return '#text';
+        return nodeOrTag.tagName?.toLowerCase() ?? null;
+      }
+
+      function schemaRule(nodeOrTag) {
+        const tag = schemaTag(nodeOrTag);
+        return tag ? structureSchema[tag] ?? null : null;
+      }
+
+      function defaultChildFor(nodeOrTag) {
+        return schemaRule(nodeOrTag)?.default ?? 'p';
+      }
+
+      function createBlock(tag = 'p') {
+        const block = document.createElement(tag);
+        ensureEditableContent(block, true);
+        return block;
+      }
+
+      function replaceBlock(block, tag) {
+        const next = createBlock(tag);
+        block.replaceWith(next);
+        return next;
+      }
+
+      function firstTextNode(node) {
+        if (!node) return null;
+        if (node.nodeType === Node.TEXT_NODE) return node;
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        return walker.nextNode();
+      }
+
+      function lastTextNode(node) {
+        if (!node) return null;
+        if (node.nodeType === Node.TEXT_NODE) return node;
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        let text = null;
+        while (walker.nextNode()) text = walker.currentNode;
+        return text;
+      }
+
+      function pruneEmptyTextChildren(block) {
+        if (!block || block.nodeType !== Node.ELEMENT_NODE) return;
+        for (const child of [...block.childNodes]) {
+          if (child.nodeType === Node.TEXT_NODE && child.data.length === 0) {
+            child.remove();
+          }
+        }
+      }
+
+      function ensureEditableContent(block, preferBr = false) {
+        pruneEmptyTextChildren(block);
+        if (block.childNodes.length > 0) return;
+        if (preferBr) block.appendChild(document.createElement('br'));
+      }
+
+      function setCursorAtPoint(node, offset) {
+        editor.text.refresh();
+        const index = editor.text.indexOfPoint({ node, offset });
+        if (index >= 0) {
+          cursor.moveTo(index);
+          return syncNativeSelectionToCursor();
+        }
+        return false;
+      }
+
+      function syncNativeSelectionToCursor() {
+        const point = editor.text.pointAt(cursor.offset ?? 0);
+        if (!point?.node?.isConnected) return false;
+        try {
+          const range = document.createRange();
+          range.setStart(point.node, point.offset);
+          range.collapse(true);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          return true;
+        } catch (_e) {
+          return false;
+        }
+      }
+
+      function moveCursorToBlockStart(block) {
+        ensureEditableContent(block, true);
+        const textNode = firstTextNode(block);
+        return textNode
+          ? setCursorAtPoint(textNode, 0)
+          : setCursorAtPoint(block, 0);
+      }
+
+      function moveCursorToBlockEnd(block) {
+        ensureEditableContent(block, true);
+        const textNode = lastTextNode(block);
+        return textNode
+          ? setCursorAtPoint(textNode, textNode.data.length)
+          : setCursorAtPoint(block, block.childNodes.length);
+      }
+
+      function firstBlockIn(node) {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+        if (node.matches(blockSelector)) return node;
+        return node.querySelector(blockSelector);
+      }
+
+      function lastBlockIn(node) {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+        const blocks = node.matches(blockSelector)
+          ? [node, ...node.querySelectorAll(blockSelector)]
+          : [...node.querySelectorAll(blockSelector)];
+        return blocks.at(-1) ?? null;
+      }
+
+      function normalizeEditor() {
+        for (const list of editor.root.querySelectorAll('ul, ol')) {
+          if (!list.querySelector(':scope > li')) list.remove();
+        }
+        for (const quote of editor.root.querySelectorAll('blockquote')) {
+          if (!quote.querySelector(blockSelector)) quote.remove();
+        }
+        if (!firstBlockIn(editor.root)) {
+          editor.root.appendChild(createBlock(defaultChildFor(editor.root)));
+        }
+      }
+
+      function blockText(block) {
+        return (block?.textContent ?? '').replace(/\u200b/g, '').trim();
+      }
+
+      function isEmptyBlock(block) {
+        return !!block && blockText(block) === '';
+      }
+
+      function syncAfterMutation(move) {
+        normalizeEditor();
+        editor.text.refresh();
+        let placed = false;
+        if (move?.type === 'end' && move.block?.isConnected) {
+          placed = moveCursorToBlockEnd(move.block);
+        } else if (move?.block?.isConnected) {
+          placed = moveCursorToBlockStart(move.block);
+        }
+        if (!placed) {
+          const fallback = firstBlockIn(editor.root);
+          if (fallback) placed = moveCursorToBlockStart(fallback);
+        }
+        currentBlock = blockFor(cursor.anchor) ?? (move?.block?.isConnected ? move.block : null);
+        renderTrackedState();
+        updateToolbar();
+      }
+
+      function currentEditableBlock() {
+        const range = nativeRange();
+        const selectedBlock = range ? blockFor(range.startContainer) : null;
+        if (selectedBlock) {
+          currentBlock = selectedBlock;
+          return selectedBlock;
+        }
+        const anchorBlock = blockFor(cursor.anchor);
+        if (anchorBlock) {
+          currentBlock = anchorBlock;
+          return anchorBlock;
+        }
+        return currentBlock?.isConnected ? currentBlock : null;
+      }
+
+      function selectedRange() {
+        if (cursor.selectionKind === 'node' && cursor.selectedNode) return null;
+        const range = nativeRange();
+        return range && !range.collapsed ? range : null;
+      }
+
+      function isFullySelectedBlock(range, block) {
+        const blockRange = document.createRange();
+        blockRange.selectNode(block);
+        return (
+          range.compareBoundaryPoints(Range.START_TO_START, blockRange) <= 0 &&
+          range.compareBoundaryPoints(Range.END_TO_END, blockRange) >= 0
+        );
+      }
+
+      function fullySelectedBlocks() {
+        if (cursor.selectionKind === 'node' && cursor.selectedNode) {
+          const block = blockFor(cursor.selectedNode);
+          return block ? [block] : [];
+        }
+
+        const range = selectedRange();
+        if (!range) return [];
+
+        const blocks = [];
+        for (const block of editor.root.querySelectorAll(blockSelector)) {
+          if (range.intersectsNode(block) && isFullySelectedBlock(range, block)) {
+            blocks.push(block);
+          }
+        }
+        return blocks.filter(block => !blocks.some(other => other !== block && other.contains(block)));
+      }
+
+      function removeBlock(block) {
+        if (!block?.isConnected) return;
+        const tag = block.tagName.toLowerCase();
+        if (tag === 'li') {
+          const list = block.parentElement;
+          block.remove();
+          if (list && !list.querySelector(':scope > li')) list.remove();
+          return;
+        }
+        if (tag === 'p' && block.parentElement?.tagName?.toLowerCase() === 'blockquote') {
+          const quote = block.parentElement;
+          block.remove();
+          if (!quote.querySelector(blockSelector)) quote.remove();
+          return;
+        }
+        block.remove();
+      }
+
+      function deleteSelectedBlocks() {
+        const blocks = fullySelectedBlocks();
+        if (blocks.length === 0) return false;
+
+        const afterBlock = blocks
+          .map(block => firstBlockIn(block.nextElementSibling))
+          .find(Boolean);
+        const beforeBlock = [...blocks]
+          .reverse()
+          .map(block => lastBlockIn(block.previousElementSibling))
+          .find(Boolean);
+
+        for (const block of blocks) {
+          removeBlock(block);
+        }
+
+        syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: 'end' } : null);
+        return true;
+      }
+
+      function deleteEmptyBlock() {
+        const range = nativeRange();
+        if (!range?.collapsed) return false;
+        const block = blockFor(range.startContainer);
+        if (!block || !isEmptyBlock(block)) return false;
+
+        const afterBlock = firstBlockIn(block.nextElementSibling);
+        const beforeBlock = lastBlockIn(block.previousElementSibling);
+        removeBlock(block);
+        syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: 'end' } : null);
+        return true;
+      }
+
+      function splitRange(range) {
+        if (!range.collapsed) {
+          range.deleteContents();
+          range.collapse(true);
+        }
+        return range;
+      }
+
+      function exitEmptyBlock(block) {
+        if (!isEmptyBlock(block)) return false;
+
+        const container = block.parentElement ?? editor.root;
+        if (container === editor.root) {
+          const next = schemaTag(block) === defaultChildFor(editor.root)
+            ? block
+            : replaceBlock(block, defaultChildFor(editor.root));
+          next.replaceChildren();
+          ensureEditableContent(next, true);
+          syncAfterMutation({ block: next });
+          return true;
+        }
+
+        const outerParent = container.parentElement ?? editor.root;
+        const nextTag = defaultChildFor(outerParent);
+        const nextBlock = createBlock(nextTag);
+        container.parentNode.insertBefore(nextBlock, container.nextSibling);
+        block.remove();
+        syncAfterMutation({ block: nextBlock });
+        return true;
+      }
+
+      function splitBlockElement(block, range) {
+        if (isEmptyBlock(block)) {
+          return exitEmptyBlock(block);
+        }
+        const nextBlock = document.createElement(block.tagName.toLowerCase());
+        const trailing = document.createRange();
+        trailing.selectNodeContents(block);
+        trailing.setStart(range.startContainer, range.startOffset);
+        nextBlock.appendChild(trailing.extractContents());
+        ensureEditableContent(block, true);
+        ensureEditableContent(nextBlock, true);
+        block.parentNode.insertBefore(nextBlock, block.nextSibling);
+        syncAfterMutation({ block: nextBlock });
+        return true;
+      }
+
+      function splitListItem(item, range) {
+        if (isEmptyBlock(item)) {
+          return exitEmptyBlock(item);
+        }
+        const nextItem = document.createElement('li');
+        const trailing = document.createRange();
+        trailing.selectNodeContents(item);
+        trailing.setStart(range.startContainer, range.startOffset);
+        nextItem.appendChild(trailing.extractContents());
+        ensureEditableContent(item, true);
+        ensureEditableContent(nextItem, true);
+        item.parentNode.insertBefore(nextItem, item.nextSibling);
+        syncAfterMutation({ block: nextItem });
+        return true;
+      }
+
+      function insertLineBreak() {
+        const range = nativeRange();
+        if (!range) return false;
+        const block = blockFor(range.startContainer);
+        if (!block) return false;
+
+        splitRange(range);
+        const br = document.createElement('br');
+        const tail = document.createTextNode('');
+        range.insertNode(tail);
+        range.insertNode(br);
+        syncAfterMutation(null);
+        setCursorAtPoint(tail, 0);
+        renderTrackedState();
+        updateToolbar();
+        return true;
+      }
+
+      function splitCurrentBlock() {
+        const range = nativeRange();
+        if (!range) return false;
+        const block = blockFor(range.startContainer);
+        if (!block || !block.contains(range.startContainer)) return false;
+
+        splitRange(range);
+        if (block.tagName.toLowerCase() === 'li') {
+          return splitListItem(block, range);
+        }
+        return splitBlockElement(block, range);
+      }
+
+      function indentListItem(item) {
+        const previous = item.previousElementSibling;
+        const list = item.parentElement;
+        if (!previous || previous.tagName.toLowerCase() !== 'li' || !list) return false;
+
+        let nested = previous.lastElementChild;
+        const tag = list.tagName.toLowerCase();
+        if (!nested || nested.tagName.toLowerCase() !== tag) {
+          nested = document.createElement(tag);
+          previous.appendChild(nested);
+        }
+        nested.appendChild(item);
+        syncAfterMutation({ block: item });
+        return true;
+      }
+
+      function dedentListItem(item) {
+        const list = item.parentElement;
+        const parentItem = list?.parentElement?.closest('li');
+        if (parentItem) {
+          parentItem.parentElement.insertBefore(item, parentItem.nextSibling);
+          if (!list.querySelector(':scope > li')) list.remove();
+          syncAfterMutation({ block: item });
+          return true;
+        }
+
+        if (!list) return false;
+        const paragraph = document.createElement('p');
+        while (item.firstChild) paragraph.appendChild(item.firstChild);
+        ensureEditableContent(paragraph, true);
+        list.parentNode.insertBefore(paragraph, list.nextSibling);
+        item.remove();
+        if (!list.querySelector(':scope > li')) list.remove();
+        syncAfterMutation({ block: paragraph });
+        return true;
+      }
+
+      function handleRichTextKeydown(event) {
+        if (!['Enter', 'Return', 'Tab', 'Delete', 'Backspace'].includes(event.key)) {
+          return;
+        }
+        if (selectionInEditor()) editorActive = true;
+        if (!editorActive || event.ctrlKey || event.metaKey || event.altKey) {
+          return;
+        }
+
+        let handled = false;
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+          handled = deleteSelectedBlocks() || deleteEmptyBlock();
+        } else if (event.key === 'Tab') {
+          const item = currentBlock?.isConnected && currentBlock.tagName?.toLowerCase() === 'li'
+            ? currentBlock
+            : currentEditableBlock();
+          if (item?.tagName?.toLowerCase() === 'li') {
+            handled = event.shiftKey ? dedentListItem(item) : indentListItem(item);
+          }
+        } else if (event.key === 'Enter' || event.key === 'Return') {
+          handled = event.shiftKey ? insertLineBreak() : splitCurrentBlock();
+        }
+
+        if (!handled) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
       toolbar.addEventListener('mousedown', (e) => e.stopPropagation());
+
+      editor.root.addEventListener('mousedown', (event) => {
+        const target = event.target?.nodeType === Node.ELEMENT_NODE
+          ? event.target
+          : event.target?.parentElement;
+        const block = blockFor(target);
+        if (!block || !isEmptyBlock(block)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        editorActive = true;
+        currentBlock = block;
+        moveCursorToBlockStart(block);
+        renderTrackedState();
+        updateToolbar();
+      }, true);
+
+      document.addEventListener('mousedown', (event) => {
+        const target = event.target?.nodeType === Node.ELEMENT_NODE
+          ? event.target
+          : event.target?.parentElement;
+        editorActive = !!target && editor.root.contains(target);
+      }, true);
 
       toolbar.addEventListener('click', (event) => {
         const btn = event.target.closest('button');
@@ -329,11 +810,19 @@
         }
       }, true);
 
+      document.addEventListener('keydown', handleRichTextKeydown, true);
+
       document.addEventListener('selectionchange', () => {
+        if (selectionInEditor()) {
+          editorActive = true;
+          currentBlock = currentEditableBlock();
+        }
         renderTrackedState();
       });
 
       editor.root.addEventListener('CursorMove', () => {
+        editorActive = true;
+        currentBlock = blockFor(cursor.anchor) ?? currentBlock;
         renderTrackedState();
         updateToolbar();
       });
