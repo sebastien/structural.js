@@ -74,6 +74,22 @@
       .editor p { margin: 0.5em 0; }
       .editor ul, .editor ol { margin: 0.5em 0; padding-left: 2em; }
       .editor li { margin: 0.25em 0; }
+      .editor :is(h1, h2, h3, p, li, blockquote, strong, em, code) {
+        transition: background-color 0.15s, outline-color 0.15s;
+      }
+      .editor .focus {
+        outline: 2px solid rgba(14, 99, 156, 0.9);
+        outline-offset: 2px;
+      }
+      .editor .focus-within {
+        background: rgba(14, 99, 156, 0.08);
+      }
+      .editor .selected {
+        background: rgba(14, 99, 156, 0.16);
+      }
+      .editor .selected-within {
+        background: rgba(14, 99, 156, 0.1);
+      }
       .editor blockquote {
         margin: 0.5em 0;
         padding: 0.25em 1em;
@@ -89,10 +105,6 @@
       }
       .editor strong { font-weight: 600; }
       .editor em { font-style: italic; }
-      .focus {
-        outline: 2px solid var(--button-active);
-        outline-offset: 2px;
-      }
     </style>
     <script type="importmap">
     {
@@ -162,13 +174,125 @@
 
       const editor = new Editor(document.getElementById("editor"));
       const mod = new Modification(editor);
+      const cursor = editor.input.cursor;
 
       const toolbar = document.getElementById("toolbar");
+      const trackedSelector = 'h1, h2, h3, p, li, blockquote, strong, em, code';
+      const blockSelector = 'h1, h2, h3, p, li, blockquote';
+      const trackedState = {
+        focus: new Set(),
+        'focus-within': new Set(),
+        selected: new Set(),
+        'selected-within': new Set(),
+      };
 
       function updateToolbar() {
         const state = mod.formats();
         for (const btn of toolbar.querySelectorAll('button[data-tag]')) {
           btn.classList.toggle('active', !!state[btn.dataset.tag]);
+        }
+      }
+
+      function trackedFor(node) {
+        const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        const tracked = el?.closest(trackedSelector);
+        return tracked && editor.root.contains(tracked) ? tracked : null;
+      }
+
+      function trackedAncestors(node) {
+        const ancestors = [];
+        let current = node?.parentElement?.closest(trackedSelector) ?? null;
+        while (current && editor.root.contains(current)) {
+          ancestors.push(current);
+          current = current.parentElement?.closest(trackedSelector) ?? null;
+        }
+        return ancestors;
+      }
+
+      function rangeWithinEditor(range) {
+        if (!range) return false;
+        const start = range.startContainer?.nodeType === Node.ELEMENT_NODE
+          ? range.startContainer
+          : range.startContainer?.parentElement;
+        const end = range.endContainer?.nodeType === Node.ELEMENT_NODE
+          ? range.endContainer
+          : range.endContainer?.parentElement;
+        return !!start && !!end && editor.root.contains(start) && editor.root.contains(end);
+      }
+
+      function selectedNodes() {
+        const nodes = new Set();
+        if (cursor.selectionKind === 'node' && cursor.selectedNode) {
+          const tracked = trackedFor(cursor.selectedNode);
+          if (tracked) nodes.add(tracked);
+          return nodes;
+        }
+
+        let range = null;
+        if (cursor.selectionKind === 'range') {
+          range = cursor.selection.toDomRange();
+        }
+
+        const nativeSelection = window.getSelection();
+        if (
+          (!range || range.collapsed) &&
+          nativeSelection &&
+          nativeSelection.rangeCount > 0 &&
+          !nativeSelection.isCollapsed
+        ) {
+          const nativeRange = nativeSelection.getRangeAt(0);
+          if (rangeWithinEditor(nativeRange)) {
+            range = nativeRange;
+          }
+        }
+
+        if (!range || range.collapsed || !rangeWithinEditor(range)) {
+          return nodes;
+        }
+
+        const candidates = [];
+        for (const tracked of editor.root.querySelectorAll(trackedSelector)) {
+          if (range.intersectsNode(tracked)) candidates.push(tracked);
+        }
+        for (const tracked of candidates) {
+          const hasIntersectingChild = candidates.some(candidate =>
+            candidate !== tracked && tracked.contains(candidate)
+          );
+          if (!hasIntersectingChild) nodes.add(tracked);
+        }
+        return nodes;
+      }
+
+      function renderTrackedState() {
+        const nextState = {
+          focus: new Set(),
+          'focus-within': new Set(),
+          selected: selectedNodes(),
+          'selected-within': new Set(),
+        };
+
+        const focused = trackedFor(cursor.anchor);
+        if (focused) {
+          nextState.focus.add(focused);
+          for (const ancestor of trackedAncestors(focused)) {
+            nextState['focus-within'].add(ancestor);
+          }
+        }
+
+        for (const tracked of nextState.selected) {
+          for (const ancestor of trackedAncestors(tracked)) {
+            nextState['selected-within'].add(ancestor);
+          }
+        }
+
+        for (const name of Object.keys(trackedState)) {
+          for (const node of trackedState[name]) {
+            if (!nextState[name].has(node)) node.classList.remove(name);
+          }
+          for (const node of nextState[name]) {
+            if (!trackedState[name].has(node)) node.classList.add(name);
+          }
+          trackedState[name] = nextState[name];
         }
       }
 
@@ -205,12 +329,16 @@
         }
       }, true);
 
-      editor.root.addEventListener('CursorMove', (event) => {
-        const { previous, current } = event.detail;
-        previous.anchor?.classList?.remove('focus');
-        current.anchor?.classList?.add('focus');
+      document.addEventListener('selectionchange', () => {
+        renderTrackedState();
+      });
+
+      editor.root.addEventListener('CursorMove', () => {
+        renderTrackedState();
         updateToolbar();
       });
+
+      renderTrackedState();
     </script>
   </body>
 </html>
