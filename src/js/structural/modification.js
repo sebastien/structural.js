@@ -5,9 +5,10 @@ class Modification {
 	// LIFECYCLE
 	// ========================================================================
 
-	constructor(editor, options = {}) {
-		this.editor = editor;
-		this.schema = options.schema ?? null;
+	constructor(editorOrSession, options = {}) {
+		this.session = options.session ?? (editorOrSession?.cursor && editorOrSession?.editor ? editorOrSession : null);
+		this.editor = this.session?.editor ?? editorOrSession;
+		this.schema = options.schema ?? this.editor.schema ?? null;
 		this._savedPoint = null;
 		this._savedOffset = null;
 		this._savedWrapper = null;
@@ -16,7 +17,7 @@ class Modification {
 	}
 
 	get cursor() {
-		return this.editor.input.cursor;
+		return this.session?.cursor ?? this.editor.input.cursor;
 	}
 
 	get text() {
@@ -91,11 +92,13 @@ class Modification {
 			: container.parentElement;
 		const wrapper = el?.closest(tag);
 		if (wrapper?.contains(range.startContainer) && wrapper.contains(range.endContainer)) {
-			this.unwrapElement(wrapper);
+			this.coalesceText(this.unwrapElement(wrapper));
 		} else {
 			const overlapping = this._overlappingTags(range, tag);
 			if (overlapping.length > 0) {
-				for (const el of overlapping) this.unwrapElement(el);
+				const parents = new Set();
+				for (const el of overlapping) parents.add(this.unwrapElement(el));
+				for (const parent of parents) this.coalesceText(parent);
 				this.text.refresh();
 				range = this._rangeFromSave();
 				if (!range || range.collapsed) return;
@@ -272,6 +275,42 @@ class Modification {
 			parent.insertBefore(el.firstChild, el);
 		}
 		parent.removeChild(el);
+		return parent;
+	}
+
+	coalesceText(parent) {
+		if (!parent) return null;
+		let previous = null;
+		for (const child of [...parent.childNodes]) {
+			if (child.nodeType !== Node.TEXT_NODE) {
+				previous = null;
+				continue;
+			}
+			if (child.data.length === 0) {
+				this._remapSavedTextPoint(child, previous ?? parent, previous ? previous.data.length : [...parent.childNodes].indexOf(child));
+				child.remove();
+				continue;
+			}
+			if (previous) {
+				const offset = previous.data.length;
+				this._remapSavedTextPoint(child, previous, offset);
+				previous.data += child.data;
+				child.remove();
+				continue;
+			}
+			previous = child;
+		}
+		return parent;
+	}
+
+	_remapSavedTextPoint(fromNode, toNode, offset) {
+		for (const key of ["_savedPoint", "_savedRangeStart", "_savedRangeEnd"]) {
+			const point = this[key];
+			if (point?.node === fromNode) {
+				point.node = toNode;
+				point.offset += offset;
+			}
+		}
 	}
 
 	changeTagName(el, tag) {

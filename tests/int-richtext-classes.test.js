@@ -229,12 +229,112 @@ test("richtext: enter and shift-enter keep block structure", async () => {
 		return paragraph?.innerHTML ?? null;
 	});
 
+	point = await pointForText(page, "#editor h1", "Rich Text Editor", "Rich Text Editor".length);
+	await page.mouse.click(point.x, point.y);
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => {
+		const heading = document.querySelector("#editor h1");
+		return heading?.nextElementSibling?.tagName === "P";
+	});
+
+	const headingSplitState = await page.evaluate(() => {
+		const heading = document.querySelector("#editor h1");
+		const next = heading?.nextElementSibling;
+		return {
+			headingTag: heading?.tagName ?? null,
+			nextTag: next?.tagName ?? null,
+			nextText: next?.textContent.trim() ?? null,
+		};
+	});
+
+	point = await pointForText(page, "blockquote p", "great", 0);
+	await page.mouse.click(point.x, point.y);
+	await page.click('button[data-tag="h1"]');
+	point = await pointForText(page, "blockquote h1", "great", "great".length);
+	await page.mouse.click(point.x, point.y);
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => {
+		const heading = document.querySelector("blockquote h1");
+		return heading?.nextElementSibling?.tagName === "P";
+	});
+
+	const quoteHeadingSplitState = await page.evaluate(() => {
+		const heading = document.querySelector("blockquote h1");
+		const next = heading?.nextElementSibling;
+		return {
+			headingTag: heading?.tagName ?? null,
+			nextTag: next?.tagName ?? null,
+			insideQuote: !!next?.closest("blockquote"),
+		};
+	});
+
 	await page.close();
 	await browser.close();
 
 	expect(splitState.first).toBe("Use the heading buttons to promote");
 	expect(splitState.second).toBe("paragraphs into heading levels. Create bullet lists for structured content.");
 	expect(lineBreakState).toContain("<br>");
+	expect(headingSplitState.headingTag).toBe("H1");
+	expect(headingSplitState.nextTag).toBe("P");
+	expect(headingSplitState.nextText).toBe("");
+	expect(quoteHeadingSplitState.headingTag).toBe("H1");
+	expect(quoteHeadingSplitState.nextTag).toBe("P");
+	expect(quoteHeadingSplitState.insideQuote).toBe(true);
+});
+
+test("richtext: backspace at block start merges with previous block", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	await page.evaluate(() => {
+		const heading = document.querySelector("#editor h1");
+		const text = heading.firstChild;
+		const range = document.createRange();
+		range.setStart(text, "Rich Text ".length);
+		range.collapse(true);
+		const selection = window.getSelection();
+		selection.removeAllRanges();
+		selection.addRange(range);
+	});
+	await page.keyboard.press("Enter");
+
+	await page.waitForFunction(() => {
+		const heading = document.querySelector("#editor h1");
+		const next = heading?.nextElementSibling;
+		return heading?.textContent === "Rich Text " && next?.tagName === "P" && next.textContent === "Editor";
+	});
+
+	await page.keyboard.press("Backspace");
+
+	await page.waitForFunction(() => {
+		const heading = document.querySelector("#editor h1");
+		return heading?.textContent === "Rich Text Editor" && heading.nextElementSibling?.textContent.startsWith("This is a");
+	});
+
+	const state = await page.evaluate(() => {
+		const selection = window.getSelection();
+		const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+		const heading = document.querySelector("#editor h1");
+		return {
+			headingText: heading?.textContent ?? null,
+			nextTag: heading?.nextElementSibling?.tagName ?? null,
+			selectionTextBeforeCaret: range && heading ? (() => {
+				const before = document.createRange();
+				before.selectNodeContents(heading);
+				before.setEnd(range.startContainer, range.startOffset);
+				return before.toString();
+			})() : null,
+		};
+	});
+
+	await page.close();
+	await browser.close();
+
+	expect(state.headingText).toBe("Rich Text Editor");
+	expect(state.nextTag).toBe("P");
+	expect(state.selectionTextBeforeCaret).toBe("Rich Text ");
 });
 
 test("richtext: tab, shift-tab, and delete operate on blocks", async () => {

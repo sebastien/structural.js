@@ -70,6 +70,21 @@ test("ui: native selection across existing <em>", async () => {
 	const beforeHtml = normalizeHtml(await page.evaluate(() => window.__test.html()));
 	await page.click('button[data-tag="em"]');
 	const afterHtml = normalizeHtml(await page.evaluate(() => window.__test.html()));
+	await page.click('button[data-tag="em"]');
+	const unwrappedState = await page.evaluate(() => {
+		const paragraph = document.querySelector("#editor p");
+		const children = Array.from(paragraph.childNodes).map(node => ({
+			type: node.nodeType,
+			text: node.textContent,
+		}));
+		return {
+			html: paragraph.innerHTML,
+			children,
+			hasAdjacentText: Array.from(paragraph.childNodes).some((node, index, nodes) =>
+				node.nodeType === Node.TEXT_NODE && nodes[index + 1]?.nodeType === Node.TEXT_NODE
+			),
+		};
+	});
 
 	await page.close();
 	await browser.close();
@@ -77,4 +92,7 @@ test("ui: native selection across existing <em>", async () => {
 	expect(selectedText).toBe("ct some te");
 	expect(beforeHtml).toBe("Select <em>some</em> text");
 	expect(afterHtml).toBe("Sele<em>ct some te</em>xt");
+	expect(unwrappedState.html).toBe("Select some text");
+	expect(unwrappedState.children).toEqual([{ type: 3, text: "Select some text" }]);
+	expect(unwrappedState.hasAdjacentText).toBe(false);
 });

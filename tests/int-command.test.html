@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "/src/js/structural/editor.js",
+        "structural/cursor": "/src/js/structural/cursor.js",
+        "structural/text": "/src/js/structural/text.js",
+        "structural/selection": "/src/js/structural/selection.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="editor">hello</div>
+    <script type="module">
+      import { Command, Editor, Transaction, richTextKeymap, richTextSchema } from "structural/editor";
+
+      const stringCommand = Command.from("toggleInline:strong", {
+        actor: "agent",
+        selection: { offset: 12, selectionKind: "caret" },
+      });
+      const objectCommand = Command.from({
+        type: "toggleBlock",
+        args: { tag: "h2" },
+        meta: { source: "keymap" },
+      }, { actor: "local", mode: "insert" });
+      const transactionCommand = Command.from({ type: "splitBlock" }, { actor: "local" });
+      const transaction = new Transaction(transactionCommand, {
+        steps: [{ type: "splitNode", path: [0], offset: 3 }],
+        inverse: [{ type: "mergeNode", path: [0] }],
+        selectionBefore: { offset: 3 },
+        selectionAfter: { offset: 4 },
+        result: true,
+      });
+      const editor = new Editor(document.getElementById("editor"), {
+        schema: richTextSchema(),
+        keymap: richTextKeymap(),
+      });
+      editor.configureActions({
+        toggleInline: () => true,
+      });
+
+      function defaultPreventedFor(init) {
+        const event = new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        });
+        document.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      window.__result = {
+        stringCommand: stringCommand.toJSON(),
+        objectCommand: objectCommand.toJSON(),
+        transaction: {
+          handled: transaction.handled,
+          json: transaction.toJSON(),
+        },
+        keys: {
+          ctrlR: defaultPreventedFor({ key: "r", ctrlKey: true }),
+          f5: defaultPreventedFor({ key: "F5" }),
+          ctrlB: defaultPreventedFor({ key: "b", ctrlKey: true }),
+        },
+      };
+    </script>
+  </body>
+</html>

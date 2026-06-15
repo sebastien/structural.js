@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "/src/js/structural/editor.js",
+        "structural/cursor": "/src/js/structural/cursor.js",
+        "structural/text": "/src/js/structural/text.js",
+        "structural/selection": "/src/js/structural/selection.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="empty"></div>
+    <div id="rich">
+      <p>Hello <b>bold</b> <span>mystery</span></p>
+      <ul></ul>
+      <blockquote></blockquote>
+    </div>
+    <script type="module">
+      import { Normalizer, richTextSchema } from "structural/editor";
+
+      const schema = richTextSchema();
+      const empty = document.getElementById("empty");
+      const rich = document.getElementById("rich");
+      const normalizer = new Normalizer(schema);
+      const emptyTx = normalizer.normalize(empty, { root: empty });
+      const richTx = normalizer.normalize(rich, { root: rich });
+
+      window.__result = {
+        emptyRootHtml: empty.innerHTML,
+        richHtml: rich.innerHTML.trim(),
+        hasList: !!rich.querySelector("ul, ol"),
+        hasQuote: !!rich.querySelector("blockquote"),
+        steps: [...emptyTx.steps, ...richTx.steps].map(step => step.type),
+      };
+    </script>
+  </body>
+</html>
