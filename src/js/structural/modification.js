@@ -230,57 +230,12 @@ class Modification {
 	//
 	// ----------------------------------------------------------------------------
 
-	// Method: _syncNativeSelection
-	// Synchronizes the native browser selection with the cursor's internal text selection.
-	_syncNativeSelection() {
-		const selection = window.getSelection();
-		if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-			return null;
-		}
-
-		const range = selection.getRangeAt(0);
-		if (!this._containsPoint(range.startContainer) || !this._containsPoint(range.endContainer)) {
-			return null;
-		}
-
-		const start = this.text.indexOfPoint({
-			node: range.startContainer,
-			offset: range.startOffset,
-		});
-		const end = this.text.indexOfPoint({
-			node: range.endContainer,
-			offset: range.endOffset,
-		});
-		if (start < 0 || end < 0 || start === end) {
-			return null;
-		}
-
-		this.cursor.selection.set(start, end);
-		this.cursor.selectionKind = 'range';
-		this.cursor.offset = end;
-		this.cursor.anchor = this.text.focusNodeAt(end) || this.cursor.anchor;
-		this.cursor.caret.setVirtual(null);
-		return range;
-	}
-
-	// Method: _containsPoint
-	// Verifies if the specified `node` lies within the editor's root element.
-	_containsPoint(node) {
-		if (!node) return false;
-		const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-		return !!element && this.editor.root.contains(element);
-	}
-
 	// Method: rangeFromCursor
 	// Returns a valid native DOM Range from the cursor position or active selection.
 	rangeFromCursor() {
-		const nativeRange = this._syncNativeSelection();
-		if (nativeRange) {
-			return nativeRange;
-		}
-		if (this.cursor.selectionKind === 'range') {
-			return this.cursor.selection.toDomRange();
-		}
+		this.editor.selection.syncFromNative(this.editor.root, this.session);
+		const selected = this.editor.range.selected(this.editor.root, this.session);
+		if (selected) return selected;
 		const word = this.expandToWord();
 		if (word) {
 			const startPt = this.text.pointAt(word.start);
@@ -476,19 +431,7 @@ class Modification {
 	// Method: _setSelection
 	// Internal helper to set range selection from `start` to `end`.
 	_setSelection(start, end) {
-		this.cursor.selection.clear();
-		this.cursor.selection.set(start, end);
-		this.cursor.selectionKind = 'range';
-		this.cursor.offset = end;
-		this.cursor.anchor = this.text.focusNodeAt(end) || this.cursor.anchor;
-		this.cursor.caret.setVirtual(null);
-		this.cursor.selection.apply();
-		this.editor.root.dispatchEvent(new CustomEvent('CursorMove', {
-			detail: {
-				previous: { anchor: null },
-				current: { anchor: this.cursor.anchor },
-			},
-		}));
+		this.cursor.select(start, end);
 	}
 
 	// Method: _wrapperBounds

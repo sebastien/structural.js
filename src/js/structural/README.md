@@ -106,6 +106,8 @@ import { Modification } from "structural/modification";
 ### API
 
 - `Editor(rootNode, options?)`: Main orchestrator wrapping the DOM tree, initializing the text adapter and text inputs.
+- `editor.range`: Editor-level DOM range controller for subtree snapshots, restoration, and edge checks.
+- `editor.selection`: Editor-level selection controller for native/structural selection synchronization.
 - `TextAdapter(rootNode, options?)`: Linear mapping agent indexing the DOM tree structure into editable caret positions.
 - `Cursor(input, options?)`: State-holder driving horizontal/vertical movement, selection, and mutation coordinates.
 - `Caret(caretNode)`: Virtual caret placement agent responsible for drawing and positioning the visual caret.
@@ -118,9 +120,10 @@ import { Modification } from "structural/modification";
 ### Modules
 
 - [`editor.js`](editor.js): Contains the `Editor` core, `TextInput` (keyboard event router), and base `Schema`/`Adapter` classes.
+- [`range.js`](range.js): Implements `EditorRangeController`, grouping DOM range access, subtree-local snapshots, and restoration.
 - [`text.js`](text.js): Implements `TextAdapter`, coordinating DOM MutationObservers and translating structural layout to a linear index space.
 - [`cursor.js`](cursor.js): Implements the interactive `Cursor` driver and visual `Caret` placement rendering.
-- [`selection.js`](selection.js): Implements `TextSelection` and `SelectionOverlay` for boundary-aware selection styling.
+- [`selection.js`](selection.js): Implements `TextSelection`, `SelectionOverlay`, and `EditorSelectionController` for boundary-aware selection styling and native selection sync.
 - [`modification.js`](modification.js): Implements `Modification`, handling inline toggles (e.g. bold, italic, code) and block transformations (e.g. lists, blockquotes, headings).
 
 ### Notable examples

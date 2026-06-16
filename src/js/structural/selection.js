@@ -352,6 +352,154 @@ class TextSelection {
 	}
 }
 
-export { SelectionOverlay, TextSelection };
+// Class: EditorSelectionController
+// Synchronizes native browser selection and the editor's structural cursor state.
+class EditorSelectionController {
+	constructor(editor) {
+		this.editor = editor;
+	}
+
+	// Method: _syncSessionBlock
+	// Updates session block bookkeeping from the active cursor anchor.
+	_syncSessionBlock(active) {
+		active.currentBlock = this.editor.blockFor(active.cursor.anchor) ?? active.currentBlock;
+		if (active === this.editor.localSession) this.editor._currentBlock = active.currentBlock;
+	}
+
+	// Method: _pointWithin
+	// Checks if `node` lies within subtree `root`.
+	_pointWithin(root, node) {
+		if (!root || !node) return false;
+		const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+		return !!element && (element === root || root.contains(element));
+	}
+
+	// Method: _nativeCaretPointFromClientPoint
+	// Resolves a native DOM point from viewport coordinates when available.
+	_nativeCaretPointFromClientPoint(x, y) {
+		const position = document.caretPositionFromPoint?.(x, y);
+		if (position?.offsetNode) {
+			return { node: position.offsetNode, offset: position.offset };
+		}
+		const range = document.caretRangeFromPoint?.(x, y);
+		if (range?.startContainer) {
+			return { node: range.startContainer, offset: range.startOffset };
+		}
+		return null;
+	}
+
+	// Method: _edgePlacement
+	// Resolves whether a point should snap to the subtree start or end.
+	_edgePlacement(root, x) {
+		const rect = root.getBoundingClientRect();
+		return x > rect.left + rect.width / 2 ? "end" : "start";
+	}
+
+	// Method: setCaret
+	// Moves the active caret to the specified DOM `node` and `offset`.
+	setCaret(node, offset, session = null) {
+		const active = this.editor.activeSession(session);
+		this.editor.text.refresh();
+		const index = this.editor.text.indexOfPoint({ node, offset });
+		if (index < 0) {
+			return false;
+		}
+		active.cursor.moveTo(index);
+		this._syncSessionBlock(active);
+		return this.syncToNative(active);
+	}
+
+	// Method: select
+	// Applies a structural text selection from `start` to `end`.
+	select(start, end, session = null) {
+		const active = this.editor.activeSession(session);
+		active.cursor.select(start, end);
+		this._syncSessionBlock(active);
+		return true;
+	}
+
+	// Method: placeCaretFromPoint
+	// Places the caret within subtree `root` using viewport coordinates `x` and `y`.
+	placeCaretFromPoint(root, x, y, session = null, options = {}) {
+		if (!root?.isConnected) return false;
+		const nativePoint = this._nativeCaretPointFromClientPoint(x, y);
+		if (nativePoint && this._pointWithin(root, nativePoint.node)) {
+			return this.setCaret(nativePoint.node, nativePoint.offset, session);
+		}
+
+		const active = this.editor.activeSession(session);
+		const offset = active.cursor.offsetFromPointIn(root, x, y);
+		if (offset !== null) {
+			active.cursor._desiredX = null;
+			active.cursor.moveTo(offset);
+			this._syncSessionBlock(active);
+			return this.syncToNative(active);
+		}
+
+		if (options.fallback === "none") {
+			return false;
+		}
+
+		return this._edgePlacement(root, x) === "end"
+			? this.editor.moveCursorToBlockEnd(root, active)
+			: this.editor.moveCursorToBlockStart(root, active);
+	}
+
+	// Method: syncToNative
+	// Syncs the active structural caret or range to the browser selection.
+	syncToNative(session = null) {
+		const active = this.editor.activeSession(session);
+		if (active.nativeSelection === "none") return true;
+		try {
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			if (active.cursor.selectionKind === "range") {
+				const range = active.cursor.selection.toDomRange();
+				if (!range) return false;
+				selection?.addRange(range);
+				return true;
+			}
+			const point = this.editor.text.pointAt(active.cursor.offset ?? 0);
+			if (!point?.node?.isConnected) return false;
+			const range = document.createRange();
+			range.setStart(point.node, point.offset);
+			range.collapse(true);
+			selection?.addRange(range);
+			return true;
+		} catch (_e) {
+			return false;
+		}
+	}
+
+	// Method: syncFromNative
+	// Maps the browser selection back into the active structural cursor state.
+	syncFromNative(root = this.editor.root, session = null) {
+		const selection = window.getSelection();
+		if (!selection?.rangeCount) return false;
+		const range = selection.getRangeAt(0);
+		if (!this.editor.range.within(root, range)) return false;
+		const start = this.editor.text.indexOfPoint({
+			node: range.startContainer,
+			offset: range.startOffset,
+		});
+		const end = this.editor.text.indexOfPoint({
+			node: range.endContainer,
+			offset: range.endOffset,
+		});
+		if (start < 0 || end < 0) return false;
+
+		const active = this.editor.activeSession(session);
+		if (range.collapsed || start === end) {
+			active.cursor.moveTo(end);
+		} else {
+			active.cursor.select(start, end);
+		}
+		this._syncSessionBlock(active);
+		active.classes?.update();
+		return true;
+	}
+}
+
+export { EditorSelectionController, SelectionOverlay, TextSelection };
 
 // EOF

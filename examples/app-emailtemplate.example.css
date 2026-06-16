@@ -1,0 +1,121 @@
+html,
+body {
+	margin: 0;
+	min-height: 100%;
+	background: #d9dde2;
+}
+
+body {
+	padding: 28px 16px 80px;
+}
+
+.template {
+	position: relative;
+}
+
+.template :is(.TEXT, .text) {
+	outline: 1px dashed rgba(220, 38, 38, 0.9);
+	outline-offset: 3px;
+}
+
+.template .EDITABLE {
+	cursor: text;
+	outline: 2px solid rgba(37, 99, 235, 0.9);
+	outline-offset: 4px;
+}
+
+.template .EDITABLE :is(.TEXT, .text),
+.template .EDITABLE:is(.TEXT, .text) {
+	outline-color: rgba(37, 99, 235, 0.55);
+}
+
+.template .email-editor-current {
+	background-image: linear-gradient(rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.1));
+	box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.18);
+}
+
+.template .email-editor-readonly {
+	cursor: not-allowed;
+}
+
+.template .focus {
+	outline-style: solid;
+}
+
+.email-template-toolbar {
+	position: fixed;
+	top: 16px;
+	left: 16px;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 6px;
+	border: 1px solid rgba(148, 163, 184, 0.35);
+	border-radius: 999px;
+	background: rgba(15, 23, 42, 0.94);
+	box-shadow: 0 16px 40px rgba(15, 23, 42, 0.28);
+	color: #f8fafc;
+	font: 13px/1.2 Arial, Helvetica, sans-serif;
+	transform: translate(-50%, calc(-100% - 14px));
+	transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.email-template-toolbar[hidden] {
+	display: none;
+}
+
+.email-template-toolbar button {
+	min-width: 30px;
+	height: 30px;
+	padding: 0 9px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.email-template-toolbar button:hover,
+.email-template-toolbar button.active {
+	background: #2563eb;
+}
+
+.email-template-toolbar button:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
+}
+
+.email-template-toolbar__mode {
+	padding: 0 10px;
+	color: #cbd5e1;
+	white-space: nowrap;
+}
+
+.email-template-toolbar__sep {
+	width: 1px;
+	height: 18px;
+	background: rgba(203, 213, 225, 0.25);
+}
+
+.email-template-caret {
+	position: absolute;
+	z-index: 1001;
+	width: 2px;
+	height: 1lh;
+	background: #2563eb;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.email-template-selection {
+	position: absolute;
+	left: 0;
+	top: 0;
+	z-index: 1000;
+	visibility: hidden;
+	pointer-events: none;
+}

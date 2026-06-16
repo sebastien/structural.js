@@ -114,6 +114,7 @@
         "structural/cursor": "../src/js/structural/cursor.js",
         "structural/text": "../src/js/structural/text.js",
         "structural/selection": "../src/js/structural/selection.js",
+        "structural/range": "../src/js/structural/range.js",
         "structural/modification": "../src/js/structural/modification.js"
       }
     }
@@ -223,7 +224,7 @@
       });
 
       document.addEventListener('selectionchange', () => {
-        if (window.getSelection()?.rangeCount > 0 && editor.rangeWithinEditor(window.getSelection().getRangeAt(0))) {
+        if (window.getSelection()?.rangeCount > 0 && editor.range.within(editor.root, window.getSelection().getRangeAt(0))) {
           editor.localSession.currentBlock = editor.currentEditableBlock(editor.localSession);
           editor._currentBlock = editor.localSession.currentBlock;
         }

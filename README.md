@@ -97,9 +97,19 @@ import { Modification } from "structural/modification";
 </script>
 ```
 
+### Single-file build
+
+```html
+<script type="module" src="./dist/structural.js"></script>
+```
+
+The production build also emits `dist/structural.min.js` and `dist/structural.min.js.gz`.
+
 ### API
 
 - `Editor(rootNode, options?)`: Main orchestrator wrapping the DOM tree, initializing the text adapter and text inputs.
+- `editor.range`: Editor-level DOM range controller for subtree snapshots, restoration, and edge checks.
+- `editor.selection`: Editor-level selection controller for native/structural selection synchronization.
 - `TextAdapter(rootNode, options?)`: Linear mapping agent indexing the DOM tree structure into editable caret positions.
 - `Cursor(input, options?)`: State-holder driving horizontal/vertical movement, selection, and mutation coordinates.
 - `Caret(caretNode)`: Virtual caret placement agent responsible for drawing and positioning the visual caret.
@@ -112,9 +122,10 @@ import { Modification } from "structural/modification";
 ### Modules
 
 - [`src/js/structural/editor.js`](src/js/structural/editor.js): Contains the `Editor` core, `TextInput` (keyboard event router), and base `Schema`/`Adapter` classes.
+- [`src/js/structural/range.js`](src/js/structural/range.js): Implements `EditorRangeController`, grouping DOM range access, subtree-local snapshots, and restoration.
 - [`src/js/structural/text.js`](src/js/structural/text.js): Implements `TextAdapter`, coordinating DOM MutationObservers and translating structural layout to a linear index space.
 - [`src/js/structural/cursor.js`](src/js/structural/cursor.js): Implements the interactive `Cursor` driver and visual `Caret` placement rendering.
-- [`src/js/structural/selection.js`](src/js/structural/selection.js): Implements `TextSelection` and `SelectionOverlay` for boundary-aware selection styling.
+- [`src/js/structural/selection.js`](src/js/structural/selection.js): Implements `TextSelection`, `SelectionOverlay`, and `EditorSelectionController` for boundary-aware selection styling and native selection sync.
 - [`src/js/structural/modification.js`](src/js/structural/modification.js): Implements `Modification`, handling inline toggles (e.g. bold, italic, code) and block transformations (e.g. lists, blockquotes, headings).
 
 ### Notable examples

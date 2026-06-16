@@ -6,8 +6,10 @@
 // Module: editor
 // Implements core editor orchestration, schemas, commands, transactions, and event listeners.
 
-import { TextAdapter } from "structural/text";
-import { Cursor } from "structural/cursor";
+import { TextAdapter } from "./text.js";
+import { Cursor } from "./cursor.js";
+import { EditorRangeController } from "./range.js";
+import { EditorSelectionController } from "./selection.js";
 
 // ----------------------------------------------------------------------------
 //
@@ -687,14 +689,7 @@ class ClassTracker {
 	// Method: rangeWithinEditor
 	// Checks if the given range is safely enclosed in editor root.
 	rangeWithinEditor(range) {
-		if (!range) return false;
-		const start = range.startContainer?.nodeType === Node.ELEMENT_NODE
-			? range.startContainer
-			: range.startContainer?.parentElement;
-		const end = range.endContainer?.nodeType === Node.ELEMENT_NODE
-			? range.endContainer
-			: range.endContainer?.parentElement;
-		return !!start && !!end && this.editor.root.contains(start) && this.editor.root.contains(end);
+		return this.editor.range.within(this.editor.root, range);
 	}
 
 	// Method: selectedNodes
@@ -892,28 +887,19 @@ class TextInput {
 				this.cursor.selectContainer(container, side);
 				return;
 			}
-			const offset = this.cursor.offsetFromPoint(event.clientX, event.clientY);
-			const position = this.editor.text.positionSlotAt(offset);
-			if (
-				!this.editor.text.acceptsText(position) ||
-				!this.cursor._isWithinNode(container, position?.point?.node)
-			) {
+			if (!this.editor.selection.placeCaretFromPoint(container, event.clientX, event.clientY, this.session, {
+				fallback: "none",
+			})) {
 				this.cursor._desiredX = null;
 				const rect = container.getBoundingClientRect();
 				const side =
 					event.clientX > rect.left + rect.width / 2 ? "after" : "before";
 				this.cursor.selectContainer(container, side);
-				return;
 			}
-			this.cursor._desiredX = null;
-			this.cursor.moveTo(offset);
 			return;
 		}
 		// FIXME: Not great to have this here
-		this.cursor._desiredX = null;
-		this.cursor.moveTo(
-			this.cursor.offsetFromPoint(event.clientX, event.clientY),
-		);
+		this.editor.selection.placeCaretFromPoint(this.editor.root, event.clientX, event.clientY, this.session);
 	}
 }
 
@@ -942,6 +928,8 @@ class Editor {
 			classes: options.classes,
 			cursor: options.cursor,
 		});
+		this.range = new EditorRangeController(this);
+		this.selection = new EditorSelectionController(this);
 		this.input = new TextInput(this, { ...options, session: this.localSession });
 		this.configureActions({
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
@@ -1051,38 +1039,6 @@ class Editor {
 		return blocks.join(", ") || "p, h1, h2, h3, h4, h5, h6, li, blockquote, div";
 	}
 
-	// Method: rangeWithinEditor
-	// Validates if range is situated within editor root.
-	rangeWithinEditor(range) {
-		if (!range) return false;
-		const start = range.startContainer?.nodeType === Node.ELEMENT_NODE
-			? range.startContainer
-			: range.startContainer?.parentElement;
-		const end = range.endContainer?.nodeType === Node.ELEMENT_NODE
-			? range.endContainer
-			: range.endContainer?.parentElement;
-		return !!start && !!end && this.root.contains(start) && this.root.contains(end);
-	}
-
-	// Method: nativeRange
-	// Returns current native DOM range matching cursor or selection.
-	nativeRange(session = null) {
-		const active = this.activeSession(session);
-		const selection = window.getSelection();
-		if (active.nativeSelection !== "none" && selection?.rangeCount > 0) {
-			const range = selection.getRangeAt(0);
-			if (this.rangeWithinEditor(range)) return range.cloneRange();
-		}
-		const cursor = active.cursor;
-		if (cursor.selectionKind === "range") return cursor.selection.toDomRange();
-		const point = this.text.pointAt(cursor.offset ?? 0);
-		if (!point) return null;
-		const range = document.createRange();
-		range.setStart(point.node, point.offset);
-		range.collapse(true);
-		return range;
-	}
-
 	// Method: blockFor
 	// Resolves the closest ancestor block element containing `node`.
 	blockFor(node) {
@@ -1144,45 +1100,14 @@ class Editor {
 		if (preferBr) block.appendChild(document.createElement("br"));
 	}
 
-	// Method: setCursorAtPoint
-	// Moves visual and logical caret to specific node and text offset.
-	setCursorAtPoint(node, offset, session = null) {
-		const active = this.activeSession(session);
-		this.text.refresh();
-		const index = this.text.indexOfPoint({ node, offset });
-		if (index >= 0) {
-			active.cursor.moveTo(index);
-			return this.syncNativeSelectionToCursor(active);
-		}
-		return false;
-	}
-
-	// Method: syncNativeSelectionToCursor
-	// Syncs logical cursor state to the browser's window selection.
-	syncNativeSelectionToCursor(session = null) {
-		const active = this.activeSession(session);
-		if (active.nativeSelection === "none") return true;
-		const point = this.text.pointAt(active.cursor.offset ?? 0);
-		if (!point?.node?.isConnected) return false;
-		try {
-			const range = document.createRange();
-			range.setStart(point.node, point.offset);
-			range.collapse(true);
-			const selection = window.getSelection();
-			selection?.removeAllRanges();
-			selection?.addRange(range);
-			return true;
-		} catch (_e) {
-			return false;
-		}
-	}
-
 	// Method: moveCursorToBlockStart
 	// Places cursor at first text position of a block.
 	moveCursorToBlockStart(block, session = null) {
 		this.ensureEditableContent(block, true);
 		const textNode = this.firstTextNode(block);
-		return textNode ? this.setCursorAtPoint(textNode, 0, session) : this.setCursorAtPoint(block, 0, session);
+		return textNode
+			? this.selection.setCaret(textNode, 0, session)
+			: this.selection.setCaret(block, 0, session);
 	}
 
 	// Method: moveCursorToBlockEnd
@@ -1191,8 +1116,8 @@ class Editor {
 		this.ensureEditableContent(block, true);
 		const textNode = this.lastTextNode(block);
 		return textNode
-			? this.setCursorAtPoint(textNode, textNode.data.length, session)
-			: this.setCursorAtPoint(block, block.childNodes.length, session);
+			? this.selection.setCaret(textNode, textNode.data.length, session)
+			: this.selection.setCaret(block, block.childNodes.length, session);
 	}
 
 	// Method: firstBlockIn
@@ -1277,7 +1202,7 @@ class Editor {
 	// Returns the current editing block.
 	currentEditableBlock(session = null) {
 		const active = this.activeSession(session);
-		const range = this.nativeRange(active);
+		const range = this.range.current(this.root, active);
 		const selectedBlock = range ? this.blockFor(range.startContainer) : null;
 		if (selectedBlock) {
 			active.currentBlock = selectedBlock;
@@ -1291,15 +1216,6 @@ class Editor {
 			return anchorBlock;
 		}
 		return active.currentBlock?.isConnected ? active.currentBlock : null;
-	}
-
-	// Method: selectedRange
-	// Returns range if a selection spans across characters.
-	selectedRange(session = null) {
-		const cursor = this.activeSession(session).cursor;
-		if (cursor.selectionKind === "node" && cursor.selectedNode) return null;
-		const range = this.nativeRange(session);
-		return range && !range.collapsed ? range : null;
 	}
 
 	// Method: isFullySelectedBlock
@@ -1321,7 +1237,7 @@ class Editor {
 			const block = this.blockFor(cursor.selectedNode);
 			return block ? [block] : [];
 		}
-		const range = this.selectedRange(session);
+		const range = this.range.selected(this.root, session);
 		if (!range) return [];
 		const blocks = [];
 		for (const block of this.root.querySelectorAll(this.blockSelector())) {
@@ -1365,7 +1281,7 @@ class Editor {
 	// Method: deleteEmptyBlock
 	// Deletes empty block and transitions cursor to surrounding blocks.
 	deleteEmptyBlock(session = null) {
-		const range = this.nativeRange(session);
+		const range = this.range.current(this.root, session);
 		if (!range?.collapsed) return false;
 		const block = this.blockFor(range.startContainer);
 		if (!block || !this.isEmptyBlock(block)) return false;
@@ -1374,16 +1290,6 @@ class Editor {
 		this.removeBlock(block);
 		this.syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: "end" } : null, session);
 		return true;
-	}
-
-	// Method: rangeAtBlockStart
-	// Checks if coordinates are at start edge of block.
-	rangeAtBlockStart(range, block) {
-		if (!range?.collapsed || !block?.contains(range.startContainer)) return false;
-		const before = document.createRange();
-		before.selectNodeContents(block);
-		before.setEnd(range.startContainer, range.startOffset);
-		return before.toString().replace(/\u200b/g, "") === "";
 	}
 
 	// Method: previousEditableBlock
@@ -1402,10 +1308,10 @@ class Editor {
 	// Merges contents of block backward into preceding block.
 	mergeBlockBackward(session = null, event = null) {
 		if (event && event.key !== "Backspace") return false;
-		const range = this.nativeRange(session);
+		const range = this.range.current(this.root, session);
 		if (!range?.collapsed) return false;
 		const block = this.blockFor(range.startContainer);
-		if (!block || !this.rangeAtBlockStart(range, block)) return false;
+		if (!block || !this.range.atBlockStart(range, block)) return false;
 		const previous = this.previousEditableBlock(block);
 		if (!previous) return false;
 
@@ -1426,21 +1332,11 @@ class Editor {
 		const active = this.activeSession(session);
 		this.lastNormalization = this.normalize(this.root, { session: active });
 		this.text.refresh();
-		this.setCursorAtPoint(markerNode, markerOffset, active);
+		this.selection.setCaret(markerNode, markerOffset, active);
 		active.currentBlock = previous;
 		if (active === this.localSession) this._currentBlock = previous;
 		active.classes?.update();
 		return true;
-	}
-
-	// Method: splitRange
-	// Splits target range, executing inline deletions if range is expanded.
-	splitRange(range) {
-		if (!range.collapsed) {
-			range.deleteContents();
-			range.collapse(true);
-		}
-		return range;
 	}
 
 	// Method: exitEmptyBlock
@@ -1501,17 +1397,17 @@ class Editor {
 	// Method: insertLineBreak
 	// Inserts explicit line break <br> inside block at caret position.
 	insertLineBreak(session = null) {
-		const range = this.nativeRange(session);
+		const range = this.range.current(this.root, session);
 		if (!range) return false;
 		const block = this.blockFor(range.startContainer);
 		if (!block) return false;
-		this.splitRange(range);
+		this.range.split(range);
 		const br = document.createElement("br");
 		const tail = document.createTextNode("");
 		range.insertNode(tail);
 		range.insertNode(br);
 		this.syncAfterMutation(null, session);
-		this.setCursorAtPoint(tail, 0, session);
+		this.selection.setCaret(tail, 0, session);
 		this.activeSession(session).classes?.update();
 		return true;
 	}
@@ -1519,11 +1415,11 @@ class Editor {
 	// Method: splitCurrentBlock
 	// Handles splitting of list items or blocks on Enter press.
 	splitCurrentBlock(session = null) {
-		const range = this.nativeRange(session);
+		const range = this.range.current(this.root, session);
 		if (!range) return false;
 		const block = this.blockFor(range.startContainer);
 		if (!block?.contains(range.startContainer)) return false;
-		this.splitRange(range);
+		this.range.split(range);
 		return block.tagName.toLowerCase() === "li"
 			? this.splitListItem(block, range, session)
 			: this.splitBlockElement(block, range, session);
@@ -1593,6 +1489,6 @@ class Editor {
 	}
 }
 
-export { Schema, Adapter, ClassTracker, Command, Cursor, Editor, EditorSession, Normalizer, Transaction, richTextClasses, richTextKeymap, richTextNormalizer, richTextSchema };
+export { Schema, Adapter, ClassTracker, Command, Cursor, Editor, EditorRangeController, EditorSelectionController, EditorSession, Normalizer, Transaction, richTextClasses, richTextKeymap, richTextNormalizer, richTextSchema };
 
 // EOF

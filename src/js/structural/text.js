@@ -55,7 +55,46 @@ class TextAdapter {
 		this._positions = [];
 		this._positionsDirty = true;
 		this._observer = null;
+		this._segmenter = typeof Intl !== "undefined" && Intl.Segmenter
+			? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+			: null;
 		this._onMutations = this.onMutations.bind(this);
+	}
+
+	_graphemeBoundaries(text = "") {
+		const boundaries = [0];
+		if (!text) return boundaries;
+		if (this._segmenter) {
+			for (const { index, segment } of this._segmenter.segment(text)) {
+				const next = index + segment.length;
+				if (next !== boundaries[boundaries.length - 1]) boundaries.push(next);
+			}
+			return boundaries;
+		}
+		let offset = 0;
+		for (const char of Array.from(text)) {
+			offset += char.length;
+			boundaries.push(offset);
+		}
+		return boundaries;
+	}
+
+	_graphemeCount(text = "") {
+		return Math.max(0, this._graphemeBoundaries(text).length - 1);
+	}
+
+	_codeUnitOffsetAtGrapheme(text = "", graphemeIndex = 0) {
+		const boundaries = this._graphemeBoundaries(text);
+		const index = Math.max(0, Math.min(graphemeIndex, boundaries.length - 1));
+		return boundaries[index] ?? text.length;
+	}
+
+	_graphemeIndexAtCodeUnit(text = "", codeUnitOffset = 0) {
+		const boundaries = this._graphemeBoundaries(text);
+		for (let i = 0; i < boundaries.length; i += 1) {
+			if (boundaries[i] >= codeUnitOffset) return i;
+		}
+		return boundaries.length - 1;
 	}
 
 	// Method: attach
@@ -223,6 +262,52 @@ class TextAdapter {
 			}
 		}
 		return -1;
+	}
+
+	// Method: offsetWithin
+	// Converts a DOM `point` into a subtree-local grapheme offset within `root`.
+	offsetWithin(root, point) {
+		if (!root?.isConnected || !point?.node) {
+			return -1;
+		}
+		const element = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
+		if (!element || (element !== root && !root.contains(element))) {
+			return -1;
+		}
+		const range = document.createRange();
+		try {
+			range.selectNodeContents(root);
+			range.setEnd(point.node, point.offset);
+			return this._graphemeCount(range.toString());
+		} catch (_e) {
+			return -1;
+		}
+	}
+
+	// Method: pointAtOffsetWithin
+	// Resolves a DOM point at subtree-local grapheme `offset` within `root`.
+	pointAtOffsetWithin(root, offset, bias = "forward") {
+		if (!root?.isConnected) {
+			return null;
+		}
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		let remaining = Math.max(0, offset);
+		let last = null;
+		while (walker.nextNode()) {
+			const node = walker.currentNode;
+			last = node;
+			const length = this._graphemeCount(node.data);
+			if (remaining < length || (bias === "backward" && remaining === length)) {
+				return {
+					node,
+					offset: this._codeUnitOffsetAtGrapheme(node.data, remaining),
+				};
+			}
+			remaining -= length;
+		}
+		return last
+			? { node: last, offset: last.data.length }
+			: { node: root, offset: root.childNodes.length };
 	}
 
 	// Method: acceptsText
@@ -571,7 +656,7 @@ class TextAdapter {
 		try {
 			range.setStart(this.root, 0);
 			range.setEnd(target.node, target.offset);
-			return range.toString().length;
+			return this._graphemeCount(range.toString());
 		} catch (_e) {
 			return 0;
 		}
@@ -582,7 +667,9 @@ class TextAdapter {
 	positionFromPoint(x, y) {
 		const pos = document.caretPositionFromPoint(x, y);
 		const position = this.positionFromNode(pos.offsetNode);
-		position.offset += pos.offset;
+		position.offset += pos.offsetNode?.nodeType === Node.TEXT_NODE
+			? this._graphemeIndexAtCodeUnit(pos.offsetNode.data, pos.offset)
+			: pos.offset;
 		return position;
 	}
 
@@ -603,12 +690,16 @@ class TextAdapter {
 		for (const p of this.iwalk(this.root, { mode: "text" })) {
 			if (p.offset > offset) {
 				last.delta = offset - last.offset;
+				last.codeUnitOffset = this._codeUnitOffsetAtGrapheme(last.node?.data ?? "", last.delta);
 				return last;
 			} else {
 				last = Object.assign(last ?? {}, p);
 			}
 		}
-		return null;
+		if (!last) return null;
+		last.delta = Math.max(0, Math.min(last.length, offset - last.offset));
+		last.codeUnitOffset = this._codeUnitOffsetAtGrapheme(last.node?.data ?? "", last.delta);
+		return last;
 	}
 
 	// ----------------------------------------------------------------------------
@@ -632,7 +723,7 @@ class TextAdapter {
 		const nextIndex = this.indexOfPoint(insertedPoint);
 		return {
 			index:
-				nextIndex >= 0 ? nextIndex : this.clampIndex(clamped + text.length),
+				nextIndex >= 0 ? nextIndex : this.clampIndex(clamped + this._graphemeCount(text)),
 		};
 	}
 
@@ -646,6 +737,30 @@ class TextAdapter {
 		const context = this.contextAt(clamped);
 		if (context?.deleteBackward?.type === "node") {
 			context.deleteBackward.node.remove();
+			this.invalidatePositions();
+			this.ensurePositions();
+			return { index: this.clampIndex(clamped - 1) };
+		}
+		if (context?.point?.node?.nodeType === Node.ELEMENT_NODE && context.boundary?.leftNode?.nodeType === Node.TEXT_NODE) {
+			const node = context.boundary.leftNode;
+			const boundaries = this._graphemeBoundaries(node.data);
+			if (boundaries.length > 1) {
+				const startOffset = boundaries[boundaries.length - 2];
+				const endOffset = boundaries[boundaries.length - 1];
+				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+				this.invalidatePositions();
+				this.ensurePositions();
+				return { index: this.clampIndex(clamped - 1) };
+			}
+		}
+		const point = this.pointAt(clamped);
+		if (point?.node?.nodeType === Node.TEXT_NODE && point.offset > 0) {
+			const boundaries = this._graphemeBoundaries(point.node.data);
+			const current = boundaries.indexOf(point.offset);
+			const index = current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
+			const startOffset = boundaries[Math.max(0, index - 1)] ?? 0;
+			const endOffset = boundaries[index] ?? point.offset;
+			point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
 			this.invalidatePositions();
 			this.ensurePositions();
 			return { index: this.clampIndex(clamped - 1) };
@@ -667,6 +782,30 @@ class TextAdapter {
 			this.ensurePositions();
 			return { index: this.clampIndex(clamped) };
 		}
+		if (context?.point?.node?.nodeType === Node.ELEMENT_NODE && context.boundary?.rightNode?.nodeType === Node.TEXT_NODE) {
+			const node = context.boundary.rightNode;
+			const boundaries = this._graphemeBoundaries(node.data);
+			if (boundaries.length > 1) {
+				const startOffset = boundaries[0];
+				const endOffset = boundaries[1];
+				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+				this.invalidatePositions();
+				this.ensurePositions();
+				return { index: this.clampIndex(clamped) };
+			}
+		}
+		const point = this.pointAt(clamped);
+		if (point?.node?.nodeType === Node.TEXT_NODE && point.offset < point.node.data.length) {
+			const boundaries = this._graphemeBoundaries(point.node.data);
+			const current = boundaries.indexOf(point.offset);
+			const index = current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
+			const startOffset = boundaries[index] ?? point.offset;
+			const endOffset = boundaries[Math.min(boundaries.length - 1, index + 1)] ?? point.offset;
+			point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
+			this.invalidatePositions();
+			this.ensurePositions();
+			return { index: this.clampIndex(clamped) };
+		}
 		this.deleteAt(this.textOffsetAtIndex(clamped), 1);
 		this.invalidatePositions();
 		this.ensurePositions();
@@ -682,8 +821,8 @@ class TextAdapter {
 	// Method: insertAt
 	// Inserts `text` at the specified linear text `offset`.
 	insertAt(offset, text) {
-		const { node, delta } = this.positionAt(offset);
-		return this.insertAtPoint({ node, offset: delta }, text);
+		const { node, codeUnitOffset } = this.positionAt(offset);
+		return this.insertAtPoint({ node, offset: codeUnitOffset }, text);
 	}
 
 	// Method: insertAtPoint
@@ -725,14 +864,16 @@ class TextAdapter {
 			if (node?.nodeType !== Node.TEXT_NODE) {
 				break;
 			}
-			const available = node.data.length - delta;
+			const available = this._graphemeCount(node.data) - delta;
 			if (available <= 0) {
 				currentOffset += 1;
 				continue;
 			}
 			const count = Math.min(available, remaining);
 			const data = node.data;
-			node.data = `${data.slice(0, delta)}${data.slice(delta + count)}`;
+			const startOffset = this._codeUnitOffsetAtGrapheme(data, delta);
+			const endOffset = this._codeUnitOffsetAtGrapheme(data, delta + count);
+			node.data = `${data.slice(0, startOffset)}${data.slice(endOffset)}`;
 			remaining -= count;
 		}
 	}
@@ -758,7 +899,7 @@ class TextAdapter {
 				continue;
 			}
 			const data = p.node.data;
-			const nextOffset = offset + data.length;
+			const nextOffset = offset + this._graphemeCount(data);
 			if (nextOffset <= from) {
 				offset = nextOffset;
 				continue;
@@ -767,9 +908,12 @@ class TextAdapter {
 				break;
 			}
 			const sliceStart = Math.max(0, from - offset);
-			const sliceEnd = Math.min(data.length, to - offset);
+			const sliceEnd = Math.min(this._graphemeCount(data), to - offset);
 			if (sliceEnd > sliceStart) {
-				text += data.slice(sliceStart, sliceEnd);
+				text += data.slice(
+					this._codeUnitOffsetAtGrapheme(data, sliceStart),
+					this._codeUnitOffsetAtGrapheme(data, sliceEnd),
+				);
 			}
 			offset = nextOffset;
 		}
@@ -888,9 +1032,17 @@ class TextAdapter {
 	_charAroundPoint(point, boundary) {
 		const { node, offset } = point;
 		if (node?.nodeType === Node.TEXT_NODE) {
+			const boundaries = this._graphemeBoundaries(node.data);
+			const index = boundaries.indexOf(offset);
 			return {
-				before: offset > 0 ? (node.data[offset - 1] ?? null) : null,
-				after: offset < node.data.length ? (node.data[offset] ?? null) : null,
+				before:
+					index > 0
+						? node.data.slice(boundaries[index - 1], boundaries[index])
+						: null,
+				after:
+					index >= 0 && index < boundaries.length - 1
+						? node.data.slice(boundaries[index], boundaries[index + 1])
+						: null,
 			};
 		}
 		const leftText =
@@ -903,8 +1055,13 @@ class TextAdapter {
 				: null;
 		return {
 			before:
-				leftText && leftText.length > 0 ? leftText[leftText.length - 1] : null,
-			after: rightText && rightText.length > 0 ? rightText[0] : null,
+				leftText && leftText.length > 0
+					? leftText.slice(this._codeUnitOffsetAtGrapheme(leftText, this._graphemeCount(leftText) - 1))
+					: null,
+			after:
+				rightText && rightText.length > 0
+					? rightText.slice(0, this._codeUnitOffsetAtGrapheme(rightText, 1))
+					: null,
 		};
 	}
 
@@ -922,7 +1079,7 @@ class TextAdapter {
 		const walk = function* (current, parent, childIndex) {
 			if (mode === "positions") {
 				if (current.nodeType === Node.TEXT_NODE) {
-					for (let i = 0; i <= current.data.length; i += 1) {
+					for (const i of this._graphemeBoundaries(current.data)) {
 						yield {
 							point: { node: current, offset: i },
 							focusNode: current.parentNode ?? parent,
@@ -965,7 +1122,7 @@ class TextAdapter {
 			}
 
 			if (current.nodeType === Node.TEXT_NODE) {
-				const length = current.data.length;
+				const length = this._graphemeCount(current.data);
 				yield { node: current, offset: state.offset, length };
 				state.offset += length;
 				return;

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Range and Selection Controller Test</title>
+  <script type="importmap">
+  { "imports": {
+    "structural/editor": "/src/js/structural/editor.js",
+    "structural/cursor": "/src/js/structural/cursor.js",
+    "structural/text": "/src/js/structural/text.js",
+    "structural/selection": "/src/js/structural/selection.js",
+    "structural/range": "/src/js/structural/range.js",
+    "structural/modification": "/src/js/structural/modification.js"
+  }}
+  </script>
+</head>
+<body>
+  <div id="editor"><p>Select some text</p><p>Next block</p></div>
+  <div id="selection" style="position:absolute;visibility:hidden;pointer-events:none;"></div>
+  <div id="caret" style="position:absolute;height:1lh;width:1px;background:red;visibility:hidden;pointer-events:none;"></div>
+  <script type="module">
+    import { Editor } from "structural/editor";
+    import { Modification } from "structural/modification";
+
+    try {
+      const editor = new Editor(document.getElementById("editor"));
+      const mod = new Modification(editor);
+      const paragraph = document.querySelector("#editor p");
+      const nextParagraph = document.querySelectorAll("#editor p")[1];
+
+      function pointForText(text, offset) {
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const index = node.data.indexOf(text);
+          if (index < 0) continue;
+          const range = document.createRange();
+          const start = index + offset;
+          range.setStart(node, start);
+          range.setEnd(node, Math.min(node.data.length, start + 1));
+          const rect = range.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+        return null;
+      }
+
+      function selectRange(startOffset, endOffset) {
+        const node = paragraph.firstChild;
+        const range = document.createRange();
+        range.setStart(node, startOffset);
+        range.setEnd(node, endOffset);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return range;
+      }
+
+      selectRange(4, 14);
+      const synced = editor.selection.syncFromNative(paragraph, editor.localSession);
+      const snapshot = editor.range.snapshot(paragraph, editor.localSession);
+      mod.toggleInline("em");
+      const restored = editor.range.restore(snapshot, paragraph, editor.localSession);
+      const restoredRange = editor.range.selected(paragraph, editor.localSession);
+
+      selectRange(2, 2);
+      const collapsedSync = editor.selection.syncFromNative(paragraph, editor.localSession);
+      const collapsedRange = editor.range.current(paragraph, editor.localSession);
+      const collapsedSnapshot = editor.range.snapshot(paragraph, editor.localSession);
+
+      const hitPoint = pointForText("ct some te", 3);
+      const placedInside = editor.selection.placeCaretFromPoint(
+        paragraph,
+        hitPoint.x,
+        hitPoint.y,
+        editor.localSession,
+      );
+      const placedInsidePoint = editor.text.pointAt(editor.input.cursor.offset);
+      const placedInsideOffset = editor.text.offsetWithin(paragraph, placedInsidePoint);
+
+      const nextRect = nextParagraph.getBoundingClientRect();
+      const snappedToEnd = editor.selection.placeCaretFromPoint(
+        paragraph,
+        nextRect.right - 2,
+        nextRect.top + nextRect.height / 2,
+        editor.localSession,
+      );
+      const snappedPoint = editor.text.pointAt(editor.input.cursor.offset);
+      const snappedOffset = editor.text.offsetWithin(paragraph, snappedPoint);
+
+      window.__result = {
+        synced,
+        snapshot,
+        restored,
+        restoredText: restoredRange?.toString() ?? null,
+        html: paragraph.innerHTML,
+        collapsedSync,
+        collapsedOffset: collapsedRange?.startOffset ?? null,
+        collapsedSnapshot,
+        placedInside,
+        placedInsideOffset,
+        snappedToEnd,
+        snappedOffset,
+        selectionKind: editor.input.cursor.selectionKind,
+      };
+    } catch (error) {
+      window.__result = {
+        error: error?.stack ?? String(error),
+      };
+    }
+  </script>
+</body>
+</html>

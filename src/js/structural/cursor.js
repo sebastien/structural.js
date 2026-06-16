@@ -6,7 +6,7 @@
 // Module: cursor
 // Implements the caret rendering and the logical navigation cursor.
 
-import { TextSelection } from "structural/selection";
+import { TextSelection } from "./selection.js";
 
 // ----------------------------------------------------------------------------
 //
@@ -175,10 +175,11 @@ class Caret {
 	// Displays the visual caret at specified `x` and `y` coordinates with configurable `height`.
 	_showAt(x, y, height) {
 		if (this.node) {
-			this.node.style.left = `${x}px`;
-			this.node.style.top = `${y}px`;
+			const snap = value => Math.round(value);
+			this.node.style.left = `${snap(x)}px`;
+			this.node.style.top = `${snap(y)}px`;
 			if (height !== undefined) {
-				this.node.style.height = `${height}px`;
+				this.node.style.height = `${Math.max(1, snap(height))}px`;
 			}
 			this.node.style.visibility = "visible";
 		}
@@ -462,6 +463,20 @@ class Cursor {
 	// Finds the nearest logical caret position slot index matching coordinates `x` and `y`.
 	offsetFromPoint(x, y) {
 		return this.text.indexFromPoint(x, y);
+	}
+
+	// Method: offsetFromPointIn
+	// Finds the nearest logical caret position within subtree `node` for coordinates `x` and `y`.
+	offsetFromPointIn(node, x, y) {
+		const offset = this.offsetFromPoint(x, y);
+		const position = this.text.positionSlotAt(offset);
+		if (
+			!this.text.acceptsText(position) ||
+			!this._isWithinNode(node, position?.point?.node)
+		) {
+			return null;
+		}
+		return offset;
 	}
 
 	// Method: _shouldSkipFormattingWhitespace
@@ -1017,6 +1032,85 @@ class Cursor {
 		this._emitMove(previous, current);
 	}
 
+	// Method: select
+	// Applies semantic text or node selection depending on argument shape.
+	select(target, focusOrOptions) {
+		if (typeof target === "number") {
+			const anchorOffset = target;
+			const focusOffset = focusOrOptions;
+			if (typeof focusOffset !== "number") {
+				return false;
+			}
+
+			const previous = this._snapshot();
+			this._clearNodeSelection();
+			this.selection.set(anchorOffset, focusOffset);
+			const normalized = this.selection.normalizedRange();
+			if (normalized.collapsed) {
+				this.selection.clear();
+				this.moveTo(focusOffset);
+				return true;
+			}
+
+			this.selectionKind = "range";
+			this.offset = this.text.clampIndex(focusOffset);
+			this.anchor = this.text.focusNodeAt(this.offset) || this.anchor;
+			const point = this.text.pointAt(this.offset);
+			this.delta = point?.offset ?? this.delta;
+			this.direction =
+				previous.offset === undefined
+					? 0
+					: this.offset > previous.offset
+						? 1
+						: this.offset < previous.offset
+							? -1
+							: 0;
+			this.caret.setVirtual(null);
+			const render = this.selection.apply();
+			this._emitMove(previous, {
+				...this._snapshot(),
+				requestedOffset: focusOffset,
+				kind: "range-selection",
+				boundary: null,
+				char: null,
+				remap: {
+					from: focusOffset,
+					to: this.offset,
+					reasons: [],
+				},
+				caretEditable: false,
+				caretVisible: false,
+				caretSource: null,
+				selectionVisible: render.visible,
+			});
+			return true;
+		}
+
+		if (target?.nodeType === Node.ELEMENT_NODE) {
+			const node = target;
+			const options = focusOrOptions ?? {};
+			const kind =
+				options.kind ??
+				(this.text.isAtom(node)
+					? "atom"
+					: this.text.isContainer(node)
+						? "container"
+						: null);
+			if (!kind) {
+				return false;
+			}
+
+			const side = options.side ?? "before";
+			const direction = options.direction ?? (side === "after" ? -1 : 1);
+			const offset = options.offset ?? this._boundaryIndexForNode(node, side);
+			const behavior = options.behavior ?? (kind === "atom" ? "skip" : "enter");
+			this._selectNode(node, offset, direction, behavior);
+			return true;
+		}
+
+		return false;
+	}
+
 	// Method: _advanceHorizontalOffset
 	// Moves caret position horizontally, skipping whitespace according to configuration.
 	_advanceHorizontalOffset(origin, direction) {
@@ -1119,16 +1213,19 @@ class Cursor {
 		this._emitMove(previous, current);
 	}
 
+	// Method: selectNode
+	// Applies semantic node selection for container or atom `node`.
+	selectNode(node, options = {}) {
+		return this.select(node, options);
+	}
+
 	// Method: selectAtom
 	// Directly selects atomic `node` element at designated `side`.
 	selectAtom(node, side = "before") {
 		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isAtom(node)) {
 			return false;
 		}
-		const direction = side === "after" ? -1 : 1;
-		const offset = this._boundaryIndexForNode(node, side);
-		this._selectNode(node, offset, direction, "skip");
-		return true;
+		return this.select(node, { kind: "atom", side, behavior: "skip" });
 	}
 
 	// Method: selectContainer
@@ -1137,10 +1234,7 @@ class Cursor {
 		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isContainer(node)) {
 			return false;
 		}
-		const direction = side === "after" ? -1 : 1;
-		const offset = this._boundaryIndexForNode(node, side);
-		this._selectNode(node, offset, direction, "enter");
-		return true;
+		return this.select(node, { kind: "container", side, behavior: "enter" });
 	}
 
 	// Method: _moveFromSelectedNode
@@ -1253,23 +1347,21 @@ class Cursor {
 		this._desiredX = null;
 		const explicitSelection = this._structuralSelectionAt(this.offset, direction);
 		if (explicitSelection) {
-			this._selectNode(
-				explicitSelection.node,
-				explicitSelection.offset,
-				explicitSelection.direction,
-				explicitSelection.behavior,
-			);
+			this.select(explicitSelection.node, {
+				offset: explicitSelection.offset,
+				direction: explicitSelection.direction,
+				behavior: explicitSelection.behavior,
+			});
 			return;
 		}
 		const current = this._canonicalOffset(this.offset, direction);
 		const structuralSelection = this._structuralSelectionAt(current, direction);
 		if (structuralSelection) {
-			this._selectNode(
-				structuralSelection.node,
-				structuralSelection.offset,
-				structuralSelection.direction,
-				structuralSelection.behavior,
-			);
+			this.select(structuralSelection.node, {
+				offset: structuralSelection.offset,
+				direction: structuralSelection.direction,
+				behavior: structuralSelection.behavior,
+			});
 			return;
 		}
 		this.moveTo(this._advanceHorizontalOffset(current, direction));
