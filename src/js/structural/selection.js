@@ -1,8 +1,27 @@
+// Project: structural.js
+// Author:  Sébastien Pierre
+// License: Revised BSD License
+// Created: 2026-06-16
+
+// Module: selection
+// Manages and overlays selection ranges in the editor.
+
+// ----------------------------------------------------------------------------
+//
+// CLASSES
+//
+// ----------------------------------------------------------------------------
+
+// Class: SelectionOverlay
+// Renders visual overlays of selection ranges.
+// - node: HTMLElement - the overlay host element
 class SelectionOverlay {
 	constructor(node) {
 		this.node = node ?? null;
 	}
 
+	// Method: _clearVirtual
+	// Removes the virtual selection blocks from the DOM.
 	_clearVirtual() {
 		if (!this.node) {
 			return;
@@ -11,16 +30,22 @@ class SelectionOverlay {
 		this.node.style.visibility = "hidden";
 	}
 
+	// Method: _clearNative
+	// Clears any active native document selection.
 	_clearNative() {
 		window.getSelection()?.removeAllRanges();
 	}
 
+	// Method: clear
+	// Clears both native and virtual selections.
 	clear() {
 		this._clearNative();
 		this._clearVirtual();
 		return { visible: false, mode: null };
 	}
 
+	// Method: _applyNative
+	// Applies native selection on the specified DOM `range`.
 	_applyNative(range) {
 		const selection = window.getSelection();
 		if (!selection) {
@@ -32,6 +57,8 @@ class SelectionOverlay {
 		return { visible: true, mode: "native" };
 	}
 
+	// Method: _applyVirtual
+	// Renders virtual selection highlights over client rects of the given `range`.
 	_applyVirtual(range) {
 		this._clearNative();
 		if (!this.node) {
@@ -57,6 +84,8 @@ class SelectionOverlay {
 		return { visible: rects.length > 0, mode: "virtual" };
 	}
 
+	// Method: apply
+	// Applies a selection on `range` with the given `mode` ("native" or "virtual").
 	apply(range, mode) {
 		if (!range || range.collapsed) {
 			return this.clear();
@@ -67,6 +96,13 @@ class SelectionOverlay {
 	}
 }
 
+// Class: TextSelection
+// Represents a range selection in the text editor.
+// - cursor: Cursor - the parent cursor instance
+// - anchorOffset: number - starting text index of the selection
+// - focusOffset: number - ending text index of the selection
+// - mode: string - selection mode ("native" or "virtual")
+// - overlay: SelectionOverlay - the overlay rendering controller
 class TextSelection {
 	constructor(cursor, options = {}) {
 		this.cursor = cursor;
@@ -78,14 +114,20 @@ class TextSelection {
 		);
 	}
 
+	// Property: isActive
+	// Indicates if the selection has both active anchor and focus offsets.
 	get isActive() {
 		return this.anchorOffset !== null && this.focusOffset !== null;
 	}
 
+	// Property: isCollapsed
+	// Indicates if the selection is collapsed (empty).
 	get isCollapsed() {
 		return !this.isActive || this.anchorOffset === this.focusOffset;
 	}
 
+	// Property: start
+	// Gets the minimum offset of the selection.
 	get start() {
 		if (!this.isActive) {
 			return null;
@@ -93,6 +135,8 @@ class TextSelection {
 		return Math.min(this.anchorOffset, this.focusOffset);
 	}
 
+	// Property: end
+	// Gets the maximum offset of the selection.
 	get end() {
 		if (!this.isActive) {
 			return null;
@@ -100,29 +144,39 @@ class TextSelection {
 		return Math.max(this.anchorOffset, this.focusOffset);
 	}
 
+	// Method: clear
+	// Resets the selection and clears visual overlays.
 	clear() {
 		this.anchorOffset = null;
 		this.focusOffset = null;
 		return this.overlay.clear();
 	}
 
+	// Method: collapseTo
+	// Collapses the selection to a specific `offset`.
 	collapseTo(offset) {
 		this.anchorOffset = offset;
 		this.focusOffset = offset;
 		return this.overlay.clear();
 	}
 
+	// Method: set
+	// Sets the selection anchor and focus to specified `anchorOffset` and `focusOffset`.
 	set(anchorOffset, focusOffset) {
 		this.anchorOffset = this.cursor.text.clampIndex(anchorOffset);
 		this.focusOffset = this.cursor.text.clampIndex(focusOffset);
 		return this;
 	}
 
+	// Method: extendTo
+	// Extends the selection focus to the specified `offset`.
 	extendTo(offset) {
 		const anchor = this.isActive ? this.anchorOffset : this.cursor.offset ?? 0;
 		return this.set(anchor, offset);
 	}
 
+	// Method: _describeNodeCoverage
+	// Evaluates how the specified `node` overlaps with `start` and `end` indices.
 	_describeNodeCoverage(node, start, end) {
 		const before = this.cursor._boundaryIndexForNode(node, "before");
 		const after = this.cursor._boundaryIndexForNode(node, "after");
@@ -135,6 +189,8 @@ class TextSelection {
 		};
 	}
 
+	// Method: _isInsideContainer
+	// Checks if the text position at `index` lies within `node`.
 	_isInsideContainer(index, node) {
 		const slot = this.cursor.text.positionSlotAt(index);
 		const point = slot?.point;
@@ -147,6 +203,8 @@ class TextSelection {
 		return point.offset > 0 && point.offset < node.childNodes.length;
 	}
 
+	// Method: _allowsInnerSelection
+	// Determines if inner selection within container `node` is allowed.
 	_allowsInnerSelection(node) {
 		if (!this.isActive) {
 			return false;
@@ -157,6 +215,8 @@ class TextSelection {
 		);
 	}
 
+	// Method: _normalizedBounds
+	// Computes normalized bounds adjusting for structural elements.
 	_normalizedBounds() {
 		if (!this.isActive) {
 			return { anchor: null, focus: null, start: null, end: null, collapsed: true };
@@ -223,10 +283,14 @@ class TextSelection {
 		};
 	}
 
+	// Method: normalizedRange
+	// Retrieves normalized bounds for selection.
 	normalizedRange() {
 		return this._normalizedBounds();
 	}
 
+	// Method: toDomRange
+	// Converts a `normalized` range to a native DOM Range.
 	toDomRange(normalized = this.normalizedRange()) {
 		if (normalized.collapsed || normalized.start === null || normalized.end === null) {
 			return null;
@@ -246,6 +310,8 @@ class TextSelection {
 		}
 	}
 
+	// Method: apply
+	// Renders the selection range to the DOM.
 	apply() {
 		const normalized = this.normalizedRange();
 		const range = this.toDomRange(normalized);
@@ -253,6 +319,8 @@ class TextSelection {
 		return { ...normalized, ...render };
 	}
 
+	// Method: replaceWithText
+	// Replaces the selection contents with the specified `text`.
 	replaceWithText(text = "") {
 		const normalized = this.normalizedRange();
 		const range = this.toDomRange(normalized);
@@ -285,3 +353,5 @@ class TextSelection {
 }
 
 export { SelectionOverlay, TextSelection };
+
+// EOF

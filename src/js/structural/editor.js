@@ -1,21 +1,47 @@
+// Project: structural.js
+// Author:  Sébastien Pierre
+// License: Revised BSD License
+// Created: 2026-06-16
+
+// Module: editor
+// Implements core editor orchestration, schemas, commands, transactions, and event listeners.
+
 import { TextAdapter } from "structural/text";
 import { Cursor } from "structural/cursor";
 
+// ----------------------------------------------------------------------------
+//
+// CLASSES
+//
+// ----------------------------------------------------------------------------
+
+// Class: Schema
+// Defines structural validation, normalization, and element rules for the editor.
+// - rules: Object - map of tag names to structural rules
+// - options: Object - configuration settings
 class Schema {
+	// Method: constructor
+	// Initializes the `Schema` with rules and options.
 	constructor(rules = {}, options = {}) {
 		this.rules = rules;
 		this.options = options;
 	}
 
+	// Method: rule
+	// Gets the rule associated with a specific tag name or DOM node.
 	rule(nodeOrTag) {
 		const tag = this.tag(nodeOrTag);
 		return tag ? this.rules[tag] ?? null : null;
 	}
 
+	// Method: isEmpty
+	// Checks if the schema has no rules configured.
 	isEmpty() {
 		return Object.keys(this.rules).length === 0;
 	}
 
+	// Method: tag
+	// Resolves the normalized tag name representing the given node or string.
 	tag(nodeOrTag) {
 		if (!nodeOrTag) return null;
 		if (typeof nodeOrTag === "string") return nodeOrTag;
@@ -23,10 +49,14 @@ class Schema {
 		return nodeOrTag.tagName?.toLowerCase() ?? null;
 	}
 
+	// Method: group
+	// Gets the list of tags belonging to a defined group.
 	group(name) {
 		return Array.isArray(this.rules[name]) ? this.rules[name] : [];
 	}
 
+	// Method: expand
+	// Expands group references (starting with '@') into full lists of tags.
 	expand(items = []) {
 		const expanded = [];
 		for (const item of items) {
@@ -39,20 +69,28 @@ class Schema {
 		return expanded;
 	}
 
+	// Method: contains
+	// Verifies if the schema allows `child` inside `parent`.
 	contains(parent, child) {
 		const rule = this.rule(parent);
 		if (!rule?.contains) return false;
 		return this.expand(rule.contains).includes(this.tag(child));
 	}
 
+	// Method: defaultChild
+	// Resolves the default child tag for a given parent.
 	defaultChild(parent, fallback = "p") {
 		return this.rule(parent)?.default ?? fallback;
 	}
 
+	// Method: aliasFor
+	// Retrieves the schema alias for a specific tag name.
 	aliasFor(tag) {
 		return this.options.aliases?.[this.tag(tag)] ?? null;
 	}
 
+	// Method: normalizeRule
+	// Gets the normalization rules configured for a tag.
 	normalizeRule(nodeOrTag) {
 		const tag = this.tag(nodeOrTag);
 		return {
@@ -61,14 +99,20 @@ class Schema {
 		};
 	}
 
+	// Method: normalizeAction
+	// Resolves the normalization action for a tag under a specific condition.
 	normalizeAction(nodeOrTag, condition, fallback = "preserve") {
 		return this.normalizeRule(nodeOrTag)?.[condition] ?? fallback;
 	}
 
+	// Method: enterRule
+	// Resolves behavior rules associated with Enter keypress on a tag.
 	enterRule(nodeOrTag) {
 		return this.rule(nodeOrTag)?.enter ?? {};
 	}
 
+	// Method: enterNext
+	// Determines the next tag to spawn on Enter press.
 	enterNext(nodeOrTag, parent = null, fallback = "p") {
 		const next = this.enterRule(nodeOrTag).next ?? "parentDefault";
 		if (next === "same") return this.tag(nodeOrTag) ?? fallback;
@@ -80,34 +124,48 @@ class Schema {
 		return next;
 	}
 
+	// Method: type
+	// Gets the structural type of a tag ("block", "inline", etc.).
 	type(tag) {
 		return this.rule(tag)?.type ?? null;
 	}
 
+	// Method: isBlock
+	// Checks if a tag is a block-level element.
 	isBlock(tag) {
 		return this.type(tag) === "block";
 	}
 
+	// Method: isInline
+	// Checks if a tag is an inline element.
 	isInline(tag) {
 		return this.type(tag) === "inline";
 	}
 
+	// Method: tagsOfType
+	// Collects all tags configured for a specific type.
 	tagsOfType(type) {
 		return Object.entries(this.rules)
 			.filter(([tag, rule]) => !tag.startsWith("@") && rule?.type === type)
 			.map(([tag]) => tag);
 	}
 
+	// Method: selector
+	// Returns a CSS selector targeting all tags of the specified type.
 	selector(type) {
 		return this.tagsOfType(type).join(", ");
 	}
 
+	// Method: allowsInline
+	// Verifies if an inline tag is allowed within a specific context.
 	allowsInline(tag, context = {}) {
 		if (this.isEmpty()) return true;
 		const block = context.block ?? context.parent;
 		return this.isInline(tag) && (!block || this.contains(block, tag));
 	}
 
+	// Method: allowsBlock
+	// Verifies if a block tag is allowed within a specific context.
 	allowsBlock(tag, context = {}) {
 		if (this.isEmpty()) return true;
 		if (!this.isBlock(tag)) return false;
@@ -139,6 +197,8 @@ const richTextRules = {
 	code: { type: "inline", contains: ["#text"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 };
 
+// Function: richTextSchema
+// Creates a default Schema configured with standard rich-text formatting rules.
 function richTextSchema(overrides = {}, options = {}) {
 	return new Schema({ ...richTextRules, ...overrides }, {
 		aliases: { b: "strong", i: "em", ...(options.aliases ?? {}) },
@@ -150,6 +210,8 @@ function richTextSchema(overrides = {}, options = {}) {
 	});
 }
 
+// Function: richTextKeymap
+// Returns standard key binding maps for structural formatting.
 function richTextKeymap(overrides = {}) {
 	return {
 		"Mod+B": { type: "toggleInline", args: { tag: "strong" } },
@@ -168,6 +230,8 @@ function richTextKeymap(overrides = {}) {
 	};
 }
 
+// Function: richTextClasses
+// Standard CSS class selectors and states for styling focus and selections.
 function richTextClasses(options = {}) {
 	return {
 		selector: ["h1", "h2", "h3", "p", "li", "blockquote", "strong", "em", "code"],
@@ -179,13 +243,23 @@ function richTextClasses(options = {}) {
 	};
 }
 
+// Function: richTextNormalizer
+// Helper to construct a standard Normalizer.
 function richTextNormalizer(schema = richTextSchema(), options = {}) {
 	return new Normalizer(schema, options);
 }
 
+// Class: Adapter
+// Base class for editor adapters (implementation stub).
 class Adapter {}
 
+// Class: Command
+// Represents a serializable representation of an edit intent or action.
+// - type: string - the command type
+// - args: Object - arguments dictionary
 class Command {
+	// Method: constructor
+	// Initializes the command instance.
 	constructor(type, options = {}) {
 		this.type = type;
 		this.actor = options.actor ?? null;
@@ -195,6 +269,8 @@ class Command {
 		this.meta = options.meta ?? {};
 	}
 
+	// Method: from
+	// Coerces or parses a value into a structured `Command` instance.
 	static from(value, defaults = {}) {
 		if (!value) return null;
 		if (value instanceof Command) return value.with(defaults);
@@ -214,6 +290,8 @@ class Command {
 		});
 	}
 
+	// Method: with
+	// Clones the command applying specified overrides.
 	with(overrides = {}) {
 		return new Command(this.type, {
 			actor: overrides.actor ?? this.actor,
@@ -224,6 +302,8 @@ class Command {
 		});
 	}
 
+	// Method: toJSON
+	// Serializes the command details into a JSON-compatible object.
 	toJSON() {
 		return {
 			type: this.type,
@@ -236,7 +316,13 @@ class Command {
 	}
 }
 
+// Class: Transaction
+// Records the lifecycle, modified steps, and outcome of dispatching a command.
+// - command: Command - parent command
+// - steps: Array - recorded steps
 class Transaction {
+	// Method: constructor
+	// Initializes the transaction.
 	constructor(command, options = {}) {
 		this.command = command;
 		this.steps = options.steps ?? [];
@@ -246,10 +332,14 @@ class Transaction {
 		this.result = options.result ?? false;
 	}
 
+	// Property: handled
+	// Determines if the transaction succeeded.
 	get handled() {
 		return this.result !== false;
 	}
 
+	// Method: toJSON
+	// Serializes transaction steps into a JSON object.
 	toJSON() {
 		return {
 			command: this.command?.toJSON?.() ?? this.command,
@@ -262,12 +352,19 @@ class Transaction {
 	}
 }
 
+// Class: Normalizer
+// Schema-driven parser that sanitizes, unwraps, and repairs structural DOM trees.
+// - schema: Schema - the rule definition source
 class Normalizer {
+	// Method: constructor
+	// Initializes the Normalizer.
 	constructor(schema, options = {}) {
 		this.schema = schema;
 		this.options = options;
 	}
 
+	// Method: normalize
+	// Performs in-place DOM structural repairs on the target element.
 	normalize(target, context = {}) {
 		this.root = context.root ?? context.editor?.root ?? target;
 		const command = new Command("normalize", {
@@ -281,6 +378,8 @@ class Normalizer {
 		return transaction;
 	}
 
+	// Method: normalizeNode
+	// Internal helper to recursively normalize a target node and its children.
 	normalizeNode(node, context, transaction) {
 		if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
 		this.renameAlias(node, transaction);
@@ -298,6 +397,8 @@ class Normalizer {
 		this.normalizeEmpty(node, transaction);
 	}
 
+	// Method: renameAlias
+	// Renames an element if it matches a configured schema alias.
 	renameAlias(node, transaction) {
 		const alias = this.schema.aliasFor(node);
 		if (!alias || this.schema.tag(node) === alias) return node;
@@ -309,6 +410,8 @@ class Normalizer {
 		return next;
 	}
 
+	// Method: pruneEmptyTextChildren
+	// Deletes any empty DOM Text nodes immediately childed to the element.
 	pruneEmptyTextChildren(node, transaction) {
 		if (!this.schema.options.normalize?.pruneEmptyText) return;
 		for (const child of [...node.childNodes]) {
@@ -319,6 +422,8 @@ class Normalizer {
 		}
 	}
 
+	// Method: normalizeChild
+	// Evaluates a child element against parent's schema expectations and repairs if invalid.
 	normalizeChild(parent, child, transaction) {
 		const parentTag = this.schemaTag(parent);
 		const childTag = this.schema.tag(child);
@@ -338,6 +443,8 @@ class Normalizer {
 		this.applyInvalidAction(parent, child, action, transaction);
 	}
 
+	// Method: normalizeText
+	// Validates and wraps or prunes loose DOM text nodes.
 	normalizeText(parent, child, transaction) {
 		if (child.data.length === 0) return;
 		const parentTag = this.schemaTag(parent);
@@ -358,6 +465,8 @@ class Normalizer {
 		}
 	}
 
+	// Method: applyInvalidAction
+	// Executes designated schema-driven correction actions on an invalid child.
 	applyInvalidAction(parent, child, action, transaction) {
 		if (action === "prune") {
 			child.remove();
@@ -376,6 +485,8 @@ class Normalizer {
 		}
 	}
 
+	// Method: normalizeEmpty
+	// Resolves correct empty block behavior (filling, placing placeholder br, pruning, etc).
 	normalizeEmpty(node, transaction) {
 		if (node.nodeType !== Node.ELEMENT_NODE) return;
 		if (!this.isEmpty(node)) return;
@@ -398,10 +509,14 @@ class Normalizer {
 		}
 	}
 
+	// Method: schemaTag
+	// Resolves schema key tag name for target node.
 	schemaTag(node) {
 		return node === this.root ? ":root" : this.schema.tag(node);
 	}
 
+	// Method: isEmpty
+	// Checks if the node contains only empty text or placeholder line breaks.
 	isEmpty(node) {
 		return [...node.childNodes].every(child =>
 			(child.nodeType === Node.TEXT_NODE && child.data.length === 0) ||
@@ -409,6 +524,8 @@ class Normalizer {
 		);
 	}
 
+	// Method: unwrapElement
+	// Unwraps target DOM node contents into its parent and removes target.
 	unwrapElement(node) {
 		const parent = node.parentNode;
 		while (node.firstChild) parent.insertBefore(node.firstChild, node);
@@ -416,7 +533,13 @@ class Normalizer {
 	}
 }
 
+// Class: EditorSession
+// Encapsulates a distinct user or collaborative session within a structural Editor.
+// - editor: Editor - the parent editor
+// - id: string - unique session identifier
 class EditorSession {
+	// Method: constructor
+	// Initializes a session tracking session state, cursors, and trackers.
 	constructor(editor, id, options = {}) {
 		this.editor = editor;
 		this.id = id;
@@ -428,18 +551,26 @@ class EditorSession {
 		this.classes = options.classes ? new ClassTracker(this, options.classes).attach() : null;
 	}
 
+	// Property: root
+	// Gets editor container element.
 	get root() {
 		return this.editor.root;
 	}
 
+	// Property: text
+	// Gets document text adapter.
 	get text() {
 		return this.editor.text;
 	}
 
+	// Method: destroy
+	// Detaches event listeners and class trackers for session clean up.
 	destroy() {
 		this.classes?.detach();
 	}
 
+	// Method: snapshotSelection
+	// Records a serializable snapshot of the current cursor selection state.
 	snapshotSelection() {
 		return {
 			offset: this.cursor.offset ?? 0,
@@ -448,6 +579,8 @@ class EditorSession {
 		};
 	}
 
+	// Method: command
+	// Factory to construct structured commands contextualized for the session.
 	command(value, options = {}) {
 		return Command.from(value, {
 			actor: this.actor,
@@ -457,16 +590,25 @@ class EditorSession {
 		});
 	}
 
+	// Method: action
+	// Directly triggers a pre-registered command action.
 	action(spec, event = null) {
 		return this.editor.action(spec, { event, session: this });
 	}
 
+	// Method: dispatch
+	// Dispatches a command to the parent editor.
 	dispatch(command, options = {}) {
 		return this.editor.dispatch(command, { ...options, session: this });
 	}
 }
 
+// Class: ClassTracker
+// Monitors cursor location to dynamically attach CSS focus and selection classes on elements.
+// - state: Object - map of tracking elements
 class ClassTracker {
+	// Method: constructor
+	// Initializes the ClassTracker.
 	constructor(target, options = {}) {
 		this.session = target instanceof EditorSession ? target : null;
 		this.editor = this.session?.editor ?? target;
@@ -481,6 +623,8 @@ class ClassTracker {
 		};
 	}
 
+	// Method: attach
+	// Registers event listeners to trigger automatic CSS class tracking.
 	attach() {
 		document.addEventListener("selectionchange", this._onSelectionChange);
 		this.editor.root.addEventListener("CursorMove", this._onCursorMove);
@@ -488,6 +632,8 @@ class ClassTracker {
 		return this;
 	}
 
+	// Method: detach
+	// Removes event listeners and cleans up all active focus/selection CSS classes.
 	detach() {
 		document.removeEventListener("selectionchange", this._onSelectionChange);
 		this.editor.root.removeEventListener("CursorMove", this._onCursorMove);
@@ -498,10 +644,14 @@ class ClassTracker {
 		return this;
 	}
 
+	// Method: className
+	// Resolves custom or standard class name for target status category.
 	className(key) {
 		return this.options[key] ?? key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
 	}
 
+	// Method: selector
+	// Resolves selection elements matching active block/inline tag names.
 	selector() {
 		const selector = this.options.selector ?? [
 			this.editor.schema?.selector("block"),
@@ -510,6 +660,8 @@ class ClassTracker {
 		return Array.isArray(selector) ? selector.filter(Boolean).join(", ") : selector;
 	}
 
+	// Method: trackedFor
+	// Finds the nearest ancestor matching registered schema block/inline tags.
 	trackedFor(node) {
 		const selector = this.selector();
 		if (!selector) return null;
@@ -518,6 +670,8 @@ class ClassTracker {
 		return tracked && this.editor.root.contains(tracked) ? tracked : null;
 	}
 
+	// Method: trackedAncestors
+	// Recursively gathers matching parent nodes up to editor root.
 	trackedAncestors(node) {
 		const selector = this.selector();
 		if (!selector) return [];
@@ -530,6 +684,8 @@ class ClassTracker {
 		return ancestors;
 	}
 
+	// Method: rangeWithinEditor
+	// Checks if the given range is safely enclosed in editor root.
 	rangeWithinEditor(range) {
 		if (!range) return false;
 		const start = range.startContainer?.nodeType === Node.ELEMENT_NODE
@@ -541,6 +697,8 @@ class ClassTracker {
 		return !!start && !!end && this.editor.root.contains(start) && this.editor.root.contains(end);
 	}
 
+	// Method: selectedNodes
+	// Calculates the list of elements overlapping with the active selection.
 	selectedNodes() {
 		const selector = this.selector();
 		const nodes = new Set();
@@ -574,6 +732,8 @@ class ClassTracker {
 		return nodes;
 	}
 
+	// Method: update
+	// Automatically recalculates active focus/selection lists and modifies DOM classes.
 	update() {
 		const cursor = this.session?.cursor ?? this.editor.input.cursor;
 		const nextState = {
@@ -605,11 +765,12 @@ class ClassTracker {
 	}
 }
 
+// Class: TextInput
+// Keyboard and Mouse listener translating raw user inputs to structural cursor operations.
+// - session: EditorSession - associated editor session
 class TextInput {
-	// ========================================================================
-	// LIFECYCLE
-	// ========================================================================
-
+	// Method: constructor
+	// Initializes inputs and binds event listeners to the document.
 	constructor(editor, options = {}) {
 		this._onKeyUp = this.onKeyUp.bind(this);
 		this._onKeyDown = this.onKeyDown.bind(this);
@@ -624,6 +785,8 @@ class TextInput {
 		this.bind(editor);
 	}
 
+	// Method: bind
+	// Subscribes key and mouse listeners.
 	bind(editor) {
 		if (this.editor !== editor) {
 			this.unbind();
@@ -636,6 +799,8 @@ class TextInput {
 		return this;
 	}
 
+	// Method: unbind
+	// Unsubscribes key and mouse listeners.
 	unbind(_editor = this.editor) {
 		const node = document; // editor?.root;
 		if (node) {
@@ -647,15 +812,15 @@ class TextInput {
 		return this;
 	}
 
-	// ========================================================================
-	// EVENTS
-	// ========================================================================
-
+	// Method: onKeyUp
+	// KeyUp handler (not implemented).
 	onKeyUp(_event) {
 		// Text input is handled during keydown so control keys can be
 		// swallowed before they perform browser-default actions.
 	}
 
+	// Method: onKeyDown
+	// Handles key presses translating arrows, deletes, letters to cursor calls.
 	onKeyDown(event) {
 		if (this.editor?.handleKeyEvent(event, this.session)) return;
 
@@ -702,6 +867,8 @@ class TextInput {
 		if (handled) event.preventDefault();
 	}
 
+	// Method: onMouseDown
+	// Evaluates pointer coordinate clicks to accurately place caret or select blocks.
 	onMouseDown(event) {
 		const targetElement = event.target?.nodeType === Node.ELEMENT_NODE
 			? event.target
@@ -750,11 +917,12 @@ class TextInput {
 	}
 }
 
+// Class: Editor
+// Orchestrates editor state, schema normalizations, keymaps, and action dispatches.
+// - root: HTMLElement - container editor element
 class Editor {
-	// ========================================================================
-	// LIFECYCLE
-	// ========================================================================
-
+	// Method: constructor
+	// Initializes and configures the parent Editor environment.
 	constructor(node, options = {}) {
 		this.root = node;
 		this.schema = options.schema instanceof Schema
@@ -786,12 +954,16 @@ class Editor {
 		this.input.cursor.moveTo(8);
 	}
 
+	// Method: destroy
+	// Tears down sessions, normalizers, input events, and adapters.
 	destroy() {
 		for (const session of this.sessions.values()) session.destroy();
 		this.input.unbind();
 		this.text.detach();
 	}
 
+	// Method: session
+	// Creates or retrieves a collaborative or local editing session by `id`.
 	session(id = "local", options = {}) {
 		if (id instanceof EditorSession) return id;
 		if (!this.sessions.has(id)) {
@@ -800,20 +972,28 @@ class Editor {
 		return this.sessions.get(id);
 	}
 
+	// Method: activeSession
+	// Resolves current active or fallback session.
 	activeSession(session = null) {
 		return this.session(session ?? this.localSession ?? "local");
 	}
 
+	// Method: configureActions
+	// Registers execution callbacks for command types.
 	configureActions(actions = {}) {
 		for (const [name, action] of Object.entries(actions)) this.actions.set(name, action);
 		return this;
 	}
 
+	// Method: action
+	// Dispatches command and returns success flag.
 	action(spec, options = {}) {
 		if (!spec) return false;
 		return this.dispatch(spec, options).handled;
 	}
 
+	// Method: dispatch
+	// Direct execution engine routing commands to registered actions and recording history.
 	dispatch(value, options = {}) {
 		const session = this.activeSession(options.session);
 		if (typeof value === "function") {
@@ -837,6 +1017,8 @@ class Editor {
 		return transaction;
 	}
 
+	// Method: keyCombo
+	// Decodes KeyboardEvent details into standard hotkey strings (e.g. Mod+B).
 	keyCombo(event) {
 		const parts = [];
 		if (event.ctrlKey || event.metaKey) parts.push("Mod");
@@ -848,6 +1030,8 @@ class Editor {
 		return parts.join("+");
 	}
 
+	// Method: handleKeyEvent
+	// Evaluates keyboard combinations against configured hotkeys.
 	handleKeyEvent(event, session = null) {
 		const spec = this.keymap?.[this.keyCombo(event)] ?? this.keymap?.[event.key];
 		if (!spec) return false;
@@ -859,12 +1043,16 @@ class Editor {
 		return handled;
 	}
 
+	// Method: blockSelector
+	// Resolves a CSS selector targeting all valid block level element tags.
 	blockSelector() {
 		const blocks = this.schema.tagsOfType("block")
 			.filter(tag => this.schema.contains(tag, "#text") || tag === "blockquote");
 		return blocks.join(", ") || "p, h1, h2, h3, h4, h5, h6, li, blockquote, div";
 	}
 
+	// Method: rangeWithinEditor
+	// Validates if range is situated within editor root.
 	rangeWithinEditor(range) {
 		if (!range) return false;
 		const start = range.startContainer?.nodeType === Node.ELEMENT_NODE
@@ -876,6 +1064,8 @@ class Editor {
 		return !!start && !!end && this.root.contains(start) && this.root.contains(end);
 	}
 
+	// Method: nativeRange
+	// Returns current native DOM range matching cursor or selection.
 	nativeRange(session = null) {
 		const active = this.activeSession(session);
 		const selection = window.getSelection();
@@ -893,24 +1083,32 @@ class Editor {
 		return range;
 	}
 
+	// Method: blockFor
+	// Resolves the closest ancestor block element containing `node`.
 	blockFor(node) {
 		const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
 		const block = el?.closest(this.blockSelector());
 		return block && this.root.contains(block) ? block : null;
 	}
 
+	// Method: createBlock
+	// Factory to spawn a new block with safe initial structural content.
 	createBlock(tag = "p") {
 		const block = document.createElement(tag);
 		this.ensureEditableContent(block, true);
 		return block;
 	}
 
+	// Method: replaceBlock
+	// Replaces a block with a fresh tag block.
 	replaceBlock(block, tag) {
 		const next = this.createBlock(tag);
 		block.replaceWith(next);
 		return next;
 	}
 
+	// Method: firstTextNode
+	// Recurses to locate first DOM Text node.
 	firstTextNode(node) {
 		if (!node) return null;
 		if (node.nodeType === Node.TEXT_NODE) return node;
@@ -918,6 +1116,8 @@ class Editor {
 		return walker.nextNode();
 	}
 
+	// Method: lastTextNode
+	// Recurses to locate last DOM Text node.
 	lastTextNode(node) {
 		if (!node) return null;
 		if (node.nodeType === Node.TEXT_NODE) return node;
@@ -927,6 +1127,8 @@ class Editor {
 		return text;
 	}
 
+	// Method: pruneEmptyTextChildren
+	// Clears empty text elements.
 	pruneEmptyTextChildren(block) {
 		if (!block || block.nodeType !== Node.ELEMENT_NODE) return;
 		for (const child of [...block.childNodes]) {
@@ -934,12 +1136,16 @@ class Editor {
 		}
 	}
 
+	// Method: ensureEditableContent
+	// Ensures a block has editable content (inserts placeholder br if empty).
 	ensureEditableContent(block, preferBr = false) {
 		this.pruneEmptyTextChildren(block);
 		if (block.childNodes.length > 0) return;
 		if (preferBr) block.appendChild(document.createElement("br"));
 	}
 
+	// Method: setCursorAtPoint
+	// Moves visual and logical caret to specific node and text offset.
 	setCursorAtPoint(node, offset, session = null) {
 		const active = this.activeSession(session);
 		this.text.refresh();
@@ -951,6 +1157,8 @@ class Editor {
 		return false;
 	}
 
+	// Method: syncNativeSelectionToCursor
+	// Syncs logical cursor state to the browser's window selection.
 	syncNativeSelectionToCursor(session = null) {
 		const active = this.activeSession(session);
 		if (active.nativeSelection === "none") return true;
@@ -969,12 +1177,16 @@ class Editor {
 		}
 	}
 
+	// Method: moveCursorToBlockStart
+	// Places cursor at first text position of a block.
 	moveCursorToBlockStart(block, session = null) {
 		this.ensureEditableContent(block, true);
 		const textNode = this.firstTextNode(block);
 		return textNode ? this.setCursorAtPoint(textNode, 0, session) : this.setCursorAtPoint(block, 0, session);
 	}
 
+	// Method: moveCursorToBlockEnd
+	// Places cursor at last text position of a block.
 	moveCursorToBlockEnd(block, session = null) {
 		this.ensureEditableContent(block, true);
 		const textNode = this.lastTextNode(block);
@@ -983,12 +1195,16 @@ class Editor {
 			: this.setCursorAtPoint(block, block.childNodes.length, session);
 	}
 
+	// Method: firstBlockIn
+	// Locates the first matching block inside `node`.
 	firstBlockIn(node) {
 		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
 		if (node.matches(this.blockSelector())) return node;
 		return node.querySelector(this.blockSelector());
 	}
 
+	// Method: lastBlockIn
+	// Locates the last matching block inside `node`.
 	lastBlockIn(node) {
 		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
 		const blocks = node.matches(this.blockSelector())
@@ -997,6 +1213,8 @@ class Editor {
 		return blocks.at(-1) ?? null;
 	}
 
+	// Method: normalize
+	// Performs incremental DOM sanitizations on designated targets.
 	normalize(target = this.root, context = {}) {
 		return this.normalizer?.normalize(target, {
 			editor: this,
@@ -1006,14 +1224,20 @@ class Editor {
 		}) ?? new Transaction(new Command("normalize"), { result: false });
 	}
 
+	// Method: blockText
+	// Extracts plain text from block, removing zero-width joiners.
 	blockText(block) {
 		return (block?.textContent ?? "").replace(/\u200b/g, "").trim();
 	}
 
+	// Method: isEmptyBlock
+	// Verifies if block is visually empty.
 	isEmptyBlock(block) {
 		return !!block && this.blockText(block) === "";
 	}
 
+	// Method: removePlaceholderInCurrentBlock
+	// Safely deletes temporary <br> placeholders on character entry.
 	removePlaceholderInCurrentBlock(session = null) {
 		const block = this.currentEditableBlock(session);
 		if (!block || !this.isEmptyBlock(block)) return false;
@@ -1028,6 +1252,8 @@ class Editor {
 		return removed;
 	}
 
+	// Method: syncAfterMutation
+	// Synchronizes normalization, adapter caches, and selection states after manual DOM changes.
 	syncAfterMutation(move, session = null) {
 		const active = this.activeSession(session);
 		this.lastNormalization = this.normalize(this.root, { session: active });
@@ -1047,6 +1273,8 @@ class Editor {
 		active.classes?.update();
 	}
 
+	// Method: currentEditableBlock
+	// Returns the current editing block.
 	currentEditableBlock(session = null) {
 		const active = this.activeSession(session);
 		const range = this.nativeRange(active);
@@ -1065,6 +1293,8 @@ class Editor {
 		return active.currentBlock?.isConnected ? active.currentBlock : null;
 	}
 
+	// Method: selectedRange
+	// Returns range if a selection spans across characters.
 	selectedRange(session = null) {
 		const cursor = this.activeSession(session).cursor;
 		if (cursor.selectionKind === "node" && cursor.selectedNode) return null;
@@ -1072,6 +1302,8 @@ class Editor {
 		return range && !range.collapsed ? range : null;
 	}
 
+	// Method: isFullySelectedBlock
+	// Checks if selection boundaries envelop the entire block.
 	isFullySelectedBlock(range, block) {
 		const blockRange = document.createRange();
 		blockRange.selectNode(block);
@@ -1081,6 +1313,8 @@ class Editor {
 		);
 	}
 
+	// Method: fullySelectedBlocks
+	// Identifies block elements wholly encompassed by selection.
 	fullySelectedBlocks(session = null) {
 		const cursor = this.activeSession(session).cursor;
 		if (cursor.selectionKind === "node" && cursor.selectedNode) {
@@ -1096,6 +1330,8 @@ class Editor {
 		return blocks.filter(block => !blocks.some(other => other !== block && other.contains(block)));
 	}
 
+	// Method: removeBlock
+	// Deletes block element, safely cleaning nested structures.
 	removeBlock(block) {
 		if (!block?.isConnected) return;
 		const tag = block.tagName.toLowerCase();
@@ -1114,6 +1350,8 @@ class Editor {
 		block.remove();
 	}
 
+	// Method: deleteSelectedBlocks
+	// Deletes all blocks wholly selected.
 	deleteSelectedBlocks(session = null) {
 		const blocks = this.fullySelectedBlocks(session);
 		if (blocks.length === 0) return false;
@@ -1124,6 +1362,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: deleteEmptyBlock
+	// Deletes empty block and transitions cursor to surrounding blocks.
 	deleteEmptyBlock(session = null) {
 		const range = this.nativeRange(session);
 		if (!range?.collapsed) return false;
@@ -1136,6 +1376,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: rangeAtBlockStart
+	// Checks if coordinates are at start edge of block.
 	rangeAtBlockStart(range, block) {
 		if (!range?.collapsed || !block?.contains(range.startContainer)) return false;
 		const before = document.createRange();
@@ -1144,6 +1386,8 @@ class Editor {
 		return before.toString().replace(/\u200b/g, "") === "";
 	}
 
+	// Method: previousEditableBlock
+	// Resolves preceding editable block in DOM order.
 	previousEditableBlock(block) {
 		let sibling = block?.previousElementSibling ?? null;
 		while (sibling) {
@@ -1154,6 +1398,8 @@ class Editor {
 		return null;
 	}
 
+	// Method: mergeBlockBackward
+	// Merges contents of block backward into preceding block.
 	mergeBlockBackward(session = null, event = null) {
 		if (event && event.key !== "Backspace") return false;
 		const range = this.nativeRange(session);
@@ -1187,6 +1433,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: splitRange
+	// Splits target range, executing inline deletions if range is expanded.
 	splitRange(range) {
 		if (!range.collapsed) {
 			range.deleteContents();
@@ -1195,6 +1443,8 @@ class Editor {
 		return range;
 	}
 
+	// Method: exitEmptyBlock
+	// Exits container lists on Enter press inside empty item blocks.
 	exitEmptyBlock(block, session = null) {
 		if (!this.isEmptyBlock(block)) return false;
 		const container = block.parentElement ?? this.root;
@@ -1214,6 +1464,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: splitBlockElement
+	// Splits normal block element at cursor, carrying trailing text over.
 	splitBlockElement(block, range, session = null) {
 		if (this.isEmptyBlock(block)) return this.exitEmptyBlock(block, session);
 		const parent = block.parentElement === this.root ? null : block.parentElement;
@@ -1230,6 +1482,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: splitListItem
+	// Splits a list item element at cursor.
 	splitListItem(item, range, session = null) {
 		if (this.isEmptyBlock(item)) return this.exitEmptyBlock(item, session);
 		const nextItem = document.createElement("li");
@@ -1244,6 +1498,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: insertLineBreak
+	// Inserts explicit line break <br> inside block at caret position.
 	insertLineBreak(session = null) {
 		const range = this.nativeRange(session);
 		if (!range) return false;
@@ -1260,23 +1516,27 @@ class Editor {
 		return true;
 	}
 
-		splitCurrentBlock(session = null) {
-			const range = this.nativeRange(session);
-			if (!range) return false;
-			const block = this.blockFor(range.startContainer);
-			if (!block?.contains(range.startContainer)) return false;
-			this.splitRange(range);
-			return block.tagName.toLowerCase() === "li"
-				? this.splitListItem(block, range, session)
-				: this.splitBlockElement(block, range, session);
-		}
+	// Method: splitCurrentBlock
+	// Handles splitting of list items or blocks on Enter press.
+	splitCurrentBlock(session = null) {
+		const range = this.nativeRange(session);
+		if (!range) return false;
+		const block = this.blockFor(range.startContainer);
+		if (!block?.contains(range.startContainer)) return false;
+		this.splitRange(range);
+		return block.tagName.toLowerCase() === "li"
+			? this.splitListItem(block, range, session)
+			: this.splitBlockElement(block, range, session);
+	}
 
-		indentListItem(item, session = null) {
-			const previous = item.previousElementSibling;
-			const list = item.parentElement;
-			if (previous?.tagName?.toLowerCase() !== "li" || !list) return false;
-			let nested = previous.lastElementChild;
-			const tag = list.tagName.toLowerCase();
+	// Method: indentListItem
+	// Indents list item block into a nested list.
+	indentListItem(item, session = null) {
+		const previous = item.previousElementSibling;
+		const list = item.parentElement;
+		if (previous?.tagName?.toLowerCase() !== "li" || !list) return false;
+		let nested = previous.lastElementChild;
+		const tag = list.tagName.toLowerCase();
 		if (!nested || nested.tagName.toLowerCase() !== tag) {
 			nested = document.createElement(tag);
 			previous.appendChild(nested);
@@ -1286,6 +1546,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: dedentListItem
+	// Outdents list item block.
 	dedentListItem(item, session = null) {
 		const list = item.parentElement;
 		const parentItem = list?.parentElement?.closest("li");
@@ -1306,6 +1568,8 @@ class Editor {
 		return true;
 	}
 
+	// Method: currentListItem
+	// Resolves currently focused list item.
 	currentListItem(session = null) {
 		const active = this.activeSession(session);
 		const block = active.currentBlock?.isConnected && active.currentBlock.tagName?.toLowerCase() === "li"
@@ -1314,11 +1578,15 @@ class Editor {
 		return block?.tagName?.toLowerCase() === "li" ? block : null;
 	}
 
+	// Method: indentCurrentListItem
+	// Indents current list item.
 	indentCurrentListItem(session = null) {
 		const item = this.currentListItem(session);
 		return item ? this.indentListItem(item, session) : false;
 	}
 
+	// Method: dedentCurrentListItem
+	// Outdents current list item.
 	dedentCurrentListItem(session = null) {
 		const item = this.currentListItem(session);
 		return item ? this.dedentListItem(item, session) : false;
@@ -1326,4 +1594,5 @@ class Editor {
 }
 
 export { Schema, Adapter, ClassTracker, Command, Cursor, Editor, EditorSession, Normalizer, Transaction, richTextClasses, richTextKeymap, richTextNormalizer, richTextSchema };
+
 // EOF

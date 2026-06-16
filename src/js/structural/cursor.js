@@ -1,6 +1,25 @@
+// Project: structural.js
+// Author:  Sébastien Pierre
+// License: Revised BSD License
+// Created: 2026-06-16
+
+// Module: cursor
+// Implements the caret rendering and the logical navigation cursor.
+
 import { TextSelection } from "structural/selection";
 
+// ----------------------------------------------------------------------------
+//
+// CLASSES
+//
+// ----------------------------------------------------------------------------
+
+// Class: Caret
+// Controls the visual representation and layout of the editor's text cursor.
+// - node: HTMLElement - visual DOM element representing the caret
 class Caret {
+	// Method: constructor
+	// Initializes the `Caret` controller with a custom visual `node`.
 	constructor(node) {
 		this.node = node ?? null;
 		this._measureCanvas = document.createElement("canvas");
@@ -8,6 +27,8 @@ class Caret {
 		document.addEventListener("selectionchange", this._onSelectionChange);
 	}
 
+	// Method: _onSelectionChange
+	// Hides the virtual caret when a non-collapsed selection is active.
 	_onSelectionChange() {
 		const sel = window.getSelection();
 		if (sel && !sel.isCollapsed) {
@@ -15,6 +36,8 @@ class Caret {
 		}
 	}
 
+	// Method: _pointRect
+	// Internal helper to get client rect for the given DOM node and offset.
 	_pointRect(node, offset) {
 		const range = document.createRange();
 		try {
@@ -26,6 +49,8 @@ class Caret {
 		}
 	}
 
+	// Method: _edgeRect
+	// Internal helper to get bounding rect for extreme edges of a `node`.
 	_edgeRect(node, edge) {
 		if (!node) {
 			return null;
@@ -64,6 +89,8 @@ class Caret {
 		return null;
 	}
 
+	// Method: _deepCaretPoint
+	// Internal helper to retrieve the deepest text/element point inside `node`.
 	_deepCaretPoint(node, edge) {
 		let current = node;
 		while (current) {
@@ -88,6 +115,8 @@ class Caret {
 		return null;
 	}
 
+	// Method: _visibleEdgeRect
+	// Internal helper to find a non-collapsed bounding rect around a `node` edge.
 	_visibleEdgeRect(node, edge) {
 		let current = node;
 		while (current) {
@@ -100,6 +129,8 @@ class Caret {
 		return null;
 	}
 
+	// Method: _boundaryRect
+	// Internal helper to compute a visual bounding rect around a structural boundary position.
 	_boundaryRect(position) {
 		const leftNode = position?.boundary?.leftNode;
 		const left = this._visibleEdgeRect(leftNode, "end");
@@ -132,12 +163,16 @@ class Caret {
 		return null;
 	}
 
+	// Method: _hide
+	// Hides the visual caret node.
 	_hide() {
 		if (this.node) {
 			this.node.style.visibility = "hidden";
 		}
 	}
 
+	// Method: _showAt
+	// Displays the visual caret at specified `x` and `y` coordinates with configurable `height`.
 	_showAt(x, y, height) {
 		if (this.node) {
 			this.node.style.left = `${x}px`;
@@ -149,6 +184,8 @@ class Caret {
 		}
 	}
 
+	// Method: _measureTextWidth
+	// Internal helper to measure the width of `text` based on style of DOM `node`.
 	_measureTextWidth(text, node) {
 		if (!text) {
 			return 0;
@@ -177,6 +214,8 @@ class Caret {
 		return width;
 	}
 
+	// Method: _collapsedTrailingSpaceWidth
+	// Internal helper to calculate width of collapsed trailing space at `position`.
 	_collapsedTrailingSpaceWidth(position) {
 		const pointNode = position?.point?.node;
 		const pointOffset = position?.point?.offset ?? 0;
@@ -221,6 +260,8 @@ class Caret {
 		return this._measureTextWidth(trailingSpaces, referenceNode);
 	}
 
+	// Method: setVirtual
+	// Positions the virtual caret relative to standard text layout or element boundaries.
 	setVirtual(position, options = {}) {
 		const editable = options.editable === true;
 		const point = position?.point;
@@ -258,6 +299,8 @@ class Caret {
 		return { visible: false, editable, source: result?.source ?? null };
 	}
 
+	// Method: set
+	// Sets native caret selection in the window on specified `node` at `offset`.
 	set(node, offset, focus = true) {
 		if (!node) {
 			return;
@@ -283,11 +326,19 @@ class Caret {
 	}
 }
 
+// Class: Cursor
+// Manages logical text selection, navigation, insertion, and deletion.
+// - anchor: HTMLElement - DOM node containing the cursor anchor
+// - offset: number - logical index of the cursor in the document
 class Cursor {
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// LIFECYCLE
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: constructor
+	// Initializes the logical `Cursor` with parent `input` device and configuration `options`.
 	constructor(input, options = {}) {
 		this.direction = undefined;
 		this.anchor = undefined;
@@ -311,20 +362,28 @@ class Cursor {
 		this._eventActivePath = [];
 	}
 
+	// Property: editor
+	// Retrieves the associated Editor instance.
 	get editor() {
 		return this._input.editor;
 	}
 
+	// Property: text
+	// Retrieves the active document TextAdapter.
 	get text() {
 		const text = this.editor.text;
 		text.ensurePositions();
 		return text;
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// TEXT OPERATIONS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: insertText
+	// Inserts the specified `text` at the current cursor position or replaces selected content.
 	insertText(text) {
 		if (this.selectionKind === "range") {
 			const next = this.selection.replaceWithText(text);
@@ -347,6 +406,8 @@ class Cursor {
 		this.moveTo(next.index, { skipBoundaryCollapse: true });
 	}
 
+	// Method: backspace
+	// Deletes the character or node immediately preceding the cursor.
 	backspace() {
 		if (this.selectionKind === "range") {
 			const next = this.selection.replaceWithText("");
@@ -368,6 +429,8 @@ class Cursor {
 		});
 	}
 
+	// Method: delete
+	// Deletes the character or node immediately following the cursor.
 	delete() {
 		if (this.selectionKind === "range") {
 			const next = this.selection.replaceWithText("");
@@ -389,14 +452,20 @@ class Cursor {
 		});
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// POSITIONING
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: offsetFromPoint
+	// Finds the nearest logical caret position slot index matching coordinates `x` and `y`.
 	offsetFromPoint(x, y) {
 		return this.text.indexFromPoint(x, y);
 	}
 
+	// Method: _shouldSkipFormattingWhitespace
+	// Determines if formatting whitespace should be ignored.
 	_shouldSkipFormattingWhitespace() {
 		if (this.skipFormattingWhitespace !== undefined) {
 			return this.skipFormattingWhitespace;
@@ -407,6 +476,8 @@ class Cursor {
 		return true;
 	}
 
+	// Method: _isSemanticBoundarySlot
+	// Checks if the position slot at `index` falls on a major semantic tag boundary.
 	_isSemanticBoundarySlot(index) {
 		const slot = this.text.positionSlotAt(index);
 		if (slot?.kind !== "element-boundary" || slot.point.node?.nodeType !== Node.ELEMENT_NODE) {
@@ -420,6 +491,8 @@ class Cursor {
 		);
 	}
 
+	// Method: _isSkippableFormattingWhitespaceSlot
+	// Verifies if the position slot at `index` is a skippable formatting whitespace slot.
 	_isSkippableFormattingWhitespaceSlot(index) {
 		if (!this.text.isFormattingWhitespaceSlot(index)) {
 			return false;
@@ -433,6 +506,8 @@ class Cursor {
 		return true;
 	}
 
+	// Method: _remapFormattingWhitespace
+	// Automatically adjusts target `offset` in `direction` to avoid stopping in formatting whitespace.
 	_remapFormattingWhitespace(offset, direction) {
 		const clamped = this.text.clampIndex(offset);
 		if (!this._shouldSkipFormattingWhitespace()) {
@@ -465,6 +540,8 @@ class Cursor {
 			: { offset: fallback, reason: "formatting-whitespace-skip" };
 	}
 
+	// Method: _isEquivalentBoundary
+	// Determines if two position slots refer to structurally equivalent visual boundaries.
 	_isEquivalentBoundary(a, b) {
 		return (
 			a?.boundary?.leftNode === b?.boundary?.leftNode &&
@@ -474,6 +551,8 @@ class Cursor {
 		);
 	}
 
+	// Method: _equivalentOffsetRange
+	// Computes the range of structurally equivalent positions surrounding the given `offset`.
 	_equivalentOffsetRange(offset) {
 		const positions = this.text.positions();
 		const clamped = this.text.clampIndex(offset);
@@ -492,6 +571,8 @@ class Cursor {
 		return { start, end };
 	}
 
+	// Method: _visibleEquivalentOffset
+	// Returns a visually apparent caret position from equivalent offset range.
 	_visibleEquivalentOffset(offset, direction = 0) {
 		const clamped = this.text.clampIndex(offset);
 		if (this.text.hasVisibleRectAt(clamped)) {
@@ -514,6 +595,8 @@ class Cursor {
 		return clamped;
 	}
 
+	// Method: _canonicalOffset
+	// Determines the single canonical/collapsed caret offset for equivalent boundaries.
 	_canonicalOffset(offset, direction = 0) {
 		const clamped = this.text.clampIndex(offset);
 		if (!this.collapseBoundary) {
@@ -542,6 +625,8 @@ class Cursor {
 		return current;
 	}
 
+	// Method: _isWithinNode
+	// Checks if the DOM node `target` lies inside or equals `node`.
 	_isWithinNode(node, target) {
 		if (!node || !target) {
 			return false;
@@ -554,6 +639,8 @@ class Cursor {
 		return element ? node.contains(element) : false;
 	}
 
+	// Method: _isTrackableNode
+	// Determines if cursor entry/leave events should be dispatched for `node`.
 	_isTrackableNode(node) {
 		return (
 			node?.nodeType === Node.ELEMENT_NODE &&
@@ -561,6 +648,8 @@ class Cursor {
 		);
 	}
 
+	// Method: _trackableNodeType
+	// Returns tracking category ("atom" or "container") for `node`.
 	_trackableNodeType(node) {
 		if (!this._isTrackableNode(node)) {
 			return null;
@@ -568,6 +657,8 @@ class Cursor {
 		return this.text.isAtom(node) ? "atom" : "container";
 	}
 
+	// Method: _trackableAncestorsFrom
+	// Collects all trackable elements up to the editor root from `node`.
 	_trackableAncestorsFrom(node) {
 		const path = [];
 		let current = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -583,6 +674,8 @@ class Cursor {
 		return path.reverse();
 	}
 
+	// Method: _resolveFocusedTrackableNode
+	// Determines the currently focused trackable element based on current state.
 	_resolveFocusedTrackableNode(current) {
 		if (
 			current?.selectionKind === "node" &&
@@ -594,6 +687,8 @@ class Cursor {
 		return path[path.length - 1] ?? null;
 	}
 
+	// Method: _resolveActiveTrackablePath
+	// Resolves full trackable path from the anchor node.
 	_resolveActiveTrackablePath(current) {
 		if (
 			current?.selectionKind === "node" &&
@@ -604,6 +699,8 @@ class Cursor {
 		return this._trackableAncestorsFrom(current?.anchor);
 	}
 
+	// Method: _dispatchCursorNodeEvent
+	// Dispatches custom cursor events on trackable DOM elements.
 	_dispatchCursorNodeEvent(type, node, detail) {
 		if (!this._isTrackableNode(node)) {
 			return;
@@ -620,6 +717,8 @@ class Cursor {
 		);
 	}
 
+	// Method: _syncCursorNodeEvents
+	// Emits CursorEnter, CursorLeave, and CursorFocus events as the cursor transitions.
 	_syncCursorNodeEvents(previous, current) {
 		const previousPath = this._eventActivePath;
 		const currentPath = this._resolveActiveTrackablePath(current);
@@ -660,6 +759,8 @@ class Cursor {
 		this._eventFocusedNode = currentFocusedNode;
 	}
 
+	// Method: _structuralSelectionAt
+	// Checks if target position `index` in `direction` should trigger a block selection.
 	_structuralSelectionAt(index, direction) {
 		if (direction === 0) {
 			return null;
@@ -708,6 +809,8 @@ class Cursor {
 		};
 	}
 
+	// Method: _entryIndexForNode
+	// Computes correct entry caret position when moving cursor into container `node`.
 	_entryIndexForNode(node, direction) {
 		const positions = this.text.positions();
 		const matches = [];
@@ -727,6 +830,8 @@ class Cursor {
 		return direction > 0 ? matches[0] : matches[matches.length - 1];
 	}
 
+	// Method: _exitIndexForNode
+	// Computes correct exit caret position when moving cursor out of container `node`.
 	_exitIndexForNode(node, direction, fallback = this.offset ?? 0) {
 		const positions = this.text.positions();
 		for (let i = 0; i < positions.length; i += 1) {
@@ -741,6 +846,8 @@ class Cursor {
 		return fallback;
 	}
 
+	// Method: _boundaryIndexForNode
+	// Returns the caret position index immediately before or after container `node`.
 	_boundaryIndexForNode(node, side, fallback = this.offset ?? 0) {
 		const positions = this.text.positions();
 		for (let i = 0; i < positions.length; i += 1) {
@@ -755,6 +862,8 @@ class Cursor {
 		return fallback;
 	}
 
+	// Method: _snapshot
+	// Captures a detailed snapshot of current selection and navigation states.
 	_snapshot() {
 		const selection = this.selection.normalizedRange();
 		return {
@@ -775,6 +884,8 @@ class Cursor {
 		};
 	}
 
+	// Method: _emitMove
+	// Fires global CursorMove and local element node events to track transitions.
 	_emitMove(previous, current) {
 		this._syncCursorNodeEvents(previous, current);
 		this.editor.root.dispatchEvent(
@@ -784,6 +895,8 @@ class Cursor {
 		);
 	}
 
+	// Method: _resolveMoveOffset
+	// Evaluates and adjusts target `offset` for whitespace, canonicalization, and visibility.
 	_resolveMoveOffset(offset, options = {}) {
 		const positions = this.text.positions();
 		if (positions.length === 0) {
@@ -838,6 +951,8 @@ class Cursor {
 		};
 	}
 
+	// Method: _clearNodeSelection
+	// Resets any block-level node selection state.
 	_clearNodeSelection() {
 		this.selectedNode = null;
 		this.selectedOffset = null;
@@ -845,6 +960,8 @@ class Cursor {
 		this.selectedBehavior = null;
 	}
 
+	// Method: _setRangeSelection
+	// Applies a text range selection and renders visual updates.
 	_setRangeSelection(anchorOffset, focusOffset, move, caretEditable = true) {
 		const previous = this._snapshot();
 		this._clearNodeSelection();
@@ -900,6 +1017,8 @@ class Cursor {
 		this._emitMove(previous, current);
 	}
 
+	// Method: _advanceHorizontalOffset
+	// Moves caret position horizontally, skipping whitespace according to configuration.
 	_advanceHorizontalOffset(origin, direction) {
 		const current = this._canonicalOffset(origin, direction);
 		let next = this.text.moveIndex(current, direction, {
@@ -929,6 +1048,8 @@ class Cursor {
 		return canonical;
 	}
 
+	// Method: _verticalTarget
+	// Solves target caret slot when traversing vertically.
 	_verticalTarget(origin, direction) {
 		const visibleOrigin = this._visibleEquivalentOffset(origin, direction);
 		const next = this.text.indexFromLineMove(
@@ -944,6 +1065,8 @@ class Cursor {
 		});
 	}
 
+	// Method: _nodeSelectionRange
+	// Gets selection index boundaries for currently highlighted node.
 	_nodeSelectionRange() {
 		if (!this.selectedNode) {
 			return null;
@@ -954,6 +1077,8 @@ class Cursor {
 		};
 	}
 
+	// Method: _collapseRangeSelection
+	// Collapses range selection in designated `direction`.
 	_collapseRangeSelection(direction) {
 		const normalized = this.selection.normalizedRange();
 		const target = direction < 0 ? normalized.start : normalized.end;
@@ -961,6 +1086,8 @@ class Cursor {
 		this.moveTo(target);
 	}
 
+	// Method: _selectNode
+	// Selects entire container or atom element `node` at boundary index.
 	_selectNode(node, offset, direction, behavior = "enter") {
 		const previous = this._snapshot();
 		this.selection.clear();
@@ -992,6 +1119,8 @@ class Cursor {
 		this._emitMove(previous, current);
 	}
 
+	// Method: selectAtom
+	// Directly selects atomic `node` element at designated `side`.
 	selectAtom(node, side = "before") {
 		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isAtom(node)) {
 			return false;
@@ -1002,6 +1131,8 @@ class Cursor {
 		return true;
 	}
 
+	// Method: selectContainer
+	// Directly selects structural container `node` at designated `side`.
 	selectContainer(node, side = "before") {
 		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isContainer(node)) {
 			return false;
@@ -1012,6 +1143,8 @@ class Cursor {
 		return true;
 	}
 
+	// Method: _moveFromSelectedNode
+	// Resolves next caret position when exiting a node selection in `direction`.
 	_moveFromSelectedNode(direction) {
 		const originOffset = this.selectedOffset ?? this.offset;
 		const selectedNode = this.selectedNode;
@@ -1048,6 +1181,8 @@ class Cursor {
 		this.moveTo(originOffset);
 	}
 
+	// Method: replaceSelectedNode
+	// Replaces selected element node with plain text `text`.
 	replaceSelectedNode(text) {
 		const node = this.selectedNode;
 		const offset = this.selectedOffset ?? this.offset;
@@ -1068,6 +1203,8 @@ class Cursor {
 		this.moveTo(nextIndex >= 0 ? nextIndex : offset);
 	}
 
+	// Method: removeSelectedNode
+	// Deletes the currently selected node from DOM tree.
 	removeSelectedNode() {
 		const node = this.selectedNode;
 		const offset = this.selectedOffset ?? this.offset;
@@ -1082,6 +1219,8 @@ class Cursor {
 		this.moveTo(offset);
 	}
 
+	// Method: _moveHorizontal
+	// Internal controller for horizontal cursor movement.
 	_moveHorizontal(direction, extend = false) {
 		if (extend) {
 			this._desiredX = null;
@@ -1136,6 +1275,8 @@ class Cursor {
 		this.moveTo(this._advanceHorizontalOffset(current, direction));
 	}
 
+	// Method: _moveVertical
+	// Internal controller for vertical cursor movement.
 	_moveVertical(direction, extend = false) {
 		if (extend) {
 			let anchorOffset = this.selection.isActive ? this.selection.anchorOffset : this.offset;
@@ -1170,6 +1311,8 @@ class Cursor {
 		});
 	}
 
+	// Method: moveTo
+	// Sets the cursor location to specified position `offset`.
 	moveTo(offset, options = {}) {
 		const previous = this._snapshot();
 		const move = this._resolveMoveOffset(offset, options);
@@ -1215,26 +1358,43 @@ class Cursor {
 		this._emitMove(previous, current);
 	}
 
+	// Method: getContext
+	// Returns contextual info surrounding the current cursor position.
 	getContext() {
 		return this.text.contextAt(this.offset);
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// NAVIGATION
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: left
+	// Moves the cursor to the left, optionally extending selection.
 	left(extend = false) {
 		this._moveHorizontal(-1, extend);
 	}
+
+	// Method: right
+	// Moves the cursor to the right, optionally extending selection.
 	right(extend = false) {
 		this._moveHorizontal(1, extend);
 	}
+
+	// Method: up
+	// Moves the cursor up one line, optionally extending selection.
 	up(extend = false) {
 		this._moveVertical(-1, extend);
 	}
+
+	// Method: down
+	// Moves the cursor down one line, optionally extending selection.
 	down(extend = false) {
 		this._moveVertical(1, extend);
 	}
 }
 
 export { Caret, Cursor };
+
+// EOF

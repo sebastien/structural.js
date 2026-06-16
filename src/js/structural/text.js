@@ -1,6 +1,22 @@
-// The `TextAdapter` wraps a DOM tree and schema, and supports key operations.
+// Project: structural.js
+// Author:  Sébastien Pierre
+// License: Revised BSD License
+// Created: 2026-06-16
+
+// Module: text
+// Wraps a DOM tree and schema, supporting key text and structural operations.
+
+// ----------------------------------------------------------------------------
+//
+// MODULE FUNCTIONS
+//
+// ----------------------------------------------------------------------------
+
 const NodeKeys = new WeakMap();
 let NextNodeKey = 1;
+
+// Function: nodeKey
+// Retrieves or assigns a unique numeric key for a DOM `node`.
 function nodeKey(node) {
 	if (!NodeKeys.has(node)) {
 		NodeKeys.set(node, NextNodeKey++);
@@ -8,11 +24,25 @@ function nodeKey(node) {
 	return NodeKeys.get(node);
 }
 
-class TextAdapter {
-	// ========================================================================
-	// LIFECYCLE
-	// ========================================================================
+// ----------------------------------------------------------------------------
+//
+// CLASSES
+//
+// ----------------------------------------------------------------------------
 
+// Class: TextAdapter
+// Core text adapter that tracks, indexes, and queries caret positions over a DOM tree.
+// - root: HTMLElement - root element of the editor
+// - skipFormattingWhitespace: boolean - whether to skip formatting whitespace
+class TextAdapter {
+	// ----------------------------------------------------------------------------
+	//
+	// LIFECYCLE
+	//
+	// ----------------------------------------------------------------------------
+
+	// Method: constructor
+	// Initializes the `TextAdapter` with a `root` DOM element and `options`.
 	constructor(root, options = {}) {
 		this.root = root;
 		this._acceptsText =
@@ -28,6 +58,8 @@ class TextAdapter {
 		this._onMutations = this.onMutations.bind(this);
 	}
 
+	// Method: attach
+	// Attaches a MutationObserver to monitor changes to the `root` element.
 	attach() {
 		if (this._observer || !this.root) {
 			return this;
@@ -42,6 +74,8 @@ class TextAdapter {
 		return this;
 	}
 
+	// Method: detach
+	// Detaches the MutationObserver from the `root` element.
 	detach() {
 		if (this._observer) {
 			this._observer.disconnect();
@@ -50,16 +84,22 @@ class TextAdapter {
 		return this;
 	}
 
+	// Method: onMutations
+	// Handles DOM mutation events to invalidate positions.
 	onMutations(mutations) {
 		if (mutations?.length) {
 			this.invalidatePositions();
 		}
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// NODE STATUS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: isSkipped
+	// Checks if the given `node` is marked to be skipped during traversal.
 	isSkipped(node) {
 		return (
 			node?.classList?.contains("skipped") ||
@@ -68,6 +108,8 @@ class TextAdapter {
 		);
 	}
 
+	// Method: isContainer
+	// Checks if the given `node` is marked as a structural container.
 	isContainer(node) {
 		return (
 			node?.classList?.contains("container") ||
@@ -75,6 +117,8 @@ class TextAdapter {
 		);
 	}
 
+	// Method: isAtom
+	// Checks if the given `node` is marked as an atomic/atom element.
 	isAtom(node) {
 		return (
 			node?.classList?.contains("atom") ||
@@ -82,6 +126,8 @@ class TextAdapter {
 		);
 	}
 
+	// Method: isWhitespacePreserved
+	// Checks if the given `node` or its parent preserves whitespace (e.g. pre or code).
 	isWhitespacePreserved(node) {
 		const element =
 			node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
@@ -99,20 +145,28 @@ class TextAdapter {
 		);
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// POSITIONS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: rebuildPositions
+	// Rebuilds the flat list of caret position slots starting from `root`.
 	rebuildPositions() {
 		this._positions = this._buildPositions(this.root);
 		this._positionsDirty = false;
 		return this._positions;
 	}
 
+	// Method: invalidatePositions
+	// Marks the current cached position slots as dirty/invalid.
 	invalidatePositions() {
 		this._positionsDirty = true;
 	}
 
+	// Method: ensurePositions
+	// Ensures that the positions array is built and up-to-date.
 	ensurePositions() {
 		if (this._positionsDirty) {
 			this.rebuildPositions();
@@ -120,28 +174,40 @@ class TextAdapter {
 		return this._positions;
 	}
 
+	// Method: refresh
+	// Forcefully invalidates and rebuilds cached position slots.
 	refresh() {
 		this.invalidatePositions();
 		return this.ensurePositions();
 	}
 
+	// Method: positions
+	// Returns the current cached position slots.
 	positions() {
 		return this.ensurePositions();
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// POSITION ACCESS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: pointAt
+	// Gets the text point at the specified position `index`.
 	pointAt(index) {
 		const position = this.ensurePositions()[index];
 		return position?.point ?? null;
 	}
 
+	// Method: positionSlotAt
+	// Gets the complete position slot info at the specified `index`.
 	positionSlotAt(index) {
 		return this.ensurePositions()[index] ?? null;
 	}
 
+	// Method: indexOfPoint
+	// Finds the slot index matching the specified `point`.
 	indexOfPoint(point) {
 		if (!point?.node) {
 			return -1;
@@ -159,6 +225,8 @@ class TextAdapter {
 		return -1;
 	}
 
+	// Method: acceptsText
+	// Checks if the specified `position` accepts text insertion.
 	acceptsText(position) {
 		if (!position?.point?.node) {
 			return false;
@@ -169,11 +237,15 @@ class TextAdapter {
 		return this._defaultAcceptsText(position);
 	}
 
+	// Method: focusNodeAt
+	// Gets the focus node at the specified position `index`.
 	focusNodeAt(index) {
 		const position = this.ensurePositions()[index];
 		return position?.focusNode ?? null;
 	}
 
+	// Method: _caretRectFromRect
+	// Internal helper to construct a virtual zero-width caret rect from a bounding `rect`.
 	_caretRectFromRect(rect, edge = "start") {
 		const x = edge === "end" ? rect.right : rect.left;
 		return {
@@ -188,6 +260,8 @@ class TextAdapter {
 		};
 	}
 
+	// Method: visualPositionAt
+	// Gets the visual bounding client rect for the position at `index`.
 	visualPositionAt(index) {
 		const point = this.pointAt(index);
 		if (!point) {
@@ -226,6 +300,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: hasVisibleRectAt
+	// Checks if the position slot at `index` has a visible visual layout rect.
 	hasVisibleRectAt(index) {
 		const visual = this.visualPositionAt(index);
 		if (!visual) {
@@ -235,6 +311,8 @@ class TextAdapter {
 		return width !== 0 || height !== 0;
 	}
 
+	// Method: isFormattingWhitespaceNode
+	// Checks if the given `node` consists of formatting whitespace that should be ignored.
 	isFormattingWhitespaceNode(node) {
 		return (
 			node?.nodeType === Node.TEXT_NODE &&
@@ -243,6 +321,8 @@ class TextAdapter {
 		);
 	}
 
+	// Method: isFormattingWhitespaceSlot
+	// Checks if the position slot at `index` belongs to formatting whitespace.
 	isFormattingWhitespaceSlot(index) {
 		const slot = this.positionSlotAt(index);
 		if (!slot || this.hasVisibleRectAt(index)) {
@@ -276,10 +356,14 @@ class TextAdapter {
 		return false;
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// NAVIGATION
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: indexFromPoint
+	// Finds the nearest position slot index to visual coordinates `x` and `y`.
 	indexFromPoint(x, y) {
 		this.ensurePositions();
 		let best = 0;
@@ -303,6 +387,8 @@ class TextAdapter {
 		return best;
 	}
 
+	// Method: clampIndex
+	// Clamps the given `index` to a valid range within positions list.
 	clampIndex(index) {
 		this.ensurePositions();
 		if (this._positions.length === 0) {
@@ -312,6 +398,8 @@ class TextAdapter {
 		return Math.max(0, Math.min(value, this._positions.length - 1));
 	}
 
+	// Method: moveIndex
+	// Moves the current `index` by `delta` positions, optionally applying `options`.
 	moveIndex(index, delta, options = {}) {
 		const direction = delta < 0 ? -1 : 1;
 		const steps = Math.abs(delta);
@@ -327,6 +415,8 @@ class TextAdapter {
 		return current;
 	}
 
+	// Method: _indexAfterWhitespace
+	// Returns the index after skipping consecutive whitespace in the given `direction`.
 	_indexAfterWhitespace(index, direction) {
 		let current = this.clampIndex(index);
 		while (true) {
@@ -348,6 +438,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: _getCrossedChar
+	// Internal helper to get character data crossed between two position slots.
 	_getCrossedChar(fromIndex, toIndex) {
 		const from = this._positions[fromIndex]?.point;
 		const to = this._positions[toIndex]?.point;
@@ -367,6 +459,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: indexFromLineMove
+	// Computes the best target index when moving cursor up or down from `index`.
 	indexFromLineMove(index, direction, desiredX) {
 		this.ensurePositions();
 		const clamped = this.clampIndex(index);
@@ -415,10 +509,14 @@ class TextAdapter {
 		return { index: best?.index ?? clamped, desiredX: targetX };
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// CONTEXT & MAPPING
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: contextAt
+	// Retrieves the contextual structural details around the specified `index`.
 	contextAt(index) {
 		const current = this.ensurePositions()[index];
 		if (!current) {
@@ -460,6 +558,8 @@ class TextAdapter {
 		};
 	}
 
+	// Method: textOffsetAtIndex
+	// Computes the linear text offset inside the document corresponding to `index`.
 	textOffsetAtIndex(index) {
 		this.ensurePositions();
 		const clamped = this.clampIndex(index);
@@ -477,6 +577,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: positionFromPoint
+	// Finds the text caret position corresponding to client coordinates `x` and `y`.
 	positionFromPoint(x, y) {
 		const pos = document.caretPositionFromPoint(x, y);
 		const position = this.positionFromNode(pos.offsetNode);
@@ -484,6 +586,8 @@ class TextAdapter {
 		return position;
 	}
 
+	// Method: positionFromNode
+	// Finds the caret position matching the specified DOM `node`.
 	positionFromNode(node) {
 		for (const p of this.iwalk(this.root, { mode: "text" })) {
 			if (p.node === node) {
@@ -492,6 +596,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: positionAt
+	// Finds the caret position at the specified linear text `offset`.
 	positionAt(offset) {
 		let last;
 		for (const p of this.iwalk(this.root, { mode: "text" })) {
@@ -505,10 +611,14 @@ class TextAdapter {
 		return null;
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// INDEX-BASED EDIT OPERATIONS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: insertAtIndex
+	// Inserts `text` at the specified position `index`.
 	insertAtIndex(index, text) {
 		const clamped = this.clampIndex(index);
 		const position = this.positionSlotAt(clamped);
@@ -526,6 +636,8 @@ class TextAdapter {
 		};
 	}
 
+	// Method: deleteBackwardAtIndex
+	// Performs a backspace delete action at the specified position `index`.
 	deleteBackwardAtIndex(index) {
 		const clamped = this.clampIndex(index);
 		if (clamped <= 0) {
@@ -544,6 +656,8 @@ class TextAdapter {
 		return { index: this.clampIndex(clamped - 1) };
 	}
 
+	// Method: deleteForwardAtIndex
+	// Performs a forward delete action at the specified position `index`.
 	deleteForwardAtIndex(index) {
 		const clamped = this.clampIndex(index);
 		const context = this.contextAt(clamped);
@@ -559,15 +673,21 @@ class TextAdapter {
 		return { index: this.clampIndex(clamped) };
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// TEXT OPERATIONS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: insertAt
+	// Inserts `text` at the specified linear text `offset`.
 	insertAt(offset, text) {
 		const { node, delta } = this.positionAt(offset);
 		return this.insertAtPoint({ node, offset: delta }, text);
 	}
 
+	// Method: insertAtPoint
+	// Inserts `text` at the given DOM text `point`.
 	insertAtPoint(point, text) {
 		const { node, offset } = point;
 		switch (node?.nodeType) {
@@ -588,6 +708,8 @@ class TextAdapter {
 		return null;
 	}
 
+	// Method: deleteAt
+	// Deletes text of given `length` starting from linear `offset`.
 	deleteAt(offset, length = 1) {
 		if (length <= 0) {
 			return;
@@ -615,6 +737,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: replaceAt
+	// Replaces text of given `length` at `offset` with `text`.
 	replaceAt(offset, length, text) {
 		this.deleteAt(offset, length);
 		if (text?.length) {
@@ -622,6 +746,8 @@ class TextAdapter {
 		}
 	}
 
+	// Method: textBetween
+	// Extracts the raw text string between linear offsets `start` and `end`.
 	textBetween(start, end) {
 		const from = Math.max(0, Math.min(start, end));
 		const to = Math.max(0, Math.max(start, end));
@@ -650,10 +776,14 @@ class TextAdapter {
 		return text;
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// INTERNALS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: _shouldEmitBoundary
+	// Internal helper to determine if caret boundaries should be emitted for `parent` child.
 	_shouldEmitBoundary(parent, childIndex) {
 		// Emits caret boundaries for structural navigation. For skipped children
 		// inside containers, boundaries at the container edges are suppressed so
@@ -668,6 +798,8 @@ class TextAdapter {
 		return true;
 	}
 
+	// Method: _defaultAcceptsText
+	// Default check to see if a `position` should accept text input.
 	_defaultAcceptsText(position) {
 		const point = position?.point;
 		if (!point?.node) {
@@ -687,6 +819,8 @@ class TextAdapter {
 		);
 	}
 
+	// Method: _buildPositions
+	// Traverses the DOM tree starting from `root` to build position slot objects.
 	_buildPositions(root) {
 		const slots = [];
 		const seen = new Set();
@@ -720,6 +854,8 @@ class TextAdapter {
 		return slots.map((slot, index) => ({ ...slot, index }));
 	}
 
+	// Method: _boundaryAtPoint
+	// Determines the surrounding DOM node boundaries for the specified text `point`.
 	_boundaryAtPoint(point) {
 		const { node, offset } = point;
 		if (node?.nodeType === Node.TEXT_NODE) {
@@ -747,6 +883,8 @@ class TextAdapter {
 		return { leftNode: null, rightNode: null };
 	}
 
+	// Method: _charAroundPoint
+	// Extracts characters immediately preceding and succeeding the given text `point`.
 	_charAroundPoint(point, boundary) {
 		const { node, offset } = point;
 		if (node?.nodeType === Node.TEXT_NODE) {
@@ -770,6 +908,8 @@ class TextAdapter {
 		};
 	}
 
+	// Method: iwalk
+	// Iterator/Generator that walks the DOM tree, yielding positions or text slots.
 	*iwalk(node = this.root, options = {}) {
 		// Walks the DOM in adapter order and yields either:
 		// - `mode: "text"`: linear text stream entries `{ node, offset, length }`
@@ -847,4 +987,5 @@ class TextAdapter {
 }
 
 export { TextAdapter };
+
 // EOF

@@ -1,10 +1,31 @@
-// The `Modification` provides rich-text formatting operations that mutate
-// the DOM tree managed by a structural `Editor`.
-class Modification {
-	// ========================================================================
-	// LIFECYCLE
-	// ========================================================================
+// Project: structural.js
+// Author:  Sébastien Pierre
+// License: Revised BSD License
+// Created: 2026-06-16
 
+// Module: modification
+// Provides rich-text formatting operations that mutate the DOM tree managed by an Editor.
+
+// ----------------------------------------------------------------------------
+//
+// CLASSES
+//
+// ----------------------------------------------------------------------------
+
+// Class: Modification
+// Rich-text formatting operations and DOM mutations.
+// - session: EditorSession - the associated editor session
+// - editor: Editor - the parent editor
+// - schema: Schema - schema definitions for the editor
+class Modification {
+	// ----------------------------------------------------------------------------
+	//
+	// LIFECYCLE
+	//
+	// ----------------------------------------------------------------------------
+
+	// Method: constructor
+	// Initializes the `Modification` instance with an `editorOrSession` and `options`.
 	constructor(editorOrSession, options = {}) {
 		this.session = options.session ?? (editorOrSession?.cursor && editorOrSession?.editor ? editorOrSession : null);
 		this.editor = this.session?.editor ?? editorOrSession;
@@ -16,18 +37,26 @@ class Modification {
 		this._savedRangeEnd = null;
 	}
 
+	// Property: cursor
+	// Retrieves the active cursor.
 	get cursor() {
 		return this.session?.cursor ?? this.editor.input.cursor;
 	}
 
+	// Property: text
+	// Retrieves the editor text adapter.
 	get text() {
 		return this.editor.text;
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// FORMAT DETECTION
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: formats
+	// Detects active rich-text formats around the current cursor anchor.
 	formats() {
 		const anchor = this.cursor.anchor;
 		const el = anchor?.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor;
@@ -51,10 +80,14 @@ class Modification {
 		};
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// SCHEMA GUARDS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: allowsInline
+	// Checks if the specified inline `tag` is allowed by the schema in the current context.
 	allowsInline(tag) {
 		if (!this.schema?.allowsInline) return true;
 		return this.schema.allowsInline(tag, {
@@ -64,6 +97,8 @@ class Modification {
 		});
 	}
 
+	// Method: allowsBlock
+	// Checks if the specified block `tag` is allowed by the schema in the current context.
 	allowsBlock(tag) {
 		if (!this.schema?.allowsBlock) return true;
 		const block = this.findBlock(this.cursor.anchor);
@@ -75,10 +110,14 @@ class Modification {
 		});
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// INLINE FORMATTING
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: toggleInline
+	// Toggles the inline style `tag` on the selected text or current word.
 	toggleInline(tag) {
 		if (!this.allowsInline(tag)) return;
 		let range = this.rangeFromCursor();
@@ -111,6 +150,8 @@ class Modification {
 		this._restoreCursor();
 	}
 
+	// Method: _overlappingTags
+	// Internal helper to find tags of type `tag` overlapping with the given `range`.
 	_overlappingTags(range, tag) {
 		const ancestor = range.commonAncestorContainer;
 		const root = ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
@@ -133,6 +174,8 @@ class Modification {
 		return tags.reverse();
 	}
 
+	// Method: _rangeFromSave
+	// Internal helper to reconstruct the native DOM Range from saved start and end points.
 	_rangeFromSave() {
 		const startIdx = this.text.indexOfPoint(this._savedRangeStart);
 		const endIdx = this.text.indexOfPoint(this._savedRangeEnd);
@@ -146,6 +189,8 @@ class Modification {
 		return r;
 	}
 
+	// Method: _endPoint
+	// Internal helper to find the last valid text point inside element `el`.
 	_endPoint(el) {
 		let node = el;
 		while (node.lastChild) node = node.lastChild;
@@ -154,10 +199,14 @@ class Modification {
 			: null;
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// BLOCK FORMATTING
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: toggleBlock
+	// Toggles block tag style (e.g. `ul`, `ol`, `blockquote`, headings) on the current block.
 	toggleBlock(tag) {
 		if (!this.allowsBlock(tag)) return;
 		const block = this.findBlock(this.cursor.anchor);
@@ -175,10 +224,14 @@ class Modification {
 		this._restoreCursor();
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// RANGE & WORD UTILITIES
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: _syncNativeSelection
+	// Synchronizes the native browser selection with the cursor's internal text selection.
 	_syncNativeSelection() {
 		const selection = window.getSelection();
 		if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -210,12 +263,16 @@ class Modification {
 		return range;
 	}
 
+	// Method: _containsPoint
+	// Verifies if the specified `node` lies within the editor's root element.
 	_containsPoint(node) {
 		if (!node) return false;
 		const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
 		return !!element && this.editor.root.contains(element);
 	}
 
+	// Method: rangeFromCursor
+	// Returns a valid native DOM Range from the cursor position or active selection.
 	rangeFromCursor() {
 		const nativeRange = this._syncNativeSelection();
 		if (nativeRange) {
@@ -238,6 +295,8 @@ class Modification {
 		return null;
 	}
 
+	// Method: expandToWord
+	// Expands the current cursor offset to the boundaries of the surrounding word.
 	expandToWord() {
 		const point = this.text.pointAt(this.cursor.offset);
 		if (!point || point.node?.nodeType !== Node.TEXT_NODE) return null;
@@ -258,10 +317,14 @@ class Modification {
 		return { start: startIndex, end: endIndex };
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// DOM UTILITIES
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: wrapRange
+	// Wraps the specified DOM `range` in a new element of type `tag`.
 	wrapRange(range, tag) {
 		const wrapper = document.createElement(tag);
 		wrapper.appendChild(range.extractContents());
@@ -269,6 +332,8 @@ class Modification {
 		return wrapper;
 	}
 
+	// Method: unwrapElement
+	// Unwraps the element `el`, moving all of its children to its parent.
 	unwrapElement(el) {
 		const parent = el.parentNode;
 		while (el.firstChild) {
@@ -278,6 +343,8 @@ class Modification {
 		return parent;
 	}
 
+	// Method: coalesceText
+	// Coalesces consecutive text nodes within `parent` and updates saved points.
 	coalesceText(parent) {
 		if (!parent) return null;
 		let previous = null;
@@ -303,6 +370,8 @@ class Modification {
 		return parent;
 	}
 
+	// Method: _remapSavedTextPoint
+	// Internal helper to remap a saved text point when nodes are coalesced.
 	_remapSavedTextPoint(fromNode, toNode, offset) {
 		for (const key of ["_savedPoint", "_savedRangeStart", "_savedRangeEnd"]) {
 			const point = this[key];
@@ -313,6 +382,8 @@ class Modification {
 		}
 	}
 
+	// Method: changeTagName
+	// Replaces element `el` with a new element having the specified `tag`.
 	changeTagName(el, tag) {
 		const replacement = document.createElement(tag);
 		while (el.firstChild) replacement.appendChild(el.firstChild);
@@ -323,6 +394,8 @@ class Modification {
 		return replacement;
 	}
 
+	// Method: findBlock
+	// Finds the nearest ancestor block element for the given `node`.
 	findBlock(node) {
 		const el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
 		if (!el) return this.editor.root;
@@ -330,6 +403,8 @@ class Modification {
 		return block && this.editor.root.contains(block) ? block : this.editor.root;
 	}
 
+	// Method: unwrapList
+	// Unwraps the specified `list` elements, turning each list item into a paragraph.
 	unwrapList(list) {
 		const parent = list.parentNode;
 		const items = [...list.querySelectorAll(':scope > li')];
@@ -342,10 +417,14 @@ class Modification {
 		parent.removeChild(list);
 	}
 
-	// ========================================================================
+	// ----------------------------------------------------------------------------
+	//
 	// INTERNALS
-	// ========================================================================
+	//
+	// ----------------------------------------------------------------------------
 
+	// Method: _savePoint
+	// Internal helper to save current cursor offset and selections before mutation.
 	_savePoint() {
 		this._savedOffset = this.cursor.offset;
 		const point = this.text.pointAt(this._savedOffset);
@@ -360,6 +439,8 @@ class Modification {
 		}
 	}
 
+	// Method: _restoreCursor
+	// Internal helper to restore cursor and selections after DOM mutation.
 	_restoreCursor() {
 		this.text.refresh();
 
@@ -392,6 +473,8 @@ class Modification {
 		this._savedOffset = null;
 	}
 
+	// Method: _setSelection
+	// Internal helper to set range selection from `start` to `end`.
 	_setSelection(start, end) {
 		this.cursor.selection.clear();
 		this.cursor.selection.set(start, end);
@@ -408,6 +491,8 @@ class Modification {
 		}));
 	}
 
+	// Method: _wrapperBounds
+	// Internal helper to compute start and end indices of text enclosed in wrapper element.
 	_wrapperBounds(wrapper) {
 		const positions = this.text.positions();
 		let outerStart = -1;
@@ -439,6 +524,8 @@ class Modification {
 		return start >= 0 && end >= 0 ? { start, end } : null;
 	}
 
+	// Method: _heading
+	// Internal helper to apply heading element style `tag` on target `block`.
 	_heading(tag, block) {
 		const currentTag = block.tagName.toLowerCase();
 
@@ -460,6 +547,8 @@ class Modification {
 		this.changeTagName(block, tag);
 	}
 
+	// Method: _toggleList
+	// Internal helper to toggle list tag `tag` on target `block`.
 	_toggleList(tag, block) {
 		const list = block.closest(tag);
 		const other = block.closest(tag === 'ul' ? 'ol' : 'ul');
@@ -477,6 +566,8 @@ class Modification {
 		}
 	}
 
+	// Method: _toggleBbq
+	// Internal helper to toggle blockquote element on target `block`.
 	_toggleBbq(block) {
 		const bq = block.closest('blockquote');
 		if (bq) {
@@ -490,4 +581,5 @@ class Modification {
 }
 
 export { Modification };
+
 // EOF
