@@ -10,16 +10,21 @@ export { Caret, Cursor } from "./cursor.js";
 export { EditorSelectionController, SelectionOverlay, TextSelection } from "./selection.js";
 export { Modification } from "./modification.js";
 export {
-	Adapter,
-	ClassTracker,
-	Command,
 	Editor,
+	EditorAdapter,
+	EditorClassController,
+	EditorCommand,
+	EditorCursor,
+	EditorNormalizer,
+	EditorSchema,
 	EditorSession,
-	Normalizer,
-	Schema,
-	Transaction,
+	EditorTransaction,
+} from "./editor.js";
+export {
+	RichText,
 	richTextClasses,
 	richTextKeymap,
 	richTextNormalizer,
+	richTextRules,
 	richTextSchema,
-} from "./editor.js";
+} from "./richtext.js";

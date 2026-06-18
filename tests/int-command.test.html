@@ -6,6 +6,7 @@
     {
       "imports": {
         "structural/editor": "/src/js/structural/editor.js",
+        "structural/richtext": "/src/js/structural/richtext.js",
         "structural/cursor": "/src/js/structural/cursor.js",
         "structural/text": "/src/js/structural/text.js",
         "structural/selection": "/src/js/structural/selection.js",
@@ -17,19 +18,20 @@
   <body>
     <div id="editor">hello</div>
     <script type="module">
-      import { Command, Editor, Transaction, richTextKeymap, richTextSchema } from "structural/editor";
+      import { Editor, EditorCommand, EditorTransaction } from "structural/editor";
+      import { richTextKeymap, richTextSchema } from "structural/richtext";
 
-      const stringCommand = Command.from("toggleInline:strong", {
+      const stringCommand = EditorCommand.from("toggleInline:strong", {
         actor: "agent",
         selection: { offset: 12, selectionKind: "caret" },
       });
-      const objectCommand = Command.from({
+      const objectCommand = EditorCommand.from({
         type: "toggleBlock",
         args: { tag: "h2" },
         meta: { source: "keymap" },
       }, { actor: "local", mode: "insert" });
-      const transactionCommand = Command.from({ type: "splitBlock" }, { actor: "local" });
-      const transaction = new Transaction(transactionCommand, {
+      const transactionCommand = EditorCommand.from({ type: "splitBlock" }, { actor: "local" });
+      const transaction = new EditorTransaction(transactionCommand, {
         steps: [{ type: "splitNode", path: [0], offset: 3 }],
         inverse: [{ type: "mergeNode", path: [0] }],
         selectionBefore: { offset: 3 },

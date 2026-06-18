@@ -6,6 +6,7 @@
     {
       "imports": {
         "structural/editor": "/src/js/structural/editor.js",
+        "structural/richtext": "/src/js/structural/richtext.js",
         "structural/cursor": "/src/js/structural/cursor.js",
         "structural/text": "/src/js/structural/text.js",
         "structural/selection": "/src/js/structural/selection.js",
@@ -22,12 +23,13 @@
       <blockquote></blockquote>
     </div>
     <script type="module">
-      import { Normalizer, richTextSchema } from "structural/editor";
+      import { EditorNormalizer } from "structural/editor";
+      import { richTextSchema } from "structural/richtext";
 
       const schema = richTextSchema();
       const empty = document.getElementById("empty");
       const rich = document.getElementById("rich");
-      const normalizer = new Normalizer(schema);
+      const normalizer = new EditorNormalizer(schema);
       const emptyTx = normalizer.normalize(empty, { root: empty });
       const richTx = normalizer.normalize(rich, { root: rich });
 

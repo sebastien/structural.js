@@ -7,7 +7,7 @@
 // Implements core editor orchestration, schemas, commands, transactions, and event listeners.
 
 import { TextAdapter } from "./text.js";
-import { Cursor } from "./cursor.js";
+import { Cursor as EditorCursor } from "./cursor.js";
 import { EditorRangeController } from "./range.js";
 import { EditorSelectionController } from "./selection.js";
 
@@ -17,13 +17,13 @@ import { EditorSelectionController } from "./selection.js";
 //
 // ----------------------------------------------------------------------------
 
-// Class: Schema
+// Class: EditorSchema
 // Defines structural validation, normalization, and element rules for the editor.
 // - rules: Object - map of tag names to structural rules
 // - options: Object - configuration settings
-class Schema {
+class EditorSchema {
 	// Method: constructor
-	// Initializes the `Schema` with rules and options.
+	// Initializes the `EditorSchema` with rules and options.
 	constructor(rules = {}, options = {}) {
 		this.rules = rules;
 		this.options = options;
@@ -178,88 +178,15 @@ class Schema {
 	}
 }
 
-const richTextRules = {
-	":root": {
-		type: "root",
-		contains: ["h1", "h2", "h3", "p", "ul", "ol", "blockquote"],
-		default: "p",
-		normalize: { empty: "fill", text: "wrap", invalidChild: "lift" },
-	},
-	"@inline": ["strong", "em", "code"],
-	blockquote: { type: "block", contains: ["p", "h1", "h2", "h3", "ul", "ol"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
-	ul: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ul"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
-	ol: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ol"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
-	li: { type: "block", contains: ["#text", "@inline", "p", "ul", "ol"], wrapIn: "ul", default: "p", normalize: { empty: "placeholder", text: "preserve", invalidChild: "lift" }, enter: { next: "same" } },
-	p: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "same" } },
-	h1: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
-	h2: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
-	h3: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
-	strong: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
-	em: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
-	code: { type: "inline", contains: ["#text"], normalize: { empty: "unwrap", invalidChild: "lift" } },
-};
-
-// Function: richTextSchema
-// Creates a default Schema configured with standard rich-text formatting rules.
-function richTextSchema(overrides = {}, options = {}) {
-	return new Schema({ ...richTextRules, ...overrides }, {
-		aliases: { b: "strong", i: "em", ...(options.aliases ?? {}) },
-		normalize: {
-			unknownElement: "unwrap",
-			pruneEmptyText: true,
-			...options.normalize,
-		},
-	});
-}
-
-// Function: richTextKeymap
-// Returns standard key binding maps for structural formatting.
-function richTextKeymap(overrides = {}) {
-	return {
-		"Mod+B": { type: "toggleInline", args: { tag: "strong" } },
-		"Mod+I": { type: "toggleInline", args: { tag: "em" } },
-		"Mod+`": { type: "toggleInline", args: { tag: "code" } },
-		"Mod+1": { type: "toggleBlock", args: { tag: "h1" } },
-		"Mod+2": { type: "toggleBlock", args: { tag: "h2" } },
-		"Mod+3": { type: "toggleBlock", args: { tag: "h3" } },
-		Enter: { type: "splitBlock" },
-		"Shift+Enter": { type: "insertLineBreak" },
-		Tab: { type: "indent" },
-		"Shift+Tab": { type: "dedent" },
-		Backspace: { type: "deleteSmart" },
-		Delete: { type: "deleteSmart" },
-		...overrides,
-	};
-}
-
-// Function: richTextClasses
-// Standard CSS class selectors and states for styling focus and selections.
-function richTextClasses(options = {}) {
-	return {
-		selector: ["h1", "h2", "h3", "p", "li", "blockquote", "strong", "em", "code"],
-		focus: "focus",
-		focusWithin: "focus-within",
-		selected: "selected",
-		selectedWithin: "selected-within",
-		...options,
-	};
-}
-
-// Function: richTextNormalizer
-// Helper to construct a standard Normalizer.
-function richTextNormalizer(schema = richTextSchema(), options = {}) {
-	return new Normalizer(schema, options);
-}
-
-// Class: Adapter
+// Class: EditorAdapter
 // Base class for editor adapters (implementation stub).
-class Adapter {}
+class EditorAdapter {}
 
-// Class: Command
+// Class: EditorCommand
 // Represents a serializable representation of an edit intent or action.
 // - type: string - the command type
 // - args: Object - arguments dictionary
-class Command {
+class EditorCommand {
 	// Method: constructor
 	// Initializes the command instance.
 	constructor(type, options = {}) {
@@ -272,19 +199,19 @@ class Command {
 	}
 
 	// Method: from
-	// Coerces or parses a value into a structured `Command` instance.
+	// Coerces or parses a value into a structured `EditorCommand` instance.
 	static from(value, defaults = {}) {
 		if (!value) return null;
-		if (value instanceof Command) return value.with(defaults);
+		if (value instanceof EditorCommand) return value.with(defaults);
 		if (typeof value === "string") {
 			const [type, ...parts] = value.split(":");
-			return new Command(type, {
+			return new EditorCommand(type, {
 				...defaults,
 				args: { ...(defaults.args ?? {}), value: parts.join(":") },
 			});
 		}
 		if (typeof value === "function") return value;
-		return new Command(value.type, {
+		return new EditorCommand(value.type, {
 			...defaults,
 			...value,
 			args: { ...(defaults.args ?? {}), ...(value.args ?? {}) },
@@ -295,7 +222,7 @@ class Command {
 	// Method: with
 	// Clones the command applying specified overrides.
 	with(overrides = {}) {
-		return new Command(this.type, {
+		return new EditorCommand(this.type, {
 			actor: overrides.actor ?? this.actor,
 			args: { ...this.args, ...(overrides.args ?? {}) },
 			selection: overrides.selection ?? this.selection,
@@ -318,11 +245,11 @@ class Command {
 	}
 }
 
-// Class: Transaction
+// Class: EditorTransaction
 // Records the lifecycle, modified steps, and outcome of dispatching a command.
-// - command: Command - parent command
+// - command: EditorCommand - parent command
 // - steps: Array - recorded steps
-class Transaction {
+class EditorTransaction {
 	// Method: constructor
 	// Initializes the transaction.
 	constructor(command, options = {}) {
@@ -354,12 +281,12 @@ class Transaction {
 	}
 }
 
-// Class: Normalizer
+// Class: EditorNormalizer
 // Schema-driven parser that sanitizes, unwraps, and repairs structural DOM trees.
-// - schema: Schema - the rule definition source
-class Normalizer {
+// - schema: EditorSchema - the rule definition source
+class EditorNormalizer {
 	// Method: constructor
-	// Initializes the Normalizer.
+	// Initializes the EditorNormalizer.
 	constructor(schema, options = {}) {
 		this.schema = schema;
 		this.options = options;
@@ -369,11 +296,11 @@ class Normalizer {
 	// Performs in-place DOM structural repairs on the target element.
 	normalize(target, context = {}) {
 		this.root = context.root ?? context.editor?.root ?? target;
-		const command = new Command("normalize", {
+		const command = new EditorCommand("normalize", {
 			actor: context.session?.actor ?? context.actor ?? null,
 			meta: { target: this.schema.tag(target) ?? "#node" },
 		});
-		const transaction = new Transaction(command, { result: false });
+		const transaction = new EditorTransaction(command, { result: false });
 		this.normalizeNode(target, context, transaction);
 		if (target.nodeType === Node.ELEMENT_NODE) this.normalizeEmpty(target, transaction);
 		transaction.result = transaction.steps.length > 0;
@@ -549,8 +476,8 @@ class EditorSession {
 		this.mode = options.mode ?? "insert";
 		this.nativeSelection = options.nativeSelection ?? "none";
 		this.currentBlock = null;
-		this.cursor = new Cursor(this, options.cursor);
-		this.classes = options.classes ? new ClassTracker(this, options.classes).attach() : null;
+		this.cursor = new EditorCursor(this, options.cursor);
+		this.classes = options.classes ? new EditorClassController(this, options.classes).attach() : null;
 	}
 
 	// Property: root
@@ -584,7 +511,7 @@ class EditorSession {
 	// Method: command
 	// Factory to construct structured commands contextualized for the session.
 	command(value, options = {}) {
-		return Command.from(value, {
+		return EditorCommand.from(value, {
 			actor: this.actor,
 			mode: this.mode,
 			selection: this.snapshotSelection(),
@@ -605,12 +532,12 @@ class EditorSession {
 	}
 }
 
-// Class: ClassTracker
+// Class: EditorClassController
 // Monitors cursor location to dynamically attach CSS focus and selection classes on elements.
 // - state: Object - map of tracking elements
-class ClassTracker {
+class EditorClassController {
 	// Method: constructor
-	// Initializes the ClassTracker.
+	// Initializes the EditorClassController.
 	constructor(target, options = {}) {
 		this.session = target instanceof EditorSession ? target : null;
 		this.editor = this.session?.editor ?? target;
@@ -760,10 +687,10 @@ class ClassTracker {
 	}
 }
 
-// Class: TextInput
+// Class: EditorTextInput
 // Keyboard and Mouse listener translating raw user inputs to structural cursor operations.
 // - session: EditorSession - associated editor session
-class TextInput {
+class EditorTextInput {
 	// Method: constructor
 	// Initializes inputs and binds event listeners to the document.
 	constructor(editor, options = {}) {
@@ -911,14 +838,15 @@ class Editor {
 	// Initializes and configures the parent Editor environment.
 	constructor(node, options = {}) {
 		this.root = node;
-		this.schema = options.schema instanceof Schema
+		this.schema = options.schema instanceof EditorSchema
 			? options.schema
-			: new Schema(options.schema ?? {});
-		this.normalizer = options.normalizer ?? new Normalizer(this.schema);
+			: new EditorSchema(options.schema ?? {});
+		this.normalizer = options.normalizer ?? new EditorNormalizer(this.schema);
 		this.keymap = options.keymap ?? {};
 		this.actions = new Map();
 		this.history = [];
 		this.sessions = new Map();
+		this.plugins = [];
 		this._active = false;
 		this._currentBlock = null;
 		this.text = new TextAdapter(node, options.text).attach();
@@ -930,14 +858,8 @@ class Editor {
 		});
 		this.range = new EditorRangeController(this);
 		this.selection = new EditorSelectionController(this);
-		this.input = new TextInput(this, { ...options, session: this.localSession });
-		this.configureActions({
-			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
-			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
-			deleteSmart: (_command, context) => this.deleteSelectedBlocks(context.session) || this.deleteEmptyBlock(context.session) || this.mergeBlockBackward(context.session, context.event),
-			indent: (_command, context) => this.indentCurrentListItem(context.session),
-			dedent: (_command, context) => this.dedentCurrentListItem(context.session),
-		});
+		this.input = new EditorTextInput(this, { ...options, session: this.localSession });
+		this.installPlugins(options.plugins ?? []);
 		this.classes = this.localSession.classes;
 		this.input.cursor.moveTo(8);
 	}
@@ -945,6 +867,7 @@ class Editor {
 	// Method: destroy
 	// Tears down sessions, normalizers, input events, and adapters.
 	destroy() {
+		for (const plugin of this.plugins) plugin.detach?.(this);
 		for (const session of this.sessions.values()) session.destroy();
 		this.input.unbind();
 		this.text.detach();
@@ -973,6 +896,40 @@ class Editor {
 		return this;
 	}
 
+	// Method: installPlugins
+	// Installs editor plugins or plugin factories.
+	installPlugins(plugins = []) {
+		for (const plugin of plugins) this.installPlugin(plugin);
+		return this;
+	}
+
+	// Method: installPlugin
+	// Installs a single editor plugin instance, class, or factory.
+	installPlugin(plugin) {
+		if (!plugin) return null;
+		const instance = typeof plugin === "function"
+			? (plugin.prototype?.attach ? new plugin() : plugin(this))
+			: plugin;
+		instance?.attach?.(this);
+		if (instance) this.plugins.push(instance);
+		return instance ?? null;
+	}
+
+	// Method: plugin
+	// Resolves an installed plugin by constructor, name, or exact instance.
+	plugin(type) {
+		if (!type) return null;
+		for (const plugin of this.plugins) {
+			if (plugin === type) return plugin;
+			if (typeof type === "string") {
+				if (plugin.constructor?.pluginName === type || plugin.constructor?.name === type) return plugin;
+			} else if (plugin instanceof type) {
+				return plugin;
+			}
+		}
+		return null;
+	}
+
 	// Method: action
 	// Dispatches command and returns success flag.
 	action(spec, options = {}) {
@@ -986,17 +943,17 @@ class Editor {
 		const session = this.activeSession(options.session);
 		if (typeof value === "function") {
 			const result = value(this, options.event, session);
-			return new Transaction(null, { result });
+			return new EditorTransaction(null, { result });
 		}
 		const command = session.command(value);
-		if (!command?.type) return new Transaction(command, { result: false });
+		if (!command?.type) return new EditorTransaction(command, { result: false });
 		const fn = this.actions.get(command.type);
-		if (!fn) return new Transaction(command, { result: false });
+		if (!fn) return new EditorTransaction(command, { result: false });
 		const selectionBefore = session.snapshotSelection();
 		const result = fn(command, { editor: this, session, event: options.event });
-		const transaction = result instanceof Transaction
+		const transaction = result instanceof EditorTransaction
 			? result
-			: new Transaction(command, {
+			: new EditorTransaction(command, {
 				result,
 				selectionBefore,
 				selectionAfter: session.snapshotSelection(),
@@ -1031,113 +988,6 @@ class Editor {
 		return handled;
 	}
 
-	// Method: blockSelector
-	// Resolves a CSS selector targeting all valid block level element tags.
-	blockSelector() {
-		const blocks = this.schema.tagsOfType("block")
-			.filter(tag => this.schema.contains(tag, "#text") || tag === "blockquote");
-		return blocks.join(", ") || "p, h1, h2, h3, h4, h5, h6, li, blockquote, div";
-	}
-
-	// Method: blockFor
-	// Resolves the closest ancestor block element containing `node`.
-	blockFor(node) {
-		const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
-		const block = el?.closest(this.blockSelector());
-		return block && this.root.contains(block) ? block : null;
-	}
-
-	// Method: createBlock
-	// Factory to spawn a new block with safe initial structural content.
-	createBlock(tag = "p") {
-		const block = document.createElement(tag);
-		this.ensureEditableContent(block, true);
-		return block;
-	}
-
-	// Method: replaceBlock
-	// Replaces a block with a fresh tag block.
-	replaceBlock(block, tag) {
-		const next = this.createBlock(tag);
-		block.replaceWith(next);
-		return next;
-	}
-
-	// Method: firstTextNode
-	// Recurses to locate first DOM Text node.
-	firstTextNode(node) {
-		if (!node) return null;
-		if (node.nodeType === Node.TEXT_NODE) return node;
-		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-		return walker.nextNode();
-	}
-
-	// Method: lastTextNode
-	// Recurses to locate last DOM Text node.
-	lastTextNode(node) {
-		if (!node) return null;
-		if (node.nodeType === Node.TEXT_NODE) return node;
-		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-		let text = null;
-		while (walker.nextNode()) text = walker.currentNode;
-		return text;
-	}
-
-	// Method: pruneEmptyTextChildren
-	// Clears empty text elements.
-	pruneEmptyTextChildren(block) {
-		if (!block || block.nodeType !== Node.ELEMENT_NODE) return;
-		for (const child of [...block.childNodes]) {
-			if (child.nodeType === Node.TEXT_NODE && child.data.length === 0) child.remove();
-		}
-	}
-
-	// Method: ensureEditableContent
-	// Ensures a block has editable content (inserts placeholder br if empty).
-	ensureEditableContent(block, preferBr = false) {
-		this.pruneEmptyTextChildren(block);
-		if (block.childNodes.length > 0) return;
-		if (preferBr) block.appendChild(document.createElement("br"));
-	}
-
-	// Method: moveCursorToBlockStart
-	// Places cursor at first text position of a block.
-	moveCursorToBlockStart(block, session = null) {
-		this.ensureEditableContent(block, true);
-		const textNode = this.firstTextNode(block);
-		return textNode
-			? this.selection.setCaret(textNode, 0, session)
-			: this.selection.setCaret(block, 0, session);
-	}
-
-	// Method: moveCursorToBlockEnd
-	// Places cursor at last text position of a block.
-	moveCursorToBlockEnd(block, session = null) {
-		this.ensureEditableContent(block, true);
-		const textNode = this.lastTextNode(block);
-		return textNode
-			? this.selection.setCaret(textNode, textNode.data.length, session)
-			: this.selection.setCaret(block, block.childNodes.length, session);
-	}
-
-	// Method: firstBlockIn
-	// Locates the first matching block inside `node`.
-	firstBlockIn(node) {
-		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
-		if (node.matches(this.blockSelector())) return node;
-		return node.querySelector(this.blockSelector());
-	}
-
-	// Method: lastBlockIn
-	// Locates the last matching block inside `node`.
-	lastBlockIn(node) {
-		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
-		const blocks = node.matches(this.blockSelector())
-			? [node, ...node.querySelectorAll(this.blockSelector())]
-			: [...node.querySelectorAll(this.blockSelector())];
-		return blocks.at(-1) ?? null;
-	}
-
 	// Method: normalize
 	// Performs incremental DOM sanitizations on designated targets.
 	normalize(target = this.root, context = {}) {
@@ -1146,349 +996,23 @@ class Editor {
 			root: this.root,
 			schema: this.schema,
 			...context,
-		}) ?? new Transaction(new Command("normalize"), { result: false });
+		}) ?? new EditorTransaction(new EditorCommand("normalize"), { result: false });
 	}
 
-	// Method: blockText
-	// Extracts plain text from block, removing zero-width joiners.
-	blockText(block) {
-		return (block?.textContent ?? "").replace(/\u200b/g, "").trim();
-	}
-
-	// Method: isEmptyBlock
-	// Verifies if block is visually empty.
-	isEmptyBlock(block) {
-		return !!block && this.blockText(block) === "";
-	}
-
-	// Method: removePlaceholderInCurrentBlock
-	// Safely deletes temporary <br> placeholders on character entry.
-	removePlaceholderInCurrentBlock(session = null) {
-		const block = this.currentEditableBlock(session);
-		if (!block || !this.isEmptyBlock(block)) return false;
-		let removed = false;
-		for (const child of [...block.childNodes]) {
-			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") {
-				child.remove();
-				removed = true;
-			}
-		}
-		if (removed) this.text.refresh();
-		return removed;
-	}
-
-	// Method: syncAfterMutation
-	// Synchronizes normalization, adapter caches, and selection states after manual DOM changes.
-	syncAfterMutation(move, session = null) {
-		const active = this.activeSession(session);
-		this.lastNormalization = this.normalize(this.root, { session: active });
-		this.text.refresh();
-		let placed = false;
-		if (move?.type === "end" && move.block?.isConnected) {
-			placed = this.moveCursorToBlockEnd(move.block, active);
-		} else if (move?.block?.isConnected) {
-			placed = this.moveCursorToBlockStart(move.block, active);
-		}
-		if (!placed) {
-			const fallback = this.firstBlockIn(this.root);
-			if (fallback) placed = this.moveCursorToBlockStart(fallback, active);
-		}
-		active.currentBlock = this.blockFor(active.cursor.anchor) ?? (move?.block?.isConnected ? move.block : null);
-		if (active === this.localSession) this._currentBlock = active.currentBlock;
-		active.classes?.update();
-	}
-
-	// Method: currentEditableBlock
-	// Returns the current editing block.
-	currentEditableBlock(session = null) {
-		const active = this.activeSession(session);
-		const range = this.range.current(this.root, active);
-		const selectedBlock = range ? this.blockFor(range.startContainer) : null;
-		if (selectedBlock) {
-			active.currentBlock = selectedBlock;
-			if (active === this.localSession) this._currentBlock = selectedBlock;
-			return selectedBlock;
-		}
-		const anchorBlock = this.blockFor(active.cursor.anchor);
-		if (anchorBlock) {
-			active.currentBlock = anchorBlock;
-			if (active === this.localSession) this._currentBlock = anchorBlock;
-			return anchorBlock;
-		}
-		return active.currentBlock?.isConnected ? active.currentBlock : null;
-	}
-
-	// Method: isFullySelectedBlock
-	// Checks if selection boundaries envelop the entire block.
-	isFullySelectedBlock(range, block) {
-		const blockRange = document.createRange();
-		blockRange.selectNode(block);
-		return (
-			range.compareBoundaryPoints(Range.START_TO_START, blockRange) <= 0 &&
-			range.compareBoundaryPoints(Range.END_TO_END, blockRange) >= 0
-		);
-	}
-
-	// Method: fullySelectedBlocks
-	// Identifies block elements wholly encompassed by selection.
-	fullySelectedBlocks(session = null) {
-		const cursor = this.activeSession(session).cursor;
-		if (cursor.selectionKind === "node" && cursor.selectedNode) {
-			const block = this.blockFor(cursor.selectedNode);
-			return block ? [block] : [];
-		}
-		const range = this.range.selected(this.root, session);
-		if (!range) return [];
-		const blocks = [];
-		for (const block of this.root.querySelectorAll(this.blockSelector())) {
-			if (range.intersectsNode(block) && this.isFullySelectedBlock(range, block)) blocks.push(block);
-		}
-		return blocks.filter(block => !blocks.some(other => other !== block && other.contains(block)));
-	}
-
-	// Method: removeBlock
-	// Deletes block element, safely cleaning nested structures.
-	removeBlock(block) {
-		if (!block?.isConnected) return;
-		const tag = block.tagName.toLowerCase();
-		if (tag === "li") {
-			const list = block.parentElement;
-			block.remove();
-			if (list && !list.querySelector(":scope > li")) list.remove();
-			return;
-		}
-		if (tag === "p" && block.parentElement?.tagName?.toLowerCase() === "blockquote") {
-			const quote = block.parentElement;
-			block.remove();
-			if (!quote.querySelector(this.blockSelector())) quote.remove();
-			return;
-		}
-		block.remove();
-	}
-
-	// Method: deleteSelectedBlocks
-	// Deletes all blocks wholly selected.
-	deleteSelectedBlocks(session = null) {
-		const blocks = this.fullySelectedBlocks(session);
-		if (blocks.length === 0) return false;
-		const afterBlock = blocks.map(block => this.firstBlockIn(block.nextElementSibling)).find(Boolean);
-		const beforeBlock = [...blocks].reverse().map(block => this.lastBlockIn(block.previousElementSibling)).find(Boolean);
-		for (const block of blocks) this.removeBlock(block);
-		this.syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: "end" } : null, session);
-		return true;
-	}
-
-	// Method: deleteEmptyBlock
-	// Deletes empty block and transitions cursor to surrounding blocks.
-	deleteEmptyBlock(session = null) {
-		const range = this.range.current(this.root, session);
-		if (!range?.collapsed) return false;
-		const block = this.blockFor(range.startContainer);
-		if (!block || !this.isEmptyBlock(block)) return false;
-		const afterBlock = this.firstBlockIn(block.nextElementSibling);
-		const beforeBlock = this.lastBlockIn(block.previousElementSibling);
-		this.removeBlock(block);
-		this.syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: "end" } : null, session);
-		return true;
-	}
-
-	// Method: previousEditableBlock
-	// Resolves preceding editable block in DOM order.
-	previousEditableBlock(block) {
-		let sibling = block?.previousElementSibling ?? null;
-		while (sibling) {
-			const previous = this.lastBlockIn(sibling);
-			if (previous) return previous;
-			sibling = sibling.previousElementSibling;
-		}
-		return null;
-	}
-
-	// Method: mergeBlockBackward
-	// Merges contents of block backward into preceding block.
-	mergeBlockBackward(session = null, event = null) {
-		if (event && event.key !== "Backspace") return false;
-		const range = this.range.current(this.root, session);
-		if (!range?.collapsed) return false;
-		const block = this.blockFor(range.startContainer);
-		if (!block || !this.range.atBlockStart(range, block)) return false;
-		const previous = this.previousEditableBlock(block);
-		if (!previous) return false;
-
-		for (const child of [...previous.childNodes]) {
-			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") child.remove();
-		}
-		const markerText = this.lastTextNode(previous);
-		const markerNode = markerText ?? previous;
-		const markerOffset = markerText ? markerText.data.length : previous.childNodes.length;
-		for (const child of [...block.childNodes]) {
-			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") {
-				child.remove();
-			} else {
-				previous.appendChild(child);
-			}
-		}
-		block.remove();
-		const active = this.activeSession(session);
-		this.lastNormalization = this.normalize(this.root, { session: active });
-		this.text.refresh();
-		this.selection.setCaret(markerNode, markerOffset, active);
-		active.currentBlock = previous;
-		if (active === this.localSession) this._currentBlock = previous;
-		active.classes?.update();
-		return true;
-	}
-
-	// Method: exitEmptyBlock
-	// Exits container lists on Enter press inside empty item blocks.
-	exitEmptyBlock(block, session = null) {
-		if (!this.isEmptyBlock(block)) return false;
-		const container = block.parentElement ?? this.root;
-		if (container === this.root) {
-			const defaultTag = this.schema.defaultChild(":root");
-			const next = this.schema.tag(block) === defaultTag ? block : this.replaceBlock(block, defaultTag);
-			next.replaceChildren();
-			this.ensureEditableContent(next, true);
-			this.syncAfterMutation({ block: next }, session);
-			return true;
-		}
-		const outerParent = container.parentElement ?? this.root;
-		const nextBlock = this.createBlock(this.schema.defaultChild(outerParent === this.root ? ":root" : outerParent));
-		container.parentNode.insertBefore(nextBlock, container.nextSibling);
-		block.remove();
-		this.syncAfterMutation({ block: nextBlock }, session);
-		return true;
-	}
-
-	// Method: splitBlockElement
-	// Splits normal block element at cursor, carrying trailing text over.
-	splitBlockElement(block, range, session = null) {
-		if (this.isEmptyBlock(block)) return this.exitEmptyBlock(block, session);
-		const parent = block.parentElement === this.root ? null : block.parentElement;
-		const nextTag = this.schema.enterNext(block, parent, this.schema.defaultChild(":root"));
-		const nextBlock = document.createElement(nextTag);
-		const trailing = document.createRange();
-		trailing.selectNodeContents(block);
-		trailing.setStart(range.startContainer, range.startOffset);
-		nextBlock.appendChild(trailing.extractContents());
-		this.ensureEditableContent(block, true);
-		this.ensureEditableContent(nextBlock, true);
-		block.parentNode.insertBefore(nextBlock, block.nextSibling);
-		this.syncAfterMutation({ block: nextBlock }, session);
-		return true;
-	}
-
-	// Method: splitListItem
-	// Splits a list item element at cursor.
-	splitListItem(item, range, session = null) {
-		if (this.isEmptyBlock(item)) return this.exitEmptyBlock(item, session);
-		const nextItem = document.createElement("li");
-		const trailing = document.createRange();
-		trailing.selectNodeContents(item);
-		trailing.setStart(range.startContainer, range.startOffset);
-		nextItem.appendChild(trailing.extractContents());
-		this.ensureEditableContent(item, true);
-		this.ensureEditableContent(nextItem, true);
-		item.parentNode.insertBefore(nextItem, item.nextSibling);
-		this.syncAfterMutation({ block: nextItem }, session);
-		return true;
-	}
-
-	// Method: insertLineBreak
-	// Inserts explicit line break <br> inside block at caret position.
-	insertLineBreak(session = null) {
-		const range = this.range.current(this.root, session);
-		if (!range) return false;
-		const block = this.blockFor(range.startContainer);
-		if (!block) return false;
-		this.range.split(range);
-		const br = document.createElement("br");
-		const tail = document.createTextNode("");
-		range.insertNode(tail);
-		range.insertNode(br);
-		this.syncAfterMutation(null, session);
-		this.selection.setCaret(tail, 0, session);
-		this.activeSession(session).classes?.update();
-		return true;
-	}
-
-	// Method: splitCurrentBlock
-	// Handles splitting of list items or blocks on Enter press.
-	splitCurrentBlock(session = null) {
-		const range = this.range.current(this.root, session);
-		if (!range) return false;
-		const block = this.blockFor(range.startContainer);
-		if (!block?.contains(range.startContainer)) return false;
-		this.range.split(range);
-		return block.tagName.toLowerCase() === "li"
-			? this.splitListItem(block, range, session)
-			: this.splitBlockElement(block, range, session);
-	}
-
-	// Method: indentListItem
-	// Indents list item block into a nested list.
-	indentListItem(item, session = null) {
-		const previous = item.previousElementSibling;
-		const list = item.parentElement;
-		if (previous?.tagName?.toLowerCase() !== "li" || !list) return false;
-		let nested = previous.lastElementChild;
-		const tag = list.tagName.toLowerCase();
-		if (!nested || nested.tagName.toLowerCase() !== tag) {
-			nested = document.createElement(tag);
-			previous.appendChild(nested);
-		}
-		nested.appendChild(item);
-		this.syncAfterMutation({ block: item }, session);
-		return true;
-	}
-
-	// Method: dedentListItem
-	// Outdents list item block.
-	dedentListItem(item, session = null) {
-		const list = item.parentElement;
-		const parentItem = list?.parentElement?.closest("li");
-		if (parentItem) {
-			parentItem.parentElement.insertBefore(item, parentItem.nextSibling);
-			if (!list.querySelector(":scope > li")) list.remove();
-			this.syncAfterMutation({ block: item }, session);
-			return true;
-		}
-		if (!list) return false;
-		const paragraph = document.createElement(this.schema.defaultChild(":root"));
-		while (item.firstChild) paragraph.appendChild(item.firstChild);
-		this.ensureEditableContent(paragraph, true);
-		list.parentNode.insertBefore(paragraph, list.nextSibling);
-		item.remove();
-		if (!list.querySelector(":scope > li")) list.remove();
-		this.syncAfterMutation({ block: paragraph }, session);
-		return true;
-	}
-
-	// Method: currentListItem
-	// Resolves currently focused list item.
-	currentListItem(session = null) {
-		const active = this.activeSession(session);
-		const block = active.currentBlock?.isConnected && active.currentBlock.tagName?.toLowerCase() === "li"
-			? active.currentBlock
-			: this.currentEditableBlock(active);
-		return block?.tagName?.toLowerCase() === "li" ? block : null;
-	}
-
-	// Method: indentCurrentListItem
-	// Indents current list item.
-	indentCurrentListItem(session = null) {
-		const item = this.currentListItem(session);
-		return item ? this.indentListItem(item, session) : false;
-	}
-
-	// Method: dedentCurrentListItem
-	// Outdents current list item.
-	dedentCurrentListItem(session = null) {
-		const item = this.currentListItem(session);
-		return item ? this.dedentListItem(item, session) : false;
-	}
 }
 
-export { Schema, Adapter, ClassTracker, Command, Cursor, Editor, EditorRangeController, EditorSelectionController, EditorSession, Normalizer, Transaction, richTextClasses, richTextKeymap, richTextNormalizer, richTextSchema };
+export {
+	EditorAdapter,
+	EditorClassController,
+	EditorCommand,
+	EditorCursor,
+	Editor,
+	EditorNormalizer,
+	EditorRangeController,
+	EditorSchema,
+	EditorSelectionController,
+	EditorSession,
+	EditorTransaction,
+};
 
 // EOF

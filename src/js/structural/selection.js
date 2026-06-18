@@ -362,7 +362,7 @@ class EditorSelectionController {
 	// Method: _syncSessionBlock
 	// Updates session block bookkeeping from the active cursor anchor.
 	_syncSessionBlock(active) {
-		active.currentBlock = this.editor.blockFor(active.cursor.anchor) ?? active.currentBlock;
+		active.currentBlock = this.editor.blockFor?.(active.cursor.anchor) ?? active.currentBlock;
 		if (active === this.editor.localSession) this.editor._currentBlock = active.currentBlock;
 	}
 
@@ -393,6 +393,37 @@ class EditorSelectionController {
 	_edgePlacement(root, x) {
 		const rect = root.getBoundingClientRect();
 		return x > rect.left + rect.width / 2 ? "end" : "start";
+	}
+
+	// Method: _firstTextNode
+	// Resolves the first descendant text node within `root`.
+	_firstTextNode(root) {
+		if (!root) return null;
+		if (root.nodeType === Node.TEXT_NODE) return root;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		return walker.nextNode();
+	}
+
+	// Method: _lastTextNode
+	// Resolves the last descendant text node within `root`.
+	_lastTextNode(root) {
+		if (!root) return null;
+		if (root.nodeType === Node.TEXT_NODE) return root;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		let text = null;
+		while (walker.nextNode()) text = walker.currentNode;
+		return text;
+	}
+
+	// Method: _setEdgeCaret
+	// Places the caret at the subtree start or end when block helpers are unavailable.
+	_setEdgeCaret(root, placement, session = null) {
+		const textNode = placement === "end" ? this._lastTextNode(root) : this._firstTextNode(root);
+		if (textNode) {
+			return this.setCaret(textNode, placement === "end" ? textNode.data.length : 0, session);
+		}
+		if (root.nodeType !== Node.ELEMENT_NODE) return false;
+		return this.setCaret(root, placement === "end" ? root.childNodes.length : 0, session);
 	}
 
 	// Method: setCaret
@@ -440,9 +471,10 @@ class EditorSelectionController {
 			return false;
 		}
 
-		return this._edgePlacement(root, x) === "end"
-			? this.editor.moveCursorToBlockEnd(root, active)
-			: this.editor.moveCursorToBlockStart(root, active);
+		const placement = this._edgePlacement(root, x);
+		return placement === "end"
+			? (this.editor.moveCursorToBlockEnd?.(root, active) ?? this._setEdgeCaret(root, "end", active))
+			: (this.editor.moveCursorToBlockStart?.(root, active) ?? this._setEdgeCaret(root, "start", active));
 	}
 
 	// Method: syncToNative

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaboration Editor - Structural.js</title>
+    <link rel="icon" href="data:,">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js",
+        "structural/range": "../src/js/structural/range.js",
+        "structural/modification": "../src/js/structural/modification.js",
+        "structural/richtext": "../src/js/structural/richtext.js"
+      }
+    }
+    </script>
+    <style>
+      body {
+        margin: 0;
+        background: #f5f5f5;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mount"></div>
+    <script type="module">
+      import { createCollaborationEditor } from "./app-collaboration.editor.js";
+
+      const params = new URLSearchParams(window.location.search);
+      const app = createCollaborationEditor(document.getElementById("mount"), {
+        room: params.get("room") || "structural-collaboration-demo",
+        canSeed: params.get("seed") === "1",
+        infoText: "Open two tabs or use the parent demo page. This instance syncs through a room-scoped BroadcastChannel with no persistence.",
+      });
+
+      window.addEventListener("beforeunload", () => app.destroy());
+    </script>
+  </body>
+</html>

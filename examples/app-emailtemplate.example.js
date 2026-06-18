@@ -1,4 +1,5 @@
-import { Editor, richTextClasses, richTextKeymap, richTextSchema } from "structural/editor";
+import { Editor } from "structural/editor";
+import { RichText, richTextClasses, richTextKeymap, richTextSchema } from "structural/richtext";
 import { Modification } from "structural/modification";
 
 const EDITABLE_SELECTOR = ".EDITABLE";
@@ -248,6 +249,7 @@ class EmailTemplateApp {
 				selected: "selected",
 				selectedWithin: "selected-within",
 			}),
+			plugins: [RichText],
 		});
 
 		editor.configureActions({
