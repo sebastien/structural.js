@@ -208,17 +208,27 @@ class Modification {
 	// Method: toggleBlock
 	// Toggles block tag style (e.g. `ul`, `ol`, `blockquote`, headings) on the current block.
 	toggleBlock(tag) {
-		if (!this.allowsBlock(tag)) return;
+		const remembered = typeof this.editor.currentEditableBlock === 'function'
+			? this.editor.currentEditableBlock(this.session ?? this.editor.localSession)
+			: null;
 		const block = this.findBlock(this.cursor.anchor);
-		if (block === this.editor.root) return;
+		const target = block === this.editor.root && remembered ? remembered : block;
+		if (target === this.editor.root) return;
+		const currentTag = target.tagName.toLowerCase();
+		const isActive = tag === 'blockquote'
+			? !!target.closest('blockquote')
+			: tag === 'ul' || tag === 'ol'
+				? !!target.closest(tag)
+				: currentTag === tag;
+		if (!isActive && !this.allowsBlock(tag)) return;
 		this._savePoint();
 
 		if (tag === 'ul' || tag === 'ol') {
-			this._toggleList(tag, block);
+			this._toggleList(tag, target);
 		} else if (tag === 'blockquote') {
-			this._toggleBbq(block);
+			this._toggleBbq(target);
 		} else {
-			this._heading(tag, block);
+			this._heading(tag, target);
 		}
 
 		this._restoreCursor();

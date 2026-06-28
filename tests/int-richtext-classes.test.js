@@ -54,6 +54,41 @@ async function selectNodeRange(page, selector) {
 	}, selector);
 }
 
+async function dispatchClipboardEvent(page, type, text = "") {
+	return page.evaluate(({ type, text }) => {
+		const data = new DataTransfer();
+		if (text) data.setData("text/plain", text);
+		const event = new ClipboardEvent(type, {
+			bubbles: true,
+			cancelable: true,
+			clipboardData: data,
+		});
+		document.dispatchEvent(event);
+		return data.getData("text/plain");
+	}, { type, text });
+}
+
+async function setCaretInText(page, selector, text, offset) {
+	await page.evaluate(({ selector, text, offset }) => {
+		const root = document.querySelector(selector);
+		if (!root) return;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		let node;
+		while ((node = walker.nextNode())) {
+			const index = node.data.indexOf(text);
+			if (index < 0) continue;
+			const range = document.createRange();
+			range.setStart(node, index + offset);
+			range.collapse(true);
+			const selection = window.getSelection();
+			selection.removeAllRanges();
+			selection.addRange(range);
+			document.dispatchEvent(new Event("selectionchange"));
+			return;
+		}
+	}, { selector, text, offset });
+}
+
 test("richtext: block and inline focus and selection classes", async () => {
 	const browser = await chromium.launch();
 	const page = await loadPage(browser, "/examples/app-richtext.example.html");
@@ -472,4 +507,95 @@ test("richtext: enter on empty blocks exits their container", async () => {
 	expect(listState.nextTag).toBe("P");
 	expect(listState.nextText).toBe("After list");
 	expect(listState.nextChildNodes).toEqual([{ type: 3, text: "After list" }]);
+});
+
+test("richtext: spaces move the caret and repeated spaces collapse outside preformatted content", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	let point = await pointForText(page, "#editor h1", "Rich Text Editor", "Rich Text Editor".length);
+	await page.mouse.click(point.x, point.y);
+	const beforeSpace = await page.evaluate(() => Number.parseFloat(document.getElementById("caret")?.style.left ?? "0"));
+	await page.keyboard.press("Space");
+	const afterSpace = await page.evaluate(() => ({
+		left: Number.parseFloat(document.getElementById("caret")?.style.left ?? "0"),
+		text: document.querySelector("#editor h1")?.textContent ?? null,
+	}));
+
+	await setCaretInText(page, "#editor", "Structural.js", 0);
+	await page.keyboard.press("Space");
+	await page.keyboard.press("Space");
+	const swallowedSpaces = await page.evaluate(() => Array.from(document.querySelectorAll("#editor p")).find(node =>
+		node.textContent.includes("built")
+	)?.textContent ?? null);
+
+	point = await pointForText(page, "#editor p code", "monospace", "monospace".length);
+	await page.mouse.click(point.x, point.y);
+	await page.keyboard.press("Space");
+	await page.keyboard.press("Space");
+	const preservedCode = await page.evaluate(() => document.querySelector("#editor p code")?.textContent ?? null);
+
+	await page.close();
+	await browser.close();
+
+	expect(afterSpace.left).toBeGreaterThan(beforeSpace);
+	expect(afterSpace.text).toBe("Rich Text Editor ");
+	expect(swallowedSpaces).toContain("built with Structural.js");
+	expect(swallowedSpaces).not.toContain("with  Structural.js");
+	expect(preservedCode).toBe("monospace  ");
+});
+
+test("richtext: ctrl-a expands selection and shift-ctrl-a contracts it", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	await setCaretInText(page, "#editor", "Select some text", 2);
+	await page.keyboard.press("Control+A");
+	const firstSelection = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+	await page.keyboard.press("Control+A");
+	const secondSelection = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+	await page.keyboard.press("Control+Shift+A");
+	const contractedSelection = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+
+	await page.keyboard.press("ArrowRight");
+	await page.keyboard.press("Control+Shift+ArrowRight");
+	const expandedSelection = await page.evaluate(() => {
+		const selection = window.getSelection();
+		return {
+			text: selection?.toString() ?? "",
+			collapsed: selection?.isCollapsed ?? true,
+		};
+	});
+
+	await page.close();
+	await browser.close();
+
+	expect(firstSelection).toBe("Select some text and toggle bold, italic, or monospace inline styles. You can also click a word to format it without selecting.");
+	expect(secondSelection.length).toBeGreaterThan(firstSelection.length);
+	expect(secondSelection).toContain(firstSelection);
+	expect(contractedSelection).toBe(firstSelection);
+	expect(expandedSelection.collapsed).toBe(false);
+	expect(expandedSelection.text.length).toBeGreaterThan(0);
+});
+
+test("richtext: copy and paste use the current selection", async () => {
+	const browser = await chromium.launch();
+	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+
+	await setCaretInText(page, "#editor", "Select some text", 2);
+	await page.keyboard.press("Control+A");
+	await page.keyboard.press("ArrowRight");
+	await page.keyboard.press("Control+Shift+ArrowRight");
+
+	const copiedText = await dispatchClipboardEvent(page, "copy");
+	const point = await pointForText(page, "#editor", "Rich Text Editor", "Rich Text Editor".length);
+	await page.mouse.click(point.x, point.y);
+	await dispatchClipboardEvent(page, "paste", copiedText);
+	const pastedHeading = await page.evaluate(() => document.querySelector("#editor h1")?.textContent ?? null);
+
+	await page.close();
+	await browser.close();
+
+	expect(copiedText.length).toBeGreaterThan(0);
+	expect(pastedHeading).toBe(`Rich Text Editor${copiedText}`);
 });

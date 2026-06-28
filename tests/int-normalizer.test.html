@@ -17,6 +17,7 @@
   </head>
   <body>
     <div id="empty"></div>
+    <div id="placeholder"><p><br><br><br></p></div>
     <div id="rich">
       <p>Hello <b>bold</b> <span>mystery</span></p>
       <ul></ul>
@@ -28,17 +29,20 @@
 
       const schema = richTextSchema();
       const empty = document.getElementById("empty");
+      const placeholder = document.getElementById("placeholder");
       const rich = document.getElementById("rich");
       const normalizer = new EditorNormalizer(schema);
       const emptyTx = normalizer.normalize(empty, { root: empty });
+      const placeholderTx = normalizer.normalize(placeholder, { root: placeholder });
       const richTx = normalizer.normalize(rich, { root: rich });
 
       window.__result = {
         emptyRootHtml: empty.innerHTML,
+        placeholderHtml: placeholder.innerHTML,
         richHtml: rich.innerHTML.trim(),
         hasList: !!rich.querySelector("ul, ol"),
         hasQuote: !!rich.querySelector("blockquote"),
-        steps: [...emptyTx.steps, ...richTx.steps].map(step => step.type),
+        steps: [...emptyTx.steps, ...placeholderTx.steps, ...richTx.steps].map(step => step.type),
       };
     </script>
   </body>

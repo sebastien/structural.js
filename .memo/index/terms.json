@@ -1,0 +1,610 @@
+[
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          3
+        ]
+      }
+    },
+    "type": "word",
+    "value": "add"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          72
+        ]
+      }
+    },
+    "type": "word",
+    "value": "b"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          21
+        ]
+      }
+    },
+    "type": "word",
+    "value": "block"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          74
+        ]
+      }
+    },
+    "type": "word",
+    "value": "bold"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          46
+        ]
+      }
+    },
+    "type": "word",
+    "value": "c"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          62
+        ]
+      }
+    },
+    "type": "word",
+    "value": "clipboard"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          69
+        ]
+      }
+    },
+    "type": "word",
+    "value": "common"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          31
+        ]
+      }
+    },
+    "type": "word",
+    "value": "contract"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          65
+        ]
+      }
+    },
+    "type": "word",
+    "value": "convert"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          47
+        ]
+      }
+    },
+    "type": "word",
+    "value": "copy"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 9,
+        "positions": [
+          16,
+          23,
+          29,
+          32,
+          45,
+          50,
+          55,
+          71,
+          75
+        ]
+      }
+    },
+    "type": "word",
+    "value": "ctrl"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          20
+        ]
+      }
+    },
+    "type": "word",
+    "value": "current"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          8
+        ]
+      }
+    },
+    "type": "word",
+    "value": "cursor"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          83
+        ]
+      }
+    },
+    "type": "word",
+    "value": "dedent"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          44
+        ]
+      }
+    },
+    "type": "word",
+    "value": "direction"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          37
+        ]
+      }
+    },
+    "type": "word",
+    "value": "down"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 2,
+        "positions": [
+          25,
+          38
+        ]
+      }
+    },
+    "type": "word",
+    "value": "expand"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          43
+        ]
+      }
+    },
+    "type": "word",
+    "value": "given"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          63
+        ]
+      }
+    },
+    "type": "word",
+    "value": "ha"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          76
+        ]
+      }
+    },
+    "type": "word",
+    "value": "i"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          80
+        ]
+      }
+    },
+    "type": "word",
+    "value": "indent"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          78
+        ]
+      }
+    },
+    "type": "word",
+    "value": "italic"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          34
+        ]
+      }
+    },
+    "type": "word",
+    "value": "left"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          68
+        ]
+      }
+    },
+    "type": "word",
+    "value": "link"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          15
+        ]
+      }
+    },
+    "type": "word",
+    "value": "mode"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          6
+        ]
+      }
+    },
+    "type": "word",
+    "value": "move"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          2
+        ]
+      }
+    },
+    "type": "word",
+    "value": "movement"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          9
+        ]
+      }
+    },
+    "type": "word",
+    "value": "multiple"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          57
+        ]
+      }
+    },
+    "type": "word",
+    "value": "over"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          52
+        ]
+      }
+    },
+    "type": "word",
+    "value": "paste"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          14
+        ]
+      }
+    },
+    "type": "word",
+    "value": "preformatted"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          35
+        ]
+      }
+    },
+    "type": "word",
+    "value": "rigth"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          0
+        ]
+      }
+    },
+    "type": "word",
+    "value": "rule"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          18
+        ]
+      }
+    },
+    "type": "word",
+    "value": "select"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          59
+        ]
+      }
+    },
+    "type": "word",
+    "value": "selected"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 6,
+        "positions": [
+          1,
+          27,
+          40,
+          49,
+          54,
+          66
+        ]
+      }
+    },
+    "type": "word",
+    "value": "selection"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 3,
+        "positions": [
+          28,
+          33,
+          81
+        ]
+      }
+    },
+    "type": "word",
+    "value": "shift"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          70
+        ]
+      }
+    },
+    "type": "word",
+    "value": "shortcut"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 2,
+        "positions": [
+          5,
+          10
+        ]
+      }
+    },
+    "type": "word",
+    "value": "space"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          22
+        ]
+      }
+    },
+    "type": "word",
+    "value": "subsequent"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          11
+        ]
+      }
+    },
+    "type": "word",
+    "value": "swallowed"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 2,
+        "positions": [
+          79,
+          82
+        ]
+      }
+    },
+    "type": "word",
+    "value": "tab"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          60
+        ]
+      }
+    },
+    "type": "word",
+    "value": "text"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 2,
+        "positions": [
+          73,
+          77
+        ]
+      }
+    },
+    "type": "word",
+    "value": "toggle"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          12
+        ]
+      }
+    },
+    "type": "word",
+    "value": "unless"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          36
+        ]
+      }
+    },
+    "type": "word",
+    "value": "up"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          64
+        ]
+      }
+    },
+    "type": "word",
+    "value": "url"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 2,
+        "positions": [
+          51,
+          56
+        ]
+      }
+    },
+    "type": "word",
+    "value": "v"
+  },
+  {
+    "entries": {
+      "rule/richtext-behaviour.md": {
+        "count": 1,
+        "positions": [
+          61
+        ]
+      }
+    },
+    "type": "word",
+    "value": "when"
+  }
+]

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Blockquote Toggle Test</title>
+  <script type="importmap">
+  { "imports": {
+    "structural/editor": "/src/js/structural/editor.js",
+    "structural/cursor": "/src/js/structural/cursor.js",
+    "structural/text": "/src/js/structural/text.js",
+    "structural/selection": "/src/js/structural/selection.js",
+    "structural/range": "/src/js/structural/range.js",
+    "structural/modification": "/src/js/structural/modification.js",
+    "structural/richtext": "/src/js/structural/richtext.js"
+  }}
+  </script>
+</head>
+<body>
+  <div id="toolbar">
+    <button data-kind="block" data-tag="blockquote" type="button">Quote</button>
+  </div>
+  <div id="editor"><h1>Collaborative document</h1><p>Body</p></div>
+  <script type="module">
+    import { Editor } from "structural/editor";
+    import { Modification } from "structural/modification";
+    import { richTextSchema } from "structural/richtext";
+
+    const editor = new Editor(document.getElementById("editor"), {
+      schema: richTextSchema(),
+    });
+    const mod = new Modification(editor);
+    const toolbar = document.getElementById("toolbar");
+
+    toolbar.addEventListener("mousedown", event => event.preventDefault());
+    toolbar.addEventListener("click", event => {
+      const button = event.target.closest("button[data-tag]");
+      if (!button) return;
+      mod.toggleBlock(button.dataset.tag);
+    });
+
+    window.__test = {
+      pointForText(text, offset) {
+        const heading = document.querySelector("#editor h1");
+        const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const index = node.data.indexOf(text);
+          if (index < 0) continue;
+          const range = document.createRange();
+          const start = index + offset;
+          range.setStart(node, start);
+          range.setEnd(node, Math.min(node.data.length, start + 1));
+          const rect = range.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+        return null;
+      },
+      html() {
+        return document.getElementById("editor").innerHTML;
+      },
+    };
+  </script>
+</body>
+</html>

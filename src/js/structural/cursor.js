@@ -270,6 +270,7 @@ class Caret {
 			this._hide();
 			return { visible: false, editable: false, source: null };
 		}
+		const trailingSpaceWidth = this._collapsedTrailingSpaceWidth(position);
 		const result =
 			point.node?.nodeType === Node.TEXT_NODE ||
 			point.node?.nodeType === Node.ELEMENT_NODE
@@ -277,7 +278,7 @@ class Caret {
 				: null;
 		const rect = result?.rect;
 		if (rect && (rect.width !== 0 || rect.height !== 0)) {
-			const x = rect.left + window.scrollX;
+			const x = rect.left + window.scrollX + (rect.width === 0 ? trailingSpaceWidth : 0);
 			const y = rect.top + window.scrollY;
 			if (editable) {
 				this._showAt(x, y, rect.height);
@@ -288,7 +289,7 @@ class Caret {
 		}
 		const boundary = this._boundaryRect(position);
 		if (boundary) {
-			const x = boundary.x + this._collapsedTrailingSpaceWidth(position);
+			const x = boundary.x + trailingSpaceWidth;
 			if (editable) {
 				this._showAt(x, boundary.y, boundary.height);
 			} else {

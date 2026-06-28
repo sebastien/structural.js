@@ -1,60 +1,9 @@
 import * as Y from "https://esm.sh/yjs@13.6.15";
 import { Editor } from "../src/js/structural/editor.js";
 import { Modification } from "../src/js/structural/modification.js";
+import { RichText, richTextClasses, richTextKeymap, richTextSchema } from "../src/js/structural/richtext.js";
 
 const STYLE_ID = "collaboration-editor-styles";
-
-const richTextRules = {
-  ":root": {
-    type: "root",
-    contains: ["h1", "h2", "h3", "p", "ul", "ol", "blockquote"],
-    default: "p",
-    normalize: { empty: "fill", text: "wrap", invalidChild: "lift" },
-  },
-  "@inline": ["strong", "em", "code"],
-  blockquote: { type: "block", contains: ["p", "h1", "h2", "h3", "ul", "ol"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
-  ul: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ul"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
-  ol: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ol"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
-  li: { type: "block", contains: ["#text", "@inline", "p", "ul", "ol"], wrapIn: "ul", default: "p", normalize: { empty: "placeholder", text: "preserve", invalidChild: "lift" }, enter: { next: "same" } },
-  p: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "same" } },
-  h1: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
-  h2: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
-  h3: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
-  strong: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
-  em: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
-  code: { type: "inline", contains: ["#text"], normalize: { empty: "unwrap", invalidChild: "lift" } },
-};
-
-function richTextSchema() {
-  return richTextRules;
-}
-
-function richTextKeymap() {
-  return {
-    "Mod+B": { type: "toggleInline", args: { tag: "strong" } },
-    "Mod+I": { type: "toggleInline", args: { tag: "em" } },
-    "Mod+`": { type: "toggleInline", args: { tag: "code" } },
-    "Mod+1": { type: "toggleBlock", args: { tag: "h1" } },
-    "Mod+2": { type: "toggleBlock", args: { tag: "h2" } },
-    "Mod+3": { type: "toggleBlock", args: { tag: "h3" } },
-    Enter: { type: "splitBlock" },
-    "Shift+Enter": { type: "insertLineBreak" },
-    Tab: { type: "indent" },
-    "Shift+Tab": { type: "dedent" },
-    Backspace: { type: "deleteSmart" },
-    Delete: { type: "deleteSmart" },
-  };
-}
-
-function richTextClasses() {
-  return {
-    selector: ["h1", "h2", "h3", "p", "li", "blockquote", "strong", "em", "code"],
-    focus: "focus",
-    focusWithin: "focus-within",
-    selected: "selected",
-    selectedWithin: "selected-within",
-  };
-}
 
 function ensureStyles(doc = document) {
   if (doc.getElementById(STYLE_ID)) return;
@@ -230,6 +179,7 @@ export function createCollaborationEditor(mount, options = {}) {
     schema: richTextSchema(),
     keymap: richTextKeymap(),
     classes: richTextClasses(),
+    plugins: [RichText],
   });
   editor.localSession.nativeSelection = "sync";
   editor.localSession.cursor.selection.mode = "native";

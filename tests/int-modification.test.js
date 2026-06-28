@@ -96,3 +96,38 @@ test("ui: native selection across existing <em>", async () => {
 	expect(unwrappedState.children).toEqual([{ type: 3, text: "Select some text" }]);
 	expect(unwrappedState.hasAdjacentText).toBe(false);
 });
+
+test("blockquote toggle unwraps heading when schema forbids nested blockquote", async () => {
+	const browser = await chromium.launch();
+	const page = await loadTest(browser, "/tests/int-mod-blockquote-toggle.test.html");
+
+	const point = await pointForText(page, "Collaborative", 1);
+	await page.mouse.click(point.x, point.y);
+	await page.click('button[data-tag="blockquote"]');
+	await page.click('button[data-tag="blockquote"]');
+
+	const html = normalizeHtml(await page.evaluate(() => window.__test.html()));
+
+	await page.close();
+	await browser.close();
+
+	expect(html).toBe("<h1>Collaborative document</h1><p>Body</p>");
+});
+
+test("blockquote toggle reuses remembered block when native selection is lost", async () => {
+	const browser = await chromium.launch();
+	const page = await loadTest(browser, "/tests/int-mod-blockquote-toggle.test.html");
+
+	const point = await pointForText(page, "Collaborative", 1);
+	await page.mouse.click(point.x, point.y);
+	await page.click('button[data-tag="blockquote"]');
+	await page.evaluate(() => window.getSelection()?.removeAllRanges());
+	await page.click('button[data-tag="blockquote"]');
+
+	const html = normalizeHtml(await page.evaluate(() => window.__test.html()));
+
+	await page.close();
+	await browser.close();
+
+	expect(html).toBe("<h1>Collaborative document</h1><p>Body</p>");
+});

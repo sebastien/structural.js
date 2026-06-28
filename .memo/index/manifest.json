@@ -1,0 +1,24 @@
+{
+  "contexts": [],
+  "entries": [
+    {
+      "contentHash": "98600d972b7104214943a96ed41d3cf031dfcdf9786ae546cb0b8524a8da5c43",
+      "context": "world",
+      "memoPath": "world/rules/richtext-behaviour.md",
+      "path": "rule/richtext-behaviour.md",
+      "updated": ""
+    }
+  ],
+  "entrySetHash": "99ca9a8590171a84dc20dab6bc0389e0cb99df7052094452884f4d1fdcc98f5e",
+  "files": {
+    "associations": "associations.json",
+    "dates": "dates.json",
+    "entries": "entries.json",
+    "mentions": "mentions.json",
+    "refs": "refs.json",
+    "symbols": "symbols.json",
+    "tags": "tags.json",
+    "terms": "terms.json"
+  },
+  "schemaVersion": 3
+}

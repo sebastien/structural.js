@@ -1,0 +1,16 @@
+[
+  {
+    "contentHash": "98600d972b7104214943a96ed41d3cf031dfcdf9786ae546cb0b8524a8da5c43",
+    "context": "world",
+    "contexts": [
+      "world"
+    ],
+    "kind": "rule",
+    "memoPath": "world/rules/richtext-behaviour.md",
+    "normalizedContent": "# rules selection & movement: add a space moves the cursor multiple spaces swallowed unless in preformatted mode ctrl a selects the current block subsequent ctrl a expand the selection, shift ctrl a contract. ctrl shift {left,rigth,up,down} expand the selection in the given direction ctrl c copies the selection ctrl v pastes the selection ctrl v over a selected text when clipboard has url converts selection to link common shortcuts: ctrl b: toggle bold ctrl i: toggle italic tab: indent shift tab: dedent",
+    "path": "rule/richtext-behaviour.md",
+    "slug": "richtext-behaviour",
+    "storagePath": "rules/richtext-behaviour.md",
+    "title": "Richtext Behaviour"
+  }
+]

@@ -46,12 +46,18 @@ function richTextSchema(overrides = {}, options = {}) {
 // Returns standard key binding maps for structural formatting.
 function richTextKeymap(overrides = {}) {
 	return {
+		"Mod+A": { type: "selectCurrentBlock", args: { mode: "expand" } },
+		"Mod+Shift+A": { type: "selectCurrentBlock", args: { mode: "contract" } },
 		"Mod+B": { type: "toggleInline", args: { tag: "strong" } },
 		"Mod+I": { type: "toggleInline", args: { tag: "em" } },
 		"Mod+`": { type: "toggleInline", args: { tag: "code" } },
 		"Mod+1": { type: "toggleBlock", args: { tag: "h1" } },
 		"Mod+2": { type: "toggleBlock", args: { tag: "h2" } },
 		"Mod+3": { type: "toggleBlock", args: { tag: "h3" } },
+		"Mod+Shift+ArrowLeft": { type: "expandSelection", args: { direction: "left" } },
+		"Mod+Shift+ArrowRight": { type: "expandSelection", args: { direction: "right" } },
+		"Mod+Shift+ArrowUp": { type: "expandSelection", args: { direction: "up" } },
+		"Mod+Shift+ArrowDown": { type: "expandSelection", args: { direction: "down" } },
 		Enter: { type: "splitBlock" },
 		"Shift+Enter": { type: "insertLineBreak" },
 		Tab: { type: "indent" },
@@ -90,11 +96,15 @@ class RichText {
 		this.options = options;
 		this.editor = null;
 		this.boundMethods = new Map();
+		this._onCopy = this.onCopy.bind(this);
+		this._onPaste = this.onPaste.bind(this);
 	}
 
 	attach(editor) {
 		this.editor = editor;
 		editor.richText = this;
+		document.addEventListener("copy", this._onCopy);
+		document.addEventListener("paste", this._onPaste);
 		this.attachEditorMethods([
 			"blockSelector",
 			"blockFor",
@@ -111,6 +121,7 @@ class RichText {
 			"blockText",
 			"isEmptyBlock",
 			"removePlaceholderInCurrentBlock",
+			"shouldInsertText",
 			"syncAfterMutation",
 			"currentEditableBlock",
 			"isFullySelectedBlock",
@@ -133,6 +144,8 @@ class RichText {
 		]);
 		editor.configureActions({
 			beforeTextInput: (_command, context) => this.removePlaceholderInCurrentBlock(context.session),
+			selectCurrentBlock: (command, context) => this.selectCurrentBlock(context.session, command.args.mode),
+			expandSelection: (command, context) => this.expandSelection(command.args.direction, context.session),
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
 			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
 			deleteSmart: (_command, context) => this.deleteSelectedBlocks(context.session) || this.deleteEmptyBlock(context.session) || this.mergeBlockBackward(context.session, context.event),
@@ -144,6 +157,8 @@ class RichText {
 
 	detach() {
 		if (!this.editor) return this;
+		document.removeEventListener("copy", this._onCopy);
+		document.removeEventListener("paste", this._onPaste);
 		for (const [name, method] of this.boundMethods) {
 			if (this.editor[name] === method) delete this.editor[name];
 		}
@@ -301,6 +316,98 @@ class RichText {
 			return anchorBlock;
 		}
 		return active.currentBlock?.isConnected ? active.currentBlock : null;
+	}
+
+	selectionRangeFor(node) {
+		if (!node?.isConnected) {
+			return null;
+		}
+		this.editor.text.refresh();
+		const endOffset = Math.max(0, this.editor.text.offsetWithin(node, {
+			node,
+			offset: node.childNodes.length,
+		}));
+		const startPoint = this.editor.text.pointAtOffsetWithin(node, 0, "forward");
+		const endPoint = this.editor.text.pointAtOffsetWithin(node, endOffset, "backward");
+		const start = startPoint ? this.editor.text.indexOfPoint(startPoint) : -1;
+		const end = endPoint ? this.editor.text.indexOfPoint(endPoint) : -1;
+		if (start < 0 || end < 0 || start === end) {
+			return null;
+		}
+		return { start, end };
+	}
+
+	selectionScopes(session = null) {
+		const block = this.currentEditableBlock(session);
+		if (!block) {
+			return [];
+		}
+		const scopes = [];
+		let current = block;
+		while (current?.isConnected) {
+			const range = this.selectionRangeFor(current);
+			if (range && !scopes.some(scope => scope.start === range.start && scope.end === range.end)) {
+				scopes.push(range);
+			}
+			if (current === this.editor.root) {
+				break;
+			}
+			current = current.parentElement;
+		}
+		return scopes;
+	}
+
+	selectCurrentBlock(session = null, mode = "expand") {
+		const scopes = this.selectionScopes(session);
+		if (scopes.length === 0) {
+			return false;
+		}
+		const active = this.editor.activeSession(session);
+		const normalized = active.cursor.selection.normalizedRange();
+		const currentIndex = scopes.findIndex(scope =>
+			normalized.start === scope.start && normalized.end === scope.end,
+		);
+		const targetIndex =
+			mode === "contract"
+				? currentIndex > 0
+					? currentIndex - 1
+					: 0
+				: currentIndex >= 0
+					? Math.min(scopes.length - 1, currentIndex + 1)
+					: 0;
+		const target = scopes[targetIndex];
+		const selected = target
+			? this.editor.selection.select(target.start, target.end, session)
+			: false;
+		if (selected) {
+			this.editor.selection.syncToNative(session);
+		}
+		return selected;
+	}
+
+	shouldInsertText(text, session = null) {
+		if (text !== " ") {
+			return true;
+		}
+		const cursor = this.editor.activeSession(session).cursor;
+		const context = cursor?.getContext();
+		const pointNode = context?.point?.node;
+		if (this.editor.text.isWhitespacePreserved(pointNode)) {
+			return true;
+		}
+		return !/\s/.test(context?.char?.before ?? "") && !/\s/.test(context?.char?.after ?? "");
+	}
+
+	expandSelection(direction, session = null) {
+		const cursor = this.editor.activeSession(session).cursor;
+		if (!cursor) return false;
+		if (direction === "left") cursor.left(true);
+		else if (direction === "right") cursor.right(true);
+		else if (direction === "up") cursor.up(true);
+		else if (direction === "down") cursor.down(true);
+		else return false;
+		this.editor.selection.syncToNative(session);
+		return true;
 	}
 
 	isFullySelectedBlock(range, block) {
@@ -537,6 +644,27 @@ class RichText {
 	dedentCurrentListItem(session = null) {
 		const item = this.currentListItem(session);
 		return item ? this.dedentListItem(item, session) : false;
+	}
+
+	onCopy(event) {
+		if (!this.editor?.root?.isConnected) return;
+		const range = this.editor.range.selected(this.editor.root);
+		if (!range) return;
+		event.preventDefault();
+		event.clipboardData?.setData("text/plain", range.toString());
+	}
+
+	onPaste(event) {
+		if (!this.editor?.root?.isConnected) return;
+		const range = this.editor.range.current(this.editor.root);
+		if (!range) return;
+		const text = event.clipboardData?.getData("text/plain") ?? "";
+		if (!text) return;
+		event.preventDefault();
+		const session = this.editor.activeSession();
+		this.removePlaceholderInCurrentBlock(session);
+		session.cursor.insertText(text.replace(/\r\n?/g, "\n"));
+		session.classes?.update();
 	}
 }
 

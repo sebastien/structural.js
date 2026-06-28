@@ -31,6 +31,7 @@ test("normalizer: applies schema-driven in-place rules", async () => {
 	await browser.close();
 
 	expect(result.emptyRootHtml).toBe("<p><br></p>");
+	expect(result.placeholderHtml).toBe("<p><br></p>");
 	expect(result.richHtml).toBe("<p>Hello <strong>bold</strong> mystery</p>");
 	expect(result.hasList).toBe(false);
 	expect(result.hasQuote).toBe(false);

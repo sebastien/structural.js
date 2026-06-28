@@ -430,7 +430,14 @@ class EditorNormalizer {
 			this.normalizeEmpty(child, transaction);
 			transaction.steps.push({ type: "fillEmpty", tag });
 		} else if (action === "placeholder") {
-			node.appendChild(document.createElement("br"));
+			const placeholders = [...node.childNodes].filter(child =>
+				child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br"
+			);
+			if (placeholders.length === 0) {
+				node.appendChild(document.createElement("br"));
+			} else if (placeholders.length > 1 || placeholders.length !== node.childNodes.length) {
+				node.replaceChildren(document.createElement("br"));
+			}
 			transaction.steps.push({ type: "placeholder", tag });
 		} else if (action === "unwrap" && node.parentNode) {
 			this.unwrapElement(node);
@@ -779,8 +786,11 @@ class EditorTextInput {
 					!event.ctrlKey &&
 					!event.altKey
 				) {
-					this.editor.removePlaceholderInCurrentBlock?.(this.session);
-					this.cursor.insertText(event.key);
+					const shouldInsert = this.editor.shouldInsertText?.(event.key, this.session) !== false;
+					if (shouldInsert) {
+						this.editor.removePlaceholderInCurrentBlock?.(this.session);
+						this.cursor.insertText(event.key);
+					}
 				} else {
 					handled = false;
 				}
