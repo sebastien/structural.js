@@ -16,8 +16,43 @@
 // Renders visual overlays of selection ranges.
 // - node: HTMLElement - the overlay host element
 class SelectionOverlay {
-	constructor(node) {
-		this.node = node ?? null;
+	constructor(config = {}) {
+		if (config && (config.nodeType === 1 || config instanceof HTMLElement)) {
+			config = { node: config };
+		}
+		this._config = config || {};
+		this.mode = (this._config.mode === "native") ? "native" : "virtual";
+		this.node = (this.mode === "virtual" ? (this._config.node ?? null) : null);
+		// Ensure provided selection overlay node is mounted under body.
+		// Absolute selection rects are positioned using viewport + scroll coords.
+		if (this.mode === "virtual" && this.node) {
+			const d = this.node.ownerDocument || document;
+			const b = d.body || d.documentElement;
+			if (b && this.node.parentNode !== b) {
+				if (getComputedStyle(this.node).position === "static") {
+					this.node.style.position = "absolute";
+				}
+				if (!this.node.style.left) this.node.style.left = "0px";
+				if (!this.node.style.top) this.node.style.top = "0px";
+				if (!this.node.style.visibility) this.node.style.visibility = "hidden";
+				if (this.node.parentNode) this.node.parentNode.removeChild(this.node);
+				b.appendChild(this.node);
+			}
+		}
+		this._className = this._config.className || null;
+		this._classes = this._config.classes || null;
+		this._style = this._config.style || null;
+		this._styles = this._config.styles || null;
+		this._managedClasses = new Set();
+		this._managedStyleProps = new Set();
+		this._destroyed = false;
+		if (this.node) {
+			this.node.setAttribute("aria-hidden", "true");
+			this.node.style.pointerEvents = "none";
+			if (getComputedStyle(this.node).position === "static") {
+				this.node.style.position = "absolute";
+			}
+		}
 	}
 
 	// Method: _clearVirtual
@@ -67,6 +102,8 @@ class SelectionOverlay {
 		const rects = Array.from(range.getClientRects()).filter(
 			rect => rect.width !== 0 || rect.height !== 0,
 		);
+		const state = this.focused ? "focus" : "default";
+		const cfg = this._resolveStateConfig(state);
 		this.node.replaceChildren(
 			...rects.map(rect => {
 				const block = document.createElement("div");
@@ -75,13 +112,62 @@ class SelectionOverlay {
 				block.style.top = `${rect.top + window.scrollY}px`;
 				block.style.width = `${rect.width}px`;
 				block.style.height = `${rect.height}px`;
-				block.style.backgroundColor = "rgba(0, 120, 255, 0.22)";
 				block.style.pointerEvents = "none";
+				// default fallback only if no style provided
+				if (!cfg.direct && !cfg.byKey) {
+					block.style.backgroundColor = "rgba(0, 120, 255, 0.22)";
+				}
+				this._applyBlockVisual(block, cfg);
 				return block;
 			}),
 		);
 		this.node.style.visibility = rects.length > 0 ? "visible" : "hidden";
 		return { visible: rects.length > 0, mode: "virtual" };
+	}
+
+	_resolveStateConfig(state) {
+		const direct = (state === "focus" && this._config.focus) ? this._config.focus : null;
+		const byKey = (state === "focus" && this._styles && this._styles.focus) ? this._styles.focus
+			: (state === "default" && this._styles && this._styles.default) ? this._styles.default
+			: null;
+		const legacyStyle = (state === "focus" && this._style && typeof this._style === "object") ? this._style : null;
+		return { classes: this._classes || null, direct: direct || legacyStyle || null, byKey: byKey || null };
+	}
+
+	_applyBlockVisual(block, stateCfg) {
+		if (!block) return;
+		const toAdd = new Set();
+		const add = (v) => {
+			if (!v) return;
+			if (Array.isArray(v)) v.forEach(x => x && toAdd.add(String(x)));
+			else String(v).split(/\s+/).forEach(x => x && toAdd.add(x));
+		};
+		add(this._className);
+		if (stateCfg?.classes) {
+			add(stateCfg.classes["selected"] || stateCfg.classes[state] || stateCfg.classes.default || null);
+		}
+		for (const c of this._managedClasses) {
+			if (!toAdd.has(c)) block.classList.remove(c);
+		}
+		for (const c of toAdd) {
+			if (!block.classList.contains(c)) block.classList.add(c);
+		}
+		this._managedClasses = toAdd;
+
+		const next = {};
+		const merge = (obj) => { if (obj && typeof obj === "object") Object.assign(next, obj); };
+		merge(stateCfg?.byKey || null);
+		merge(stateCfg?.direct || null);
+		for (const p of this._managedStyleProps) {
+			if (!(p in next)) block.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+		}
+		const applied = new Set();
+		for (const [k, v] of Object.entries(next)) {
+			const css = k.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+			block.style.setProperty(css, String(v));
+			applied.add(k);
+		}
+		this._managedStyleProps = applied;
 	}
 
 	// Method: apply
@@ -93,6 +179,22 @@ class SelectionOverlay {
 		return mode === "native"
 			? this._applyNative(range)
 			: this._applyVirtual(range);
+	}
+
+	destroy() {
+		if (this._destroyed) return;
+		this._destroyed = true;
+		this._clearNative();
+		this._clearVirtual();
+		if (this.node) {
+			for (const c of this._managedClasses) this.node.classList.remove(c);
+			for (const p of this._managedStyleProps) {
+				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+			}
+			this.node.style.visibility = "hidden";
+		}
+		this._managedClasses.clear();
+		this._managedStyleProps.clear();
 	}
 }
 
@@ -108,10 +210,24 @@ class TextSelection {
 		this.cursor = cursor;
 		this.anchorOffset = null;
 		this.focusOffset = null;
-		this.mode = options.mode ?? options.selectionMode ?? "virtual";
-		this.overlay = new SelectionOverlay(
-			document.getElementById(options.hostId ?? "selection"),
-		);
+		let selCfg = options;
+		if (options && (options.selection || options.selectionConfig)) {
+			selCfg = options.selection || options.selectionConfig || options;
+		}
+		if (typeof selCfg === "string") selCfg = { mode: selCfg };
+		this.mode = (selCfg && selCfg.mode) || selCfg?.selectionMode || "virtual";
+		// normalize shorthand
+		const overlayCfg = (typeof selCfg === "object" && selCfg) ? { ...selCfg, mode: this.mode } : { mode: this.mode };
+		// legacy hostId support
+		if (!overlayCfg.node && selCfg?.hostId) {
+			overlayCfg.node = document.getElementById(selCfg.hostId);
+		}
+		if (!overlayCfg.node && !selCfg?.node) {
+			// legacy default id only if not explicitly given a node
+			const legacy = document.getElementById("selection");
+			if (legacy) overlayCfg.node = legacy;
+		}
+		this.overlay = new SelectionOverlay(overlayCfg);
 	}
 
 	// Property: isActive

@@ -670,4 +670,34 @@ class RichText {
 
 export { RichText, richTextClasses, richTextKeymap, richTextNormalizer, richTextRules, richTextSchema };
 
+// Short aliases for convenient default import usage:
+//   import richtext from "structural/richtext"
+//   richtext.schema(...)
+//   new Editor(node, { ...richtext.options, caret: ... })
+export {
+  richTextSchema as schema,
+  richTextKeymap as keymap,
+  richTextClasses as classes,
+  richTextNormalizer as normalizer,
+  richTextRules as rules,
+};
+
+const richtext = {
+  RichText,
+  schema: richTextSchema,
+  keymap: richTextKeymap,
+  classes: richTextClasses,
+  normalizer: richTextNormalizer,
+  rules: richTextRules,
+  options: {
+    schema: richTextSchema(),
+    keymap: richTextKeymap(),
+    classes: richTextClasses(),
+    plugins: [RichText],
+  },
+};
+
+export { richtext };
+export default richtext;
+
 // EOF

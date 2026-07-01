@@ -106,6 +106,16 @@
       }
       .editor strong { font-weight: 600; }
       .editor em { font-style: italic; }
+
+      /* Demo styles for virtual caret & selection (configured via Editor options) */
+      .my-caret {
+        box-shadow: 0 0 0 1px #ffffff;
+        border-radius: 1px;
+      }
+      .my-sel {
+        outline: 1px solid rgba(255,255,255,0.35);
+        outline-offset: -1px;
+      }
     </style>
     <script type="importmap">
     {
@@ -153,6 +163,10 @@
       <button data-kind="block" data-tag="blockquote" title="Blockquote">
         <iconify-icon icon="mdi:format-quote-open"></iconify-icon>
       </button>
+      <span class="sep"></span>
+      <label style="display:flex;align-items:center;gap:6px;color:#ccc;font-size:12px;margin-left:6px;">
+        <input type="checkbox" id="nativeCaretToggle"> Native caret / selection
+      </label>
     </div>
 
     <div class="editor" id="editor">
@@ -169,7 +183,7 @@
     </div>
 
     <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
-    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+    <div id="caret" style="position:absolute;height:1lh;width:2px;visibility:hidden;pointer-events:none;"></div>
 
     <script type="module">
       import { Editor } from "structural/editor";
@@ -181,6 +195,25 @@
         keymap: richTextKeymap(),
         classes: richTextClasses(),
         plugins: [RichText],
+        caret: {
+          mode: "virtual",
+          node: document.getElementById("caret"),
+          className: "my-caret",
+          styles: {
+            default: { background: "#ff8800", width: "2px" },
+            focus: { background: "#ff0000", width: "2px" },
+          },
+          focused: true,
+        },
+        selection: {
+          mode: "virtual",
+          node: document.getElementById("selection"),
+          className: "my-sel",
+          styles: {
+            default: { background: "rgba(255, 136, 0, 0.22)" },
+            focus: { background: "rgba(255, 0, 0, 0.22)" },
+          },
+        },
       });
       const mod = new Modification(editor);
       editor.configureActions({
@@ -237,6 +270,29 @@
         editor.localSession.currentBlock = editor.blockFor(editor.input.cursor.anchor) ?? editor.localSession.currentBlock;
         editor._currentBlock = editor.localSession.currentBlock;
         updateToolbar();
+      });
+
+      const nativeToggle = document.getElementById('nativeCaretToggle');
+      nativeToggle.addEventListener('change', () => {
+        const useNative = nativeToggle.checked;
+        // Configure session + cursor modes to switch between virtual (custom) and native (browser) caret/selection.
+        editor.localSession.nativeSelection = "sync";
+        const cur = editor.localSession.cursor;
+        if (cur) {
+          cur.caret.mode = useNative ? "native" : "virtual";
+          if (cur.caret.node) cur.caret.node.style.visibility = "hidden";
+          if (cur.selection) {
+            cur.selection.mode = useNative ? "native" : "virtual";
+            if (cur.selection.overlay) {
+              cur.selection.overlay.mode = useNative ? "native" : "virtual";
+              if (cur.selection.overlay.node) cur.selection.overlay.node.style.visibility = "hidden";
+            }
+          }
+          // Force a visual refresh at current position so the switch is immediate.
+          editor.text.refresh?.();
+          const off = (cur.offset ?? 0);
+          try { cur.moveTo(off); } catch (_) {}
+        }
       });
 
       editor.classes?.update();

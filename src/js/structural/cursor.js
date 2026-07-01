@@ -20,11 +20,135 @@ import { TextSelection } from "./selection.js";
 class Caret {
 	// Method: constructor
 	// Initializes the `Caret` controller with a custom visual `node`.
-	constructor(node) {
-		this.node = node ?? null;
+	constructor(config = {}) {
+		if (config && (config.nodeType === 1 || config instanceof HTMLElement)) {
+			config = { node: config };
+		}
+		this._config = config || {};
+		this.mode = (this._config.mode === "native") ? "native" : "virtual";
+		this.node = (this.mode === "virtual" ? (this._config.node ?? null) : null);
+		// Ensure the provided caret node is mounted at the right place (body level)
+		// so that the absolute left/top we set (from viewport + scroll) work correctly.
+		if (this.mode === "virtual" && this.node) {
+			const d = this.node.ownerDocument || document;
+			const b = d.body || d.documentElement;
+			if (b && this.node.parentNode !== b) {
+				if (getComputedStyle(this.node).position === "static") {
+					this.node.style.position = "absolute";
+				}
+				if (!this.node.style.left) this.node.style.left = "0px";
+				if (!this.node.style.top) this.node.style.top = "0px";
+				if (!this.node.style.visibility) this.node.style.visibility = "hidden";
+				if (this.node.parentNode) this.node.parentNode.removeChild(this.node);
+				b.appendChild(this.node);
+			}
+		}
+		this.focused = !!this._config.focused;
+		this._className = this._config.className || null;
+		this._classes = this._config.classes || null;
+		this._style = this._config.style || null;
+		this._styles = this._config.styles || null;
+		this._managedClasses = new Set();
+		this._managedStyleProps = new Set();
+		this._destroyed = false;
 		this._measureCanvas = document.createElement("canvas");
 		this._onSelectionChange = this._onSelectionChange.bind(this);
-		document.addEventListener("selectionchange", this._onSelectionChange);
+		if (this.mode !== "native" && this.node) {
+			this.node.setAttribute("aria-hidden", "true");
+			this.node.style.pointerEvents = "none";
+			if (getComputedStyle(this.node).position === "static") {
+				this.node.style.position = "absolute";
+			}
+		}
+		if (this.mode !== "native") {
+			document.addEventListener("selectionchange", this._onSelectionChange);
+		}
+		this._applyInitialVisual();
+	}
+
+	_applyInitialVisual() {
+		if (this.mode === "native" || !this.node) return;
+		this._applyState(this.focused ? "focus" : "default");
+	}
+
+	_resolveStateConfig(state) {
+		const direct = (state === "focus" && this._config.focus) ? this._config.focus : null;
+		const byKey = (state === "focus" && this._styles && this._styles.focus) ? this._styles.focus
+			: (state === "default" && this._styles && this._styles.default) ? this._styles.default
+			: null;
+		const legacyStyle = (state === "focus" && this._style && typeof this._style === "object") ? this._style : null;
+		return { classes: this._classes || null, direct: direct || legacyStyle || null, byKey: byKey || null };
+	}
+
+	_applyClasses(stateCfg) {
+		if (!this.node) return;
+		const toAdd = new Set();
+		const add = (v) => {
+			if (!v) return;
+			if (Array.isArray(v)) v.forEach(x => x && toAdd.add(String(x)));
+			else String(v).split(/\s+/).forEach(x => x && toAdd.add(x));
+		};
+		add(this._className);
+		if (stateCfg?.classes) {
+			add(stateCfg.classes[state] || stateCfg.classes.default || null);
+		}
+		for (const c of this._managedClasses) {
+			if (!toAdd.has(c)) this.node.classList.remove(c);
+		}
+		for (const c of toAdd) {
+			if (!this.node.classList.contains(c)) this.node.classList.add(c);
+		}
+		this._managedClasses = toAdd;
+	}
+
+	_applyInlineStyles(stateCfg) {
+		if (!this.node) return;
+		const next = {};
+		const merge = (obj) => { if (obj && typeof obj === "object") Object.assign(next, obj); };
+		merge(stateCfg?.byKey || null);
+		merge(stateCfg?.direct || null);
+		for (const p of this._managedStyleProps) {
+			if (!(p in next)) this.node.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+		}
+		const applied = new Set();
+		for (const [k, v] of Object.entries(next)) {
+			const css = k.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+			this.node.style.setProperty(css, String(v));
+			applied.add(k);
+		}
+		this._managedStyleProps = applied;
+	}
+
+	_applyState(state) {
+		if (this.mode === "native" || !this.node) return;
+		const cfg = this._resolveStateConfig(state);
+		this._applyClasses(cfg);
+		this._applyInlineStyles(cfg);
+	}
+
+	setFocused(focused) {
+		this.focused = !!focused;
+		if (this.mode !== "native" && this.node) {
+			const vis = this.node.style.visibility;
+			if (vis === "visible") {
+				this._applyState(this.focused ? "focus" : "default");
+			}
+		}
+	}
+
+	destroy() {
+		if (this._destroyed) return;
+		this._destroyed = true;
+		document.removeEventListener("selectionchange", this._onSelectionChange);
+		if (this.node) {
+			for (const c of this._managedClasses) this.node.classList.remove(c);
+			for (const p of this._managedStyleProps) {
+				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+			}
+			this.node.style.visibility = "hidden";
+		}
+		this._managedClasses.clear();
+		this._managedStyleProps.clear();
 	}
 
 	// Method: _onSelectionChange
@@ -182,6 +306,7 @@ class Caret {
 				this.node.style.height = `${Math.max(1, snap(height))}px`;
 			}
 			this.node.style.visibility = "visible";
+			this._applyState(this.focused ? "focus" : "default");
 		}
 	}
 
@@ -264,6 +389,9 @@ class Caret {
 	// Method: setVirtual
 	// Positions the virtual caret relative to standard text layout or element boundaries.
 	setVirtual(position, options = {}) {
+		if (this.mode === "native") {
+			return { visible: false, editable: false, source: null };
+		}
 		const editable = options.editable === true;
 		const point = position?.point;
 		if (!point) {
@@ -358,7 +486,21 @@ class Cursor {
 		this.preserveSemanticBoundaries =
 			options.preserveSemanticBoundaries !== false;
 		this.collapseBoundary = options.collapseBoundary !== false;
-		this.caret = new Caret(document.getElementById("caret"));
+		let caretCfg = options.caret;
+		if (caretCfg === undefined) {
+			if (options.caretNode) {
+				caretCfg = { node: options.caretNode };
+			} else {
+				// legacy fallback for backward compat when not configured
+				const legacy = document.getElementById("caret");
+				caretCfg = legacy || null;
+			}
+		}
+		// allow shorthand caret: "native" | "virtual"
+		if (typeof caretCfg === "string") {
+			caretCfg = { mode: caretCfg };
+		}
+		this.caret = new Caret(caretCfg);
 		this._input = input;
 		this._eventFocusedNode = null;
 		this._eventActivePath = [];

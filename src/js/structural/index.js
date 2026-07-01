@@ -28,3 +28,5 @@ export {
 	richTextRules,
 	richTextSchema,
 } from "./richtext.js";
+
+export { default as richtext } from "./richtext.js";

@@ -481,9 +481,27 @@ class EditorSession {
 		this.id = id;
 		this.actor = options.actor ?? id;
 		this.mode = options.mode ?? "insert";
-		this.nativeSelection = options.nativeSelection ?? "none";
+		const caretOpt = options.caret !== undefined ? options.caret : (options.cursor && options.cursor.caret);
+		const selOpt = options.selection !== undefined ? options.selection : (options.cursor && options.cursor.selection);
+		const wantNativeCaret = (caretOpt === "native") || (caretOpt && caretOpt.mode === "native");
+		const wantNativeSel = (selOpt === "native") || (selOpt && selOpt.mode === "native");
+		this.nativeSelection = options.nativeSelection ?? ((wantNativeCaret || wantNativeSel) ? "sync" : "none");
 		this.currentBlock = null;
-		this.cursor = new EditorCursor(this, options.cursor);
+		const cursorOpts = { ...(options.cursor || {}) };
+		if (options.caret !== undefined) {
+			cursorOpts.caret = options.caret;
+		} else if (options.cursor && options.cursor.caret !== undefined) {
+			cursorOpts.caret = options.cursor.caret;
+		}
+		if (options.selection !== undefined) {
+			cursorOpts.selection = options.selection;
+		} else if (options.cursor && options.cursor.selection !== undefined) {
+			cursorOpts.selection = options.cursor.selection;
+		}
+		// also allow session-level caret/selection to be picked up by Cursor
+		if (options.caret !== undefined && cursorOpts.caret === undefined) cursorOpts.caret = options.caret;
+		if (options.selection !== undefined && cursorOpts.selection === undefined) cursorOpts.selection = options.selection;
+		this.cursor = new EditorCursor(this, cursorOpts);
 		this.classes = options.classes ? new EditorClassController(this, options.classes).attach() : null;
 	}
 
@@ -503,6 +521,8 @@ class EditorSession {
 	// Detaches event listeners and class trackers for session clean up.
 	destroy() {
 		this.classes?.detach();
+		this.cursor?.caret?.destroy?.();
+		this.cursor?.selection?.overlay?.destroy?.();
 	}
 
 	// Method: snapshotSelection
@@ -704,9 +724,19 @@ class EditorTextInput {
 		this._onKeyUp = this.onKeyUp.bind(this);
 		this._onKeyDown = this.onKeyDown.bind(this);
 		this._onMouseDown = this.onMouseDown.bind(this);
+		let c = options.caret;
+		if (c === undefined) c = options.cursor?.caret;
+		if (typeof c === "string") c = { mode: c };
+		let s = options.selection;
+		if (s === undefined) s = options.cursor?.selection;
+		// propagate native mode hints to nativeSelection default
+		const wantNative = (c === "native") || (c && c.mode === "native") || (s === "native") || (s && s.mode === "native");
+		const ns = options.nativeSelection ?? (wantNative ? "sync" : "sync");
 		this.session = options.session ?? editor.session("local", {
 			actor: "local",
-			nativeSelection: "sync",
+			nativeSelection: ns,
+			caret: c,
+			selection: s,
 			cursor: options.cursor,
 		});
 		this.cursor = this.session.cursor;
@@ -860,12 +890,26 @@ class Editor {
 		this._active = false;
 		this._currentBlock = null;
 		this.text = new TextAdapter(node, options.text).attach();
-		this.localSession = this.session("local", {
+		const sessionOpts = {
 			actor: "local",
 			nativeSelection: "sync",
 			classes: options.classes,
 			cursor: options.cursor,
-		});
+		};
+		const topCaret = options.caret !== undefined ? options.caret : options.cursor?.caret;
+		if (topCaret !== undefined) {
+			let c = topCaret;
+			if (typeof c === "string") c = { mode: c };
+			if (c && typeof c === "object" && c.mode !== "native" && c.focused == null) {
+				c = { ...c, focused: true };
+			}
+			sessionOpts.caret = c;
+		}
+		const topSel = options.selection !== undefined ? options.selection : options.cursor?.selection;
+		if (topSel !== undefined) {
+			sessionOpts.selection = topSel;
+		}
+		this.localSession = this.session("local", sessionOpts);
 		this.range = new EditorRangeController(this);
 		this.selection = new EditorSelectionController(this);
 		this.input = new EditorTextInput(this, { ...options, session: this.localSession });
