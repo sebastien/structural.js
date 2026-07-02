@@ -11,16 +11,20 @@ import { EditorNormalizer, EditorSchema } from "./editor.js";
 const richTextRules = {
 	":root": {
 		type: "root",
-		contains: ["h1", "h2", "h3", "p", "ul", "ol", "blockquote"],
+		contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"],
 		default: "p",
 		normalize: { empty: "fill", text: "wrap", invalidChild: "lift" },
 	},
 	"@inline": ["strong", "em", "code"],
-	blockquote: { type: "block", contains: ["p", "h1", "h2", "h3", "ul", "ol"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	section: { type: "block", contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	nav: { type: "block", contains: ["header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	header: { type: "block", contains: ["h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	blockquote: { type: "block", contains: ["p", "h1", "h2", "h3", "pre", "ul", "ol"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
 	ul: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ul"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
 	ol: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ol"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
 	li: { type: "block", contains: ["#text", "@inline", "p", "ul", "ol"], wrapIn: "ul", default: "p", normalize: { empty: "placeholder", text: "preserve", invalidChild: "lift" }, enter: { next: "same" } },
 	p: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "same" } },
+	pre: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", text: "preserve", invalidChild: "unwrap" }, enter: { next: "same" } },
 	h1: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
 	h2: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
 	h3: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
@@ -77,7 +81,7 @@ function richTextKeymap(overrides = {}) {
 // Standard CSS class selectors and states for styling focus and selections.
 function richTextClasses(options = {}) {
 	return {
-		selector: ["h1", "h2", "h3", "p", "li", "blockquote", "strong", "em", "code"],
+		selector: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "li", "blockquote", "strong", "em", "code"],
 		focus: "focus",
 		focusWithin: "focus-within",
 		selected: "selected",

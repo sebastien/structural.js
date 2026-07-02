@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rich Text Editing Harness</title>
+  <style>
+    body { margin: 0; font: 16px/1.6 system-ui, sans-serif; }
+    #editor {
+      max-width: 640px;
+      margin: 24px auto;
+      padding: 16px;
+      border: 1px solid #ccc;
+      min-height: 120px;
+    }
+    #editor p { margin: 0.5em 0; }
+    #editor :is(h1,h2,h3,li) { margin: 0.4em 0; }
+    #caret {
+      position: absolute;
+      width: 2px;
+      height: 1lh;
+      background: #000;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 9999;
+    }
+    #selection {
+      position: absolute;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 9998;
+    }
+    .focus { outline: 2px solid #0e639c; outline-offset: 1px; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "structural/editor": "/src/js/structural/editor.js",
+      "structural/richtext": "/src/js/structural/richtext.js",
+      "structural/cursor": "/src/js/structural/cursor.js",
+      "structural/text": "/src/js/structural/text.js",
+      "structural/selection": "/src/js/structural/selection.js",
+      "structural/range": "/src/js/structural/range.js",
+      "structural/modification": "/src/js/structural/modification.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="editor"><p>Hello world. Edit me.</p></div>
+  <div id="caret"></div>
+  <div id="selection"></div>
+
+  <script type="module">
+    import { Editor } from "structural/editor";
+    import { richTextSchema, richTextKeymap, richTextClasses, RichText } from "structural/richtext";
+    import { Modification } from "structural/modification";
+
+    const root = document.getElementById("editor");
+    const caret = document.getElementById("caret");
+    const selection = document.getElementById("selection");
+
+    const editor = new Editor(root, {
+      schema: richTextSchema(),
+      keymap: richTextKeymap(),
+      classes: richTextClasses(),
+      plugins: [RichText],
+      caret: {
+        mode: "virtual",
+        node: caret,
+        className: "test-caret",
+        styles: { default: { background: "#cc0000", width: "2px" } },
+      },
+      selection: {
+        mode: "virtual",
+        node: selection,
+      },
+    });
+
+    const mod = new Modification(editor);
+
+    // Expose for tests
+    window.__editor = editor;
+    window.__mod = mod;
+    window.__root = root;
+    window.__caret = caret;
+
+    // Wire formatting actions so keyboard shortcuts work in harness (like the real example)
+    editor.configureActions({
+      toggleInline: (command) => mod.toggleInline(command.args.tag ?? command.args.value),
+      toggleBlock: (command) => mod.toggleBlock(command.args.tag ?? command.args.value),
+    });
+
+    window.__test = {
+      getState() {
+        const cur = editor.input.cursor;
+        const caretStyle = caret ? getComputedStyle(caret) : null;
+        return {
+          offset: cur.offset ?? null,
+          selectionKind: cur.selectionKind,
+          anchorTag: cur.anchor ? cur.anchor.tagName?.toLowerCase() : null,
+          text: root.textContent || "",
+          html: root.innerHTML,
+          caretVisible: !!(caretStyle && caretStyle.visibility === "visible"),
+          caretLeft: caret ? caret.style.left : null,
+          caretTop: caret ? caret.style.top : null,
+          positions: editor.text.positions().length,
+        };
+      },
+      async pointForText(needle, charOffset = 0) {
+        return new Promise(resolve => {
+          // Use requestAnimationFrame to ensure layout
+          requestAnimationFrame(() => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+              const idx = node.data.indexOf(needle);
+              if (idx >= 0) {
+                const start = idx + charOffset;
+                if (start < 0 || start > node.data.length) {
+                  resolve(null);
+                  return;
+                }
+                const range = document.createRange();
+                range.setStart(node, start);
+                range.setEnd(node, Math.min(node.data.length, start + 1));
+                const rect = range.getBoundingClientRect();
+                resolve({
+                  x: rect.left + rect.width / 2,
+                  y: rect.top + rect.height / 2,
+                });
+                return;
+              }
+            }
+            resolve(null);
+          });
+        });
+      },
+      // Direct helpers (bypass keyboard for some precise tests)
+      moveTo(offset) {
+        editor.input.cursor.moveTo(offset);
+      },
+      insertText(text) {
+        editor.input.cursor.insertText(text);
+      },
+      backspace() {
+        editor.input.cursor.backspace();
+      },
+      delete() {
+        editor.input.cursor.delete();
+      },
+      left(extend = false) { editor.input.cursor.left(extend); },
+      right(extend = false) { editor.input.cursor.right(extend); },
+      up(extend = false) { editor.input.cursor.up(extend); },
+      down(extend = false) { editor.input.cursor.down(extend); },
+      // Select a logical range by offsets (drives structural cursor)
+      selectRange(start, end) {
+        const cur = editor.input.cursor;
+        if (typeof start === "number" && typeof end === "number") {
+          cur.select(start, end);
+          return true;
+        }
+        return false;
+      },
+      // Select by locating text needles (sets native range + syncs)
+      selectTextRange(startNeedle, startOff, endNeedle, endOff) {
+        const p = root.querySelector("p, h1, h2, h3, li, blockquote") || root.firstElementChild || root;
+        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        let startNode = null, endNode = null, s = 0, e = 0;
+        let n;
+        while ((n = walker.nextNode())) {
+          if (!startNode) {
+            const i = n.data.indexOf(startNeedle);
+            if (i >= 0) { startNode = n; s = i + startOff; }
+          }
+          if (!endNode) {
+            const i = n.data.indexOf(endNeedle);
+            if (i >= 0) { endNode = n; e = i + endOff; }
+          }
+        }
+        if (!startNode || !endNode) return false;
+        const r = document.createRange();
+        r.setStart(startNode, s);
+        r.setEnd(endNode, e);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+        // Sync structural selection state
+        if (editor.selection && typeof editor.selection.syncFromNative === "function") {
+          editor.selection.syncFromNative(root, editor.localSession);
+        }
+        // Also drive cursor selection explicitly
+        try {
+          const startIdx = editor.text.indexOfPoint({ node: startNode, offset: s });
+          const endIdx = editor.text.indexOfPoint({ node: endNode, offset: e });
+          if (startIdx >= 0 && endIdx >= 0) {
+            editor.input.cursor.select(startIdx, endIdx);
+          }
+        } catch (_) {}
+        return true;
+      },
+      // Force refresh
+      refresh() {
+        editor.text.refresh();
+      },
+      // Resolve a logical caret index for a text needle + char offset (searches whole root)
+      indexOfText(needle, off = 0) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let n;
+        while ((n = walker.nextNode())) {
+          const i = n.data.indexOf(needle);
+          if (i >= 0) {
+            const start = i + off;
+            if (start < 0 || start > n.data.length) return -1;
+            return editor.text.indexOfPoint({ node: n, offset: start });
+          }
+        }
+        return -1;
+      },
+      // Set initial content (for reset scenarios without new page)
+      setHTML(html) {
+        root.innerHTML = html;
+        editor.text.invalidatePositions();
+        editor.text.ensurePositions();
+        // Move cursor to a safe spot
+        try { editor.input.cursor.moveTo(0); } catch (_) {}
+      },
+      // Trigger formatting via actions (keyboard may also work now that actions are configured)
+      toggleInline(tag) {
+        editor.action({ type: "toggleInline", args: { tag } });
+      },
+      toggleBlock(tag) {
+        editor.action({ type: "toggleBlock", args: { tag } });
+      },
+      // Diagnostic: rich info about the slot at a given caret index.
+      // If offset is omitted/undefined, uses the current cursor offset.
+      debugSlot(offset) {
+        const t = editor.text;
+        t.ensurePositions();
+        const cur = editor.input.cursor;
+        const useOffset = (typeof offset === 'number') ? offset : (cur ? cur.offset : 0);
+        const pos = t.positionSlotAt(useOffset);
+        const pt = pos?.point || null;
+        let nodeInfo = null;
+        if (pt && pt.node) {
+          const parentEl = pt.node.nodeType === Node.TEXT_NODE ? pt.node.parentElement : pt.node;
+          const allP = Array.from(root.querySelectorAll('p'));
+          const pIndex = parentEl ? allP.indexOf(parentEl ? parentEl.closest('p') : null) : -1;
+          nodeInfo = {
+            nodeType: pt.node.nodeType,
+            nodeName: pt.node.nodeName,
+            data: pt.node.nodeType === Node.TEXT_NODE ? pt.node.data : null,
+            offsetInNode: pt.offset,
+            parentTag: parentEl ? parentEl.tagName.toLowerCase() : null,
+            inPIndex: pIndex,
+          };
+        }
+        return {
+          requested: offset,
+          effectiveOffset: useOffset,
+          slot: pos,
+          point: pt,
+          nodeInfo,
+          acceptsText: t.acceptsText(pos),
+          cursorOffset: cur ? cur.offset : null,
+          cursorAnchorTag: cur && cur.anchor ? cur.anchor.tagName.toLowerCase() : null,
+        };
+      },
+      // Dump a window of slots around a center index for boundary inspection.
+      debugSlotsAround(center, radius = 3) {
+        const t = editor.text;
+        t.ensurePositions();
+        const n = t.positions().length;
+        const c = Math.max(0, Math.min(n - 1, center | 0));
+        const out = [];
+        for (let i = Math.max(0, c - radius); i <= Math.min(n - 1, c + radius); i++) {
+          const s = t.positionSlotAt(i);
+          const p = s?.point;
+          let tag = null;
+          if (p && p.node) {
+            const el = p.node.nodeType === Node.TEXT_NODE ? p.node.parentElement : p.node;
+            tag = el ? el.tagName.toLowerCase() : null;
+          }
+          out.push({
+            i,
+            kind: s?.kind,
+            nodeType: p?.node?.nodeType,
+            tag,
+            off: p?.offset,
+            data: p?.node?.nodeType === Node.TEXT_NODE ? p.node.data : null,
+            boundary: s?.boundary,
+          });
+        }
+        return { center: c, n, slots: out };
+      },
+      // Full compact dump of all position slots (for small documents only)
+      debugAllSlots() {
+        const t = editor.text;
+        t.ensurePositions();
+        const poss = t.positions();
+        return poss.map((s, i) => {
+          const p = s.point;
+          let txt = null;
+          if (p?.node?.nodeType === Node.TEXT_NODE) {
+            txt = JSON.stringify(p.node.data);
+          }
+          const el = p?.node?.nodeType === Node.TEXT_NODE ? p.node.parentElement : p.node;
+          return {
+            i,
+            kind: s.kind,
+            tag: el ? el.tagName.toLowerCase() : null,
+            nodeOff: p?.offset,
+            txt,
+            bLeft: s.boundary?.leftNode ? (s.boundary.leftNode.nodeType === Node.TEXT_NODE ? 't' : s.boundary.leftNode.tagName.toLowerCase()) : null,
+            bRight: s.boundary?.rightNode ? (s.boundary.rightNode.nodeType === Node.TEXT_NODE ? 't' : s.boundary.rightNode.tagName.toLowerCase()) : null,
+          };
+        });
+      },
+    };
+
+    // Make clicking the editor focus the area
+    root.addEventListener("mousedown", () => {
+      // ensure any prior native selection is cleared for virtual mode
+    });
+  </script>
+</body>
+</html>
