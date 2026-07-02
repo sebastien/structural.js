@@ -32,8 +32,13 @@ const richTextRules = {
 // Function: richTextSchema
 // Creates a default EditorSchema configured with standard rich-text formatting rules.
 function richTextSchema(overrides = {}, options = {}) {
-	return new EditorSchema({ ...richTextRules, ...overrides }, {
+	const atoms = Array.isArray(options.atoms) ? options.atoms : [];
+	const atomRules = Object.fromEntries(
+		atoms.map((tag) => [tag, { type: "atom", render: { track: false } }]),
+	);
+	return new EditorSchema({ ...richTextRules, ...atomRules, ...overrides }, {
 		aliases: { b: "strong", i: "em", ...(options.aliases ?? {}) },
+		atoms,
 		normalize: {
 			unknownElement: "unwrap",
 			pruneEmptyText: true,
@@ -226,22 +231,37 @@ class RichText {
 	ensureEditableContent(block, preferBr = false) {
 		this.pruneEmptyTextChildren(block);
 		if (block.childNodes.length > 0) return;
-		if (preferBr) block.appendChild(document.createElement("br"));
+		const ph = preferBr ? document.createElement("br") : document.createTextNode("");
+		block.appendChild(ph);
 	}
 
 	moveCursorToBlockStart(block, session = null) {
 		this.ensureEditableContent(block, true);
-		const textNode = this.firstTextNode(block);
-		return textNode
-			? this.editor.selection.setCaret(textNode, 0, session)
+		const tn = this.firstTextNode(block) || (block.firstChild && block.firstChild.nodeType === Node.TEXT_NODE ? block.firstChild : null);
+		if (!tn && block.childNodes.length === 0) {
+			const t = document.createTextNode("");
+			block.appendChild(t);
+			return this.editor.selection.setCaret(t, 0, session);
+		}
+		return tn
+			? this.editor.selection.setCaret(tn, 0, session)
 			: this.editor.selection.setCaret(block, 0, session);
 	}
 
 	moveCursorToBlockEnd(block, session = null) {
 		this.ensureEditableContent(block, true);
-		const textNode = this.lastTextNode(block);
-		return textNode
-			? this.editor.selection.setCaret(textNode, textNode.data.length, session)
+		let tn = this.lastTextNode(block);
+		if (!tn) {
+			const last = block.lastChild;
+			if (last && last.nodeType === Node.TEXT_NODE) tn = last;
+		}
+		if (!tn && block.childNodes.length === 0) {
+			const t = document.createTextNode("");
+			block.appendChild(t);
+			return this.editor.selection.setCaret(t, 0, session);
+		}
+		return tn
+			? this.editor.selection.setCaret(tn, tn.data.length, session)
 			: this.editor.selection.setCaret(block, block.childNodes.length, session);
 	}
 
@@ -552,6 +572,18 @@ class RichText {
 		return true;
 	}
 
+	ensureTextTarget(block) {
+		if (!block) return null;
+		let tn = this.firstTextNode(block);
+		if (tn) return tn;
+		for (const ch of block.childNodes) {
+			if (ch.nodeType === Node.TEXT_NODE) return ch;
+		}
+		const t = document.createTextNode("");
+		block.appendChild(t);
+		return t;
+	}
+
 	splitListItem(item, range, session = null) {
 		if (this.isEmptyBlock(item)) return this.exitEmptyBlock(item, session);
 		const nextItem = document.createElement("li");
@@ -690,7 +722,7 @@ const richtext = {
   normalizer: richTextNormalizer,
   rules: richTextRules,
   options: {
-    schema: richTextSchema(),
+    schema: richTextSchema({}, { atoms: ["aos-ref", "aos-key"] }),
     keymap: richTextKeymap(),
     classes: richTextClasses(),
     plugins: [RichText],

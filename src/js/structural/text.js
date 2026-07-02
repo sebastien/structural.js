@@ -156,13 +156,16 @@ class TextAdapter {
 		);
 	}
 
-	// Method: isAtom
-	// Checks if the given `node` is marked as an atomic/atom element.
+	/* Method: isAtom
+	 * Returns true if node is marked atom via class or schema. */
 	isAtom(node) {
-		return (
-			node?.classList?.contains("atom") ||
-			node?.classList?.contains("atomic")
-		);
+		if (!node) return false;
+		if (node?.classList?.contains("atom") || node?.classList?.contains("atomic")) return true;
+		const schema = this._schema || this.root?._editorSchema || null;
+		if (schema && typeof schema.isAtom === "function") {
+			return schema.isAtom(node);
+		}
+		return false;
 	}
 
 	// Method: isWhitespacePreserved
@@ -838,8 +841,13 @@ class TextAdapter {
 				}
 			case Node.ELEMENT_NODE:
 				{
-					const textNode = document.createTextNode(text);
 					const beforeNode = node.childNodes[offset] ?? null;
+					if (beforeNode && beforeNode.nodeType === Node.TEXT_NODE) {
+						const o = Math.min(beforeNode.data.length, 0);
+						beforeNode.data = `${beforeNode.data.slice(0, o)}${text}${beforeNode.data.slice(o)}`;
+						return { node: beforeNode, offset: o + text.length };
+					}
+					const textNode = document.createTextNode(text);
 					node.insertBefore(textNode, beforeNode);
 					return { node: textNode, offset: text.length };
 				}
@@ -1131,6 +1139,9 @@ class TextAdapter {
 				return;
 			}
 			if (this.isSkipped(current)) {
+				return;
+			}
+			if (this.isAtom(current)) {
 				return;
 			}
 			yield { node: current, offset: state.offset, length: 0 };

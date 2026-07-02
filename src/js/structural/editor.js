@@ -27,6 +27,8 @@ class EditorSchema {
 	constructor(rules = {}, options = {}) {
 		this.rules = rules;
 		this.options = options;
+		/* atoms: list of opaque tags (e.g. "aos-ref") preserved by normalizer and skipped in positions */
+		this._atomTags = new Set((options.atoms || []).map((t) => (typeof t === "string" ? t.toLowerCase() : t)).filter(Boolean));
 	}
 
 	// Method: rule
@@ -34,6 +36,19 @@ class EditorSchema {
 	rule(nodeOrTag) {
 		const tag = this.tag(nodeOrTag);
 		return tag ? this.rules[tag] ?? null : null;
+	}
+
+	// Method: renderHint
+	// Gets render metadata associated with a specific tag name or DOM node.
+	renderHint(nodeOrTag) {
+		return this.rule(nodeOrTag)?.render ?? null;
+	}
+
+	// Method: renderHintValue
+	// Resolves a single render metadata key for a tag name or DOM node.
+	renderHintValue(nodeOrTag, key, fallback = undefined) {
+		const hint = this.renderHint(nodeOrTag);
+		return hint && key in hint ? hint[key] : fallback;
 	}
 
 	// Method: isEmpty
@@ -76,7 +91,10 @@ class EditorSchema {
 	contains(parent, child) {
 		const rule = this.rule(parent);
 		if (!rule?.contains) return false;
-		return this.expand(rule.contains).includes(this.tag(child));
+		const t = this.tag(child);
+		const exp = this.expand(rule.contains);
+		if (this.isAtom(child) && (exp.includes("@inline") || exp.includes(t))) return true;
+		return exp.includes(t);
 	}
 
 	// Method: defaultChild
@@ -89,6 +107,15 @@ class EditorSchema {
 	// Retrieves the schema alias for a specific tag name.
 	aliasFor(tag) {
 		return this.options.aliases?.[this.tag(tag)] ?? null;
+	}
+
+	/* Method: isAtom
+	 * Returns true if tag/node is an opaque atom per schema options.atoms. */
+	isAtom(nodeOrTag) {
+		const t = this.tag(nodeOrTag);
+		if (!t) return false;
+		if (this._atomTags.has(t)) return true;
+		return false;
 	}
 
 	// Method: normalizeRule
@@ -149,6 +176,17 @@ class EditorSchema {
 	tagsOfType(type) {
 		return Object.entries(this.rules)
 			.filter(([tag, rule]) => !tag.startsWith("@") && rule?.type === type)
+			.map(([tag]) => tag);
+	}
+
+	// Method: tagsWithRenderHint
+	// Collects tags whose render metadata contains `key`, optionally matching `value`.
+	tagsWithRenderHint(key, value = undefined) {
+		return Object.entries(this.rules)
+			.filter(([tag, rule]) => {
+				if (tag.startsWith("@") || !rule?.render || !(key in rule.render)) return false;
+				return value === undefined ? true : rule.render[key] === value;
+			})
 			.map(([tag]) => tag);
 	}
 
@@ -351,8 +389,8 @@ class EditorNormalizer {
 		}
 	}
 
-	// Method: normalizeChild
-	// Evaluates a child element against parent's schema expectations and repairs if invalid.
+	/* Method: normalizeChild
+	 * Keeps atoms and unknown custom elements; otherwise applies schema actions. */
 	normalizeChild(parent, child, transaction) {
 		const parentTag = this.schemaTag(parent);
 		const childTag = this.schema.tag(child);
@@ -365,6 +403,9 @@ class EditorNormalizer {
 		}
 
 		if (child.nodeType !== Node.ELEMENT_NODE) return;
+		if (this.schema.isAtom?.(child) || childTag.includes("-")) {
+			return;
+		}
 		const known = !!this.schema.rule(childTag);
 		const action = known
 			? this.schema.normalizeAction(parentTag, "invalidChild", "preserve")
@@ -609,11 +650,15 @@ class EditorClassController {
 	// Method: selector
 	// Resolves selection elements matching active block/inline tag names.
 	selector() {
+		const tracked = this.editor.schema?.tagsWithRenderHint("track", true)?.join(", ");
 		const selector = this.options.selector ?? [
 			this.editor.schema?.selector("block"),
 			this.editor.schema?.selector("inline"),
 		].filter(Boolean);
-		return Array.isArray(selector) ? selector.filter(Boolean).join(", ") : selector;
+		if (Array.isArray(selector)) {
+			return [...selector, tracked].filter(Boolean).join(", ");
+		}
+		return [selector, tracked].filter(Boolean).join(", ");
 	}
 
 	// Method: trackedFor
@@ -890,6 +935,7 @@ class Editor {
 		this._active = false;
 		this._currentBlock = null;
 		this.text = new TextAdapter(node, options.text).attach();
+		this.text._schema = this.schema;
 		const sessionOpts = {
 			actor: "local",
 			nativeSelection: "sync",
