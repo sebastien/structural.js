@@ -139,8 +139,10 @@ class SelectionOverlay {
 		const toAdd = new Set();
 		const add = (v) => {
 			if (!v) return;
-			if (Array.isArray(v)) v.forEach(x => x && toAdd.add(String(x)));
-			else String(v).split(/\s+/).forEach(x => x && toAdd.add(x));
+			const values = Array.isArray(v) ? v : String(v).split(/\s+/);
+			for (const x of values) {
+				if (x) toAdd.add(String(x));
+			}
 		};
 		add(this._className);
 		if (stateCfg?.classes) {
@@ -608,6 +610,40 @@ class EditorSelectionController {
 		active.cursor.moveTo(index);
 		this._syncSessionBlock(active);
 		return this.syncToNative(active);
+	}
+
+	// Method: previewCaretAtIndex
+	// Moves only the virtual caret for hover/drag previews without syncing native selection.
+	previewCaretAtIndex(index, session = null, options = {}) {
+		const active = this.editor.activeSession(session);
+		this.editor.text.ensureIndex(index);
+		const move = active.cursor._resolveMoveOffset(index, options);
+		if (!move) return false;
+		active.cursor._clearNodeSelection();
+		active.cursor.selection.clear();
+		active.cursor.selectionKind = "caret";
+		active.cursor.offset = move.clamped;
+		active.cursor.anchor = move.position.focusNode;
+		active.cursor.delta = move.position.point.offset;
+		active.cursor.direction = move.direction;
+		active.cursor.caret.setVirtual(move.position, { editable: options.editable !== false });
+		this._syncSessionBlock(active);
+		return move.clamped;
+	}
+
+	// Method: previewCaretFromPoint
+	// Places only the virtual caret from viewport coordinates using cached text positions.
+	previewCaretFromPoint(root, x, y, session = null, options = {}) {
+		if (!root?.isConnected) return false;
+		const nativePoint = this._nativeCaretPointFromClientPoint(x, y);
+		if (nativePoint && this._pointWithin(root, nativePoint.node)) {
+			this.editor.text.ensurePositions();
+			const index = this.editor.text.indexOfPoint(nativePoint);
+			return index >= 0 ? this.previewCaretAtIndex(index, session, options) : false;
+		}
+		const active = this.editor.activeSession(session);
+		const offset = active.cursor.offsetFromPointIn(root, x, y);
+		return offset !== null ? this.previewCaretAtIndex(offset, active, options) : false;
 	}
 
 	// Method: select

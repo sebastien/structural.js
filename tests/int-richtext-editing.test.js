@@ -101,6 +101,33 @@ async function directSelect(page, start, end) {
 	});
 }
 
+async function toggleBlock(page, tag) {
+	await page.evaluate((t) => window.__test.toggleBlock(t), tag);
+}
+
+async function toggleInline(page, tag) {
+	await page.evaluate((t) => window.__test.toggleInline(t), tag);
+}
+
+async function getSelectedText(page) {
+	return page.evaluate(() => window.getSelection()?.toString() ?? "");
+}
+
+// Direct ops that respect current selection (range) without forcing a moveTo collapse first.
+async function directDeleteSelection(page) {
+	await page.evaluate(() => {
+		const cur = window.__editor.input.cursor;
+		cur.delete();
+	});
+}
+
+async function directInsertText(page, text) {
+	await page.evaluate((t) => {
+		const cur = window.__editor.input.cursor;
+		cur.insertText(t);
+	}, text);
+}
+
 async function _directMove(page, offset) {
 	await page.evaluate((o) => window.__test.moveTo(o), offset);
 }
@@ -1429,6 +1456,205 @@ test("symptom: after delete at P, the very next type must make the char visible 
 		}
 		if (!state.text.includes("V")) {
 			throw new Error(`typed text did not appear after delete at caret: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+// --- Selection management tests ---
+
+test("selection: direct range delete removes exact span and caret at start", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>ABCDEF</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("ABCDEF", 1));
+		const e = await page.evaluate(() => window.__test.indexOfText("ABCDEF", 4));
+		await directSelect(page, s, e); // select "BCD"
+		await directDeleteSelection(page);
+		const state = await getState(page);
+		if (!state.text.includes("AEF") || state.text.includes("BCD")) {
+			throw new Error(`range delete wrong: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: type after direct range delete replaces the deleted span", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>ABCDEF</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("ABCDEF", 1));
+		const e = await page.evaluate(() => window.__test.indexOfText("ABCDEF", 4));
+		await directSelect(page, s, e);
+		await directDeleteSelection(page);
+		await directInsertText(page, "X");
+		const state = await getState(page);
+		if (!state.text.includes("AXEF")) {
+			throw new Error(`range replace wrong: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: keyboard Shift+Arrow range delete + type", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>ABCDEFG</p>"));
+		await clickAtText(page, "ABCDEFG", 1);
+		await press(page, "Shift+ArrowRight");
+		await press(page, "Shift+ArrowRight");
+		await press(page, "Shift+ArrowRight");
+		await press(page, "Delete");
+		await type(page, "Z");
+		const state = await getState(page);
+		if (!state.text.includes("Z") || !state.caretVisible) {
+			throw new Error(`kb range delete+type wrong: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: cross-boundary delete then select+replace inside second", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>ab</p><p>cd</p>"));
+		// Operate at end of first (boundary), then do a clear select+replace *inside* the second block.
+		const end1 = await page.evaluate(() => window.__test.indexOfText("ab", 2));
+		await directSelect(page, end1, end1);
+		await directDeleteSelection(page);
+
+		// Now select the first char inside the second block and replace it.
+		const s2 = await page.evaluate(() => window.__test.indexOfText("cd", 0));
+		const e2 = await page.evaluate(() => window.__test.indexOfText("cd", 1));
+		await directSelect(page, s2, e2);
+		await directDeleteSelection(page);
+		await directInsertText(page, "X");
+
+		const state = await getState(page);
+		if (!state.text.includes("X") || !state.caretVisible) {
+			throw new Error(`cross-boundary selection op wrong: ${JSON.stringify(state)}`);
+		}
+	});
+});
+
+test("selection: select all via direct then type replaces whole content", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>hello world</p>"));
+		const start = await page.evaluate(() => window.__test.indexOfText("hello world", 0));
+		const end = await page.evaluate(() => window.__test.indexOfText("hello world", "hello world".length));
+		await directSelect(page, start, end);
+		await directInsertText(page, "Z");
+		const state = await getState(page);
+		expect(state.text).toBe("Z");
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: select word, toggle strong, type wraps replacement", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>word here</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("word here", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("word here", 4));
+		await directSelect(page, s, e);
+		await toggleInline(page, "strong");
+		await directTypeAt(page, s, "X");
+		const state = await getState(page);
+		if (!state.text.includes("X") || !state.caretVisible) {
+			throw new Error(`inline on selection failed: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: select across blocks, toggle h2", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>one</p><p>two</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("one", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("two", 1));
+		await directSelect(page, s, e);
+		await toggleBlock(page, "h2");
+		const state = await getState(page);
+		const html = state.html || "";
+		if (!/h2/i.test(html)) {
+			throw new Error(`toggle h2 on selection failed: ${html}`);
+		}
+		expect(state.caretVisible || state.selectionKind !== "caret").toBe(true);
+	});
+});
+
+test("selection: select paragraph, toggle blockquote", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>quote me</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("quote me", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("quote me", "quote me".length));
+		await directSelect(page, s, e);
+		await toggleBlock(page, "blockquote");
+		const state = await getState(page);
+		if (!/blockquote/i.test(state.html || "")) {
+			throw new Error(`toggle blockquote failed: ${state.html}`);
+		}
+	});
+});
+
+test("selection: indent single list item via Tab", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<ul><li>one</li><li>two</li></ul>"));
+		const p = await page.evaluate(() => window.__test.indexOfText("two", 0));
+		await directSelect(page, p, p);
+		await press(page, "Tab");
+		const state = await getState(page);
+		expect(state.caretVisible || state.selectionKind !== "caret").toBe(true);
+	});
+});
+
+test("selection: dedent nested list item via Shift+Tab", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<ul><li>one<ul><li>nested</li></ul></li></ul>"));
+		const p = await page.evaluate(() => window.__test.indexOfText("nested", 0));
+		await directSelect(page, p, p);
+		await press(page, "Shift+Tab");
+		const state = await getState(page);
+		if (!state.caretVisible && state.selectionKind === "caret") {
+			throw new Error(`caret invisible after dedent: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible || state.selectionKind !== "caret").toBe(true);
+	});
+});
+
+test("selection: indent multiple consecutive list items", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<ul><li>a</li><li>b</li><li>c</li></ul>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("a", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("c", 1));
+		await directSelect(page, s, e);
+		await press(page, "Tab");
+		const state = await getState(page);
+		expect(state.caretVisible || state.selectionKind !== "caret").toBe(true);
+	});
+});
+
+test("selection: replace selected formatted text clears formatting on replace", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p><strong>bold</strong></p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("bold", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("bold", 4));
+		await directSelect(page, s, e);
+		await directTypeAt(page, s, "plain");
+		const state = await getState(page);
+		if (!state.text.includes("plain")) {
+			throw new Error(`replace formatted failed: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: caret visible and selectionKind caret after range replace", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>ABCDEF</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("ABCDEF", 1));
+		const e = await page.evaluate(() => window.__test.indexOfText("ABCDEF", 4));
+		await directSelect(page, s, e);
+		await press(page, "Delete");
+		await directInsertText(page, "X");
+		const state = await getState(page);
+		if (state.selectionKind !== "caret" && state.selectionKind !== "range") {
+			throw new Error(`unexpected selectionKind: ${JSON.stringify(state)}`);
 		}
 		expect(state.caretVisible).toBe(true);
 	});

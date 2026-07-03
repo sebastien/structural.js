@@ -15,6 +15,7 @@ export {
 	EditorClassController,
 	EditorCommand,
 	EditorCursor,
+	editorKeymap,
 	EditorNormalizer,
 	EditorSchema,
 	EditorSession,

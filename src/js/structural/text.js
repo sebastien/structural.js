@@ -312,16 +312,7 @@ class TextAdapter {
 
 	_ensureBlockForPoint(point) {
 		if (!point?.node) return false;
-		const selector = this._getBlockSelector();
-		let el = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
-		let block = el ? el.closest(selector) : null;
-		if (!block || !this.root.contains(block)) {
-			// climb to a direct child of root
-			block = el;
-			while (block && block.parentElement && block.parentElement !== this.root) {
-				block = block.parentElement;
-			}
-		}
+		const block = this._blockForPoint(point);
 		if (!block || this._blockIndex.has(block)) return false;
 		// append only if after current last in order (to avoid renumbering live prefix)
 		// for simplicity, append; caller decides
@@ -334,6 +325,20 @@ class TextAdapter {
 		this._windowGen += 1;
 		this._enforceMemoryCap();
 		return true;
+	}
+
+	_blockForPoint(point) {
+		if (!point?.node) return null;
+		const selector = this._getBlockSelector();
+		let el = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
+		let block = el ? el.closest(selector) : null;
+		if (!block || !this.root.contains(block)) {
+			block = el;
+			while (block && block.parentElement && block.parentElement !== this.root) {
+				block = block.parentElement;
+			}
+		}
+		return block && this.root.contains(block) ? block : null;
 	}
 
 	_expandWindowToCoverIndex(targetIndex) {
@@ -561,7 +566,11 @@ class TextAdapter {
 			return -1;
 		}
 		let positions = this.ensurePositions();
-		for (let i = 0; i < positions.length; i += 1) {
+		const block = this._blockForPoint(point);
+		const range = block ? this._blockIndex.get(block) : null;
+		const start = range?.start ?? 0;
+		const end = range?.end ?? positions.length;
+		for (let i = start; i < end; i += 1) {
 			const candidate = positions[i]?.point;
 			if (
 				candidate?.node === point.node &&
@@ -574,7 +583,10 @@ class TextAdapter {
 		const expanded = this._ensureBlockForPoint(point);
 		if (expanded) {
 			positions = this._positions;
-			for (let i = 0; i < positions.length; i += 1) {
+			const expandedRange = block ? this._blockIndex.get(block) : null;
+			const expandedStart = expandedRange?.start ?? 0;
+			const expandedEnd = expandedRange?.end ?? positions.length;
+			for (let i = expandedStart; i < expandedEnd; i += 1) {
 				const candidate = positions[i]?.point;
 				if (candidate?.node === point.node && candidate.offset === point.offset) {
 					return i;

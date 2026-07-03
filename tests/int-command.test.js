@@ -70,5 +70,13 @@ test("command: serializable command and transaction objects", async () => {
 			f5: false,
 			ctrlB: true,
 		},
+		defaultKeymap: {
+			shiftRight: true,
+			shifted: { start: 1, end: 2 },
+			selectAll: true,
+			selectedWholeEditor: true,
+			collapse: true,
+			selectionKind: "caret",
+		},
 	});
 });

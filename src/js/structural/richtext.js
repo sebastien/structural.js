@@ -6,7 +6,7 @@
 // Module: richtext
 // Installs rich-text schema presets, keymaps, classes, and block editing behavior.
 
-import { EditorNormalizer, EditorSchema } from "./editor.js";
+import { editorKeymap, EditorNormalizer, EditorSchema } from "./editor.js";
 
 const richTextRules = {
 	":root": {
@@ -54,19 +54,13 @@ function richTextSchema(overrides = {}, options = {}) {
 // Function: richTextKeymap
 // Returns standard key binding maps for structural formatting.
 function richTextKeymap(overrides = {}) {
-	return {
-		"Mod+A": { type: "selectCurrentBlock", args: { mode: "expand" } },
-		"Mod+Shift+A": { type: "selectCurrentBlock", args: { mode: "contract" } },
+	return editorKeymap({
 		"Mod+B": { type: "toggleInline", args: { tag: "strong" } },
 		"Mod+I": { type: "toggleInline", args: { tag: "em" } },
 		"Mod+`": { type: "toggleInline", args: { tag: "code" } },
 		"Mod+1": { type: "toggleBlock", args: { tag: "h1" } },
 		"Mod+2": { type: "toggleBlock", args: { tag: "h2" } },
 		"Mod+3": { type: "toggleBlock", args: { tag: "h3" } },
-		"Mod+Shift+ArrowLeft": { type: "expandSelection", args: { direction: "left" } },
-		"Mod+Shift+ArrowRight": { type: "expandSelection", args: { direction: "right" } },
-		"Mod+Shift+ArrowUp": { type: "expandSelection", args: { direction: "up" } },
-		"Mod+Shift+ArrowDown": { type: "expandSelection", args: { direction: "down" } },
 		Enter: { type: "splitBlock" },
 		"Shift+Enter": { type: "insertLineBreak" },
 		Tab: { type: "indent" },
@@ -74,7 +68,7 @@ function richTextKeymap(overrides = {}) {
 		Backspace: { type: "deleteSmart" },
 		Delete: { type: "deleteSmart" },
 		...overrides,
-	};
+	});
 }
 
 // Function: richTextClasses
@@ -153,8 +147,6 @@ class RichText {
 		]);
 		editor.configureActions({
 			beforeTextInput: (_command, context) => this.removePlaceholderInCurrentBlock(context.session),
-			selectCurrentBlock: (command, context) => this.selectCurrentBlock(context.session, command.args.mode),
-			expandSelection: (command, context) => this.expandSelection(command.args.direction, context.session),
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
 			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
 			deleteSmart: (_command, context) => this.deleteSelectedBlocks(context.session) || this.deleteEmptyBlock(context.session) || this.mergeBlockBackward(context.session, context.event),

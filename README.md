@@ -41,6 +41,10 @@ You can learn more about each component:
     .editor { max-width: 600px; margin: 2rem auto; line-height: 1.6; }
     .focus { outline: 2px solid #0056cc; }
     .atom { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }
+    /* Virtual selection/caret hosts are positioned over the editor by Structural. */
+    #selection, #caret { position: absolute; left: 0; top: 0; pointer-events: none; }
+    #selection { visibility: hidden; z-index: 10; }
+    #caret { width: 2px; height: 1lh; background: #0056cc; visibility: hidden; z-index: 11; }
   </style>
   <script type="importmap">
   {
@@ -57,13 +61,29 @@ You can learn more about each component:
   <p>Modify this text, or interact with this <span class="atom">{AtomicToken}</span>.</p>
 </div>
 
-<div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
-<div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#0056cc;visibility:hidden;pointer-events:none;"></div>
+<div id="selection"></div>
+<div id="caret"></div>
 
 <script type="module">
 import { Editor } from "structural/editor";
 
-const editor = new Editor(document.getElementById("editor"));
+const editor = new Editor(document.getElementById("editor"), {
+  // Use Structural's rendered overlays instead of the browser's native caret/selection.
+  caret: {
+    mode: "virtual",
+    node: document.getElementById("caret"),
+    focused: true,
+  },
+  selection: {
+    mode: "virtual",
+    node: document.getElementById("selection"),
+  },
+});
+
+// The overlays are rendered automatically after cursor/selection changes.
+editor.input.cursor.moveTo(0);
+// Later, this draws the selected range into #selection instead of native UI:
+// editor.input.cursor.select(0, 8);
 
 editor.root.addEventListener("CursorMove", (event) => {
   const { previous, current } = event.detail;
@@ -125,5 +145,3 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - [`examples/app-annotation.example.html`](examples/app-annotation.example.html): DOM-backed feedback and annotations alongside primary text.
 - [`examples/app-template.example.html`](examples/app-template.example.html): Structured email template editing with conditional blocks and placeholders.
 - [`examples/app-emailtemplate.example.html`](examples/app-emailtemplate.example.html): Full email template editor example with toolbar, selection, and caret rendering.
-
-

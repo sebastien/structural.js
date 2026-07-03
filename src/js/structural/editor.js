@@ -11,6 +11,36 @@ import { Cursor as EditorCursor } from "./cursor.js";
 import { EditorRangeController } from "./range.js";
 import { EditorSelectionController } from "./selection.js";
 
+// Function: editorKeymap
+// Returns the built-in editing keys. Use this helper to compose custom maps.
+function editorKeymap(overrides = {}) {
+	return {
+		ArrowLeft: { type: "moveCursor", args: { direction: "left" } },
+		ArrowRight: { type: "moveCursor", args: { direction: "right" } },
+		ArrowUp: { type: "moveCursor", args: { direction: "up" } },
+		ArrowDown: { type: "moveCursor", args: { direction: "down" } },
+		"Shift+ArrowLeft": { type: "moveCursor", args: { direction: "left", extend: true } },
+		"Shift+ArrowRight": { type: "moveCursor", args: { direction: "right", extend: true } },
+		"Shift+ArrowUp": { type: "moveCursor", args: { direction: "up", extend: true } },
+		"Shift+ArrowDown": { type: "moveCursor", args: { direction: "down", extend: true } },
+		"Mod+A": { type: "selectStructuralScope", args: { mode: "expand" } },
+		"Mod+Shift+A": { type: "selectStructuralScope", args: { mode: "contract" } },
+		"Mod+ArrowLeft": { type: "moveStructural", args: { direction: "left" } },
+		"Mod+ArrowRight": { type: "moveStructural", args: { direction: "right" } },
+		"Mod+ArrowUp": { type: "moveStructural", args: { direction: "up" } },
+		"Mod+ArrowDown": { type: "moveStructural", args: { direction: "down" } },
+		"Mod+Shift+ArrowLeft": { type: "moveStructural", args: { direction: "left", extend: true } },
+		"Mod+Shift+ArrowRight": { type: "moveStructural", args: { direction: "right", extend: true } },
+		"Mod+Shift+ArrowUp": { type: "moveStructural", args: { direction: "up", extend: true } },
+		"Mod+Shift+ArrowDown": { type: "moveStructural", args: { direction: "down", extend: true } },
+		Tab: { type: "moveTraversal", args: { direction: "forward" } },
+		"Shift+Tab": { type: "moveTraversal", args: { direction: "backward" } },
+		Backspace: { type: "deleteBackward" },
+		Delete: { type: "deleteForward" },
+		...overrides,
+	};
+}
+
 // ----------------------------------------------------------------------------
 //
 // CLASSES
@@ -975,7 +1005,8 @@ class Editor {
 			? options.schema
 			: new EditorSchema(options.schema ?? {});
 		this.normalizer = options.normalizer ?? new EditorNormalizer(this.schema);
-		this.keymap = options.keymap ?? {};
+		// Custom maps override individual defaults without disabling unrelated editor keys.
+		this.keymap = editorKeymap(options.keymap ?? {});
 		this.actions = new Map();
 		this.history = [];
 		this.sessions = new Map();
@@ -1007,9 +1038,211 @@ class Editor {
 		this.range = new EditorRangeController(this);
 		this.selection = new EditorSelectionController(this);
 		this.input = new EditorTextInput(this, { ...options, session: this.localSession });
+		this.configureActions({
+			moveCursor: (command, { session }) => {
+				const cursor = session.cursor;
+				const extend = command.args.extend === true;
+				switch (command.args.direction) {
+					case "left": cursor.left(extend); break;
+					case "right": cursor.right(extend); break;
+					case "up": cursor.up(extend); break;
+					case "down": cursor.down(extend); break;
+					default: return false;
+				}
+				return true;
+			},
+			selectAll: (_command, { session }) => {
+				const end = this.text.clampIndex(0x7fffffff);
+				return session.cursor.select(0, end);
+			},
+			selectStructuralScope: (command, { session }) =>
+				this.selectStructuralScope(command.args.mode, session),
+			moveStructural: (command, { session }) =>
+				this.moveStructural(command.args.direction, command.args.extend === true, session),
+			moveTraversal: (command, { session }) =>
+				this.moveTraversal(command.args.direction, session),
+			collapseSelection: (_command, { session }) => {
+				const cursor = session.cursor;
+				cursor.moveTo(cursor.selection.isActive ? cursor.selection.focusOffset : cursor.offset);
+				return true;
+			},
+			deleteBackward: (_command, { session }) => {
+				session.cursor.backspace();
+				return true;
+			},
+			deleteForward: (_command, { session }) => {
+				session.cursor.delete();
+				return true;
+			},
+		});
 		this.installPlugins(options.plugins ?? []);
 		this.classes = this.localSession.classes;
 		this.input.cursor.moveTo(8);
+	}
+
+	// Method: structuralScopeNodes
+	// Resolves the nearest declared block (or root child without block rules) and its ancestors.
+	structuralScopeNodes(session = null) {
+		const active = this.activeSession(session);
+		const anchor = active.cursor.anchor;
+		let element = anchor?.nodeType === Node.ELEMENT_NODE ? anchor : anchor?.parentElement;
+		if (!element || !this.root.contains(element)) element = this.root;
+
+		const blockTags = this.schema.tagsOfType("block");
+		let scope = null;
+		if (blockTags.length) {
+			const selector = blockTags.join(", ");
+			scope = element.closest(selector);
+			if (!scope || !this.root.contains(scope)) scope = null;
+		} else {
+			while (element !== this.root && element.parentElement && element.parentElement !== this.root) element = element.parentElement;
+			scope = element === this.root ? this.root : element;
+		}
+		if (!scope) scope = this.root;
+
+		const scopes = [];
+		for (let current = scope; current?.isConnected; current = current.parentElement) {
+			scopes.push(current);
+			if (current === this.root) break;
+		}
+		return scopes;
+	}
+
+	// Method: structuralRangeFor
+	// Converts an element's text contents to the editor's logical selection range.
+	structuralRangeFor(node) {
+		if (!node?.isConnected) return null;
+		this.text.refresh();
+		if (node === this.root) {
+			return { start: 0, end: this.text.clampIndex(0x7fffffff) };
+		}
+		const length = this.text.offsetWithin(node, { node, offset: node.childNodes.length });
+		const startPoint = this.text.pointAtOffsetWithin(node, 0, "forward");
+		const endPoint = this.text.pointAtOffsetWithin(node, Math.max(0, length), "backward");
+		const start = startPoint ? this.text.indexOfPoint(startPoint) : -1;
+		const end = endPoint ? this.text.indexOfPoint(endPoint) : -1;
+		return start >= 0 && end >= start ? { start, end } : null;
+	}
+
+	// Method: structuralScopes
+	// Gets selectable structural ranges from innermost scope through the editor root.
+	structuralScopes(session = null) {
+		const scopes = [];
+		for (const node of this.structuralScopeNodes(session)) {
+			const range = this.structuralRangeFor(node);
+			if (range && range.end > range.start && !scopes.some(scope => scope.start === range.start && scope.end === range.end)) {
+				scopes.push(range);
+			}
+		}
+		return scopes;
+	}
+
+	// Method: selectStructuralScope
+	// Expands to the next scope or contracts an existing scope one level.
+	selectStructuralScope(mode = "expand", session = null) {
+		const active = this.activeSession(session);
+		const scopes = this.structuralScopes(active);
+		if (!scopes.length) return false;
+		// A text-only editor has only its root scope; preserve select-all semantics.
+		if (mode !== "contract" && scopes.length === 1 && this.structuralScopeNodes(active)[0] === this.root) {
+			const selected = active.cursor.select(0, this.text.clampIndex(0x7fffffff));
+			if (selected) this.selection.syncToNative(active);
+			return selected;
+		}
+		const selected = active.cursor.selection.normalizedRange();
+		const current = scopes.findIndex(scope => scope.start === selected.start && scope.end === selected.end);
+		if (mode === "contract" && current === 0) {
+			active.cursor.moveTo(active.cursor.selection.focusOffset ?? active.cursor.offset);
+			return this.selection.syncToNative(active);
+		}
+		const index = mode === "contract"
+			? (current > 0 ? current - 1 : 0)
+			: (current >= 0 ? Math.min(current + 1, scopes.length - 1) : 0);
+		const target = scopes[index];
+		this.selection.select(target.start, target.end, active);
+		return this.selection.syncToNative(active);
+	}
+
+	// Method: structuralBlocks
+	// Returns navigable leaf blocks in document order, falling back to root children.
+	structuralBlocks() {
+		const tags = this.schema.tagsOfType("block");
+		if (!tags.length) {
+			const children = [...this.root.children];
+			return children.length ? children : [this.root];
+		}
+		const selector = tags.join(", ");
+		const all = [...this.root.querySelectorAll(selector)];
+		return all.filter(node => !node.querySelector(selector));
+	}
+
+	// Method: moveStructural
+	// Moves to a block boundary; extension retains the active selection anchor.
+	moveStructural(direction, extend = false, session = null) {
+		const active = this.activeSession(session);
+		const blocks = this.structuralBlocks();
+		if (!blocks.length) return false;
+		const offset = active.cursor.offset ?? 0;
+		const scopes = this.structuralScopeNodes(active);
+		let index = blocks.findIndex(block => scopes.includes(block));
+		if (index < 0) {
+			const containing = blocks.findIndex(block => block.contains(this.text.pointAt(offset)?.node));
+			index = containing >= 0 ? containing : 0;
+		}
+		const backwards = direction === "left" || direction === "up";
+		let range = this.structuralRangeFor(blocks[index]);
+		if (!range) return false;
+		if (backwards && offset <= range.start && index > 0) range = this.structuralRangeFor(blocks[--index]);
+		if (!backwards && offset >= range.end && index < blocks.length - 1) range = this.structuralRangeFor(blocks[++index]);
+		if (!range) return false;
+		const target = backwards ? range.start : range.end;
+		if (extend) {
+			const anchor = active.cursor.selection.isActive ? active.cursor.selection.anchorOffset : offset;
+			this.selection.select(anchor, target, active);
+		} else {
+			active.cursor.moveTo(target);
+		}
+		return this.selection.syncToNative(active);
+	}
+
+	// Method: traversalTargets
+	// Lists editable atoms and terminal elements in document traversal order.
+	traversalTargets() {
+		const targets = [];
+		const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_ELEMENT);
+		while (walker.nextNode()) {
+			const node = walker.currentNode;
+			if (this.text.isSkipped(node) || node.contentEditable === "false") continue;
+			if (this.text.isAtom(node) || node.children.length === 0) targets.push(node);
+		}
+		return targets;
+	}
+
+	// Method: moveTraversal
+	// Selects the next/previous editable atom or moves to a terminal element's edge.
+	moveTraversal(direction = "forward", session = null) {
+		const active = this.activeSession(session);
+		const targets = this.traversalTargets();
+		if (!targets.length) return false;
+		const backwards = direction === "backward";
+		const point = this.text.pointAt(active.cursor.offset ?? 0);
+		const element = active.cursor.selectedNode ??
+			(point?.node?.nodeType === Node.ELEMENT_NODE ? point.node : point?.node?.parentElement);
+		let index = targets.findIndex(target => target === element || target.contains(element));
+		if (active.cursor.selectedNode && index >= 0) index += backwards ? -1 : 1;
+		else if (index >= 0) index += backwards ? -1 : 1;
+		else index = backwards ? targets.length - 1 : 0;
+		if (index < 0 || index >= targets.length) return false;
+
+		const target = targets[index];
+		if (this.text.isAtom(target)) {
+			active.cursor.selectAtom(target, backwards ? "after" : "before");
+		} else {
+			const range = this.structuralRangeFor(target);
+			if (!range) return false;
+			active.cursor.moveTo(backwards ? range.end : range.start);
+		}
+		return this.selection.syncToNative(active);
 	}
 
 	// Method: destroy
@@ -1155,6 +1388,7 @@ export {
 	EditorCommand,
 	EditorCursor,
 	Editor,
+	editorKeymap,
 	EditorNormalizer,
 	EditorRangeController,
 	EditorSchema,
