@@ -64,6 +64,8 @@
       keymap: richTextKeymap(),
       classes: richTextClasses(),
       plugins: [RichText],
+      // Windowed lazy positions for perf; tests use small docs so eager is generous
+      text: { eagerBlockCount: 32, maxCacheBytes: 100 * 1024 * 1024 },
       caret: {
         mode: "virtual",
         node: caret,

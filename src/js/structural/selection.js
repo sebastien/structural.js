@@ -265,22 +265,33 @@ class TextSelection {
 	clear() {
 		this.anchorOffset = null;
 		this.focusOffset = null;
+		this._anchorPoint = null;
+		this._focusPoint = null;
 		return this.overlay.clear();
 	}
 
 	// Method: collapseTo
 	// Collapses the selection to a specific `offset`.
 	collapseTo(offset) {
-		this.anchorOffset = offset;
-		this.focusOffset = offset;
+		const c = this.cursor.text.clampIndex(offset);
+		this.anchorOffset = c;
+		this.focusOffset = c;
+		this._anchorPoint = this.cursor.text.pointAt(c);
+		this._focusPoint = this._anchorPoint;
 		return this.overlay.clear();
 	}
 
 	// Method: set
 	// Sets the selection anchor and focus to specified `anchorOffset` and `focusOffset`.
 	set(anchorOffset, focusOffset) {
-		this.anchorOffset = this.cursor.text.clampIndex(anchorOffset);
-		this.focusOffset = this.cursor.text.clampIndex(focusOffset);
+		const ca = this.cursor.text.clampIndex(anchorOffset);
+		const cf = this.cursor.text.clampIndex(focusOffset);
+		this.anchorOffset = ca;
+		this.focusOffset = cf;
+		const ap = this.cursor.text.pointAt(ca);
+		const fp = this.cursor.text.pointAt(cf);
+		this._anchorPoint = ap && ap.node ? { node: ap.node, offset: ap.offset } : null;
+		this._focusPoint = fp && fp.node ? { node: fp.node, offset: fp.offset } : null;
 		return this;
 	}
 
@@ -407,7 +418,30 @@ class TextSelection {
 
 	// Method: toDomRange
 	// Converts a `normalized` range to a native DOM Range.
+	// Prefers exact DOM points captured at selection time (robust to windowed/stale numeric offsets).
 	toDomRange(normalized = this.normalizedRange()) {
+		// Prefer stored points if we have them and they are still valid/connected.
+		const ap = this._anchorPoint;
+		const fp = this._focusPoint;
+		if (this.isActive && ap && fp && ap.node && fp.node && ap.node.isConnected && fp.node.isConnected && ap.node.ownerDocument === fp.node.ownerDocument) {
+			try {
+				const r = document.createRange();
+				// Order by document position
+				const cmp = ap.node.compareDocumentPosition(fp.node);
+				const apFirst = (cmp & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 ||
+					(cmp === 0 && ap.offset <= fp.offset);
+				if (apFirst) {
+					r.setStart(ap.node, ap.offset);
+					r.setEnd(fp.node, fp.offset);
+				} else {
+					r.setStart(fp.node, fp.offset);
+					r.setEnd(ap.node, ap.offset);
+				}
+				return r;
+			} catch (_) {
+				// fall through to numeric
+			}
+		}
 		if (normalized.collapsed || normalized.start === null || normalized.end === null) {
 			return null;
 		}
@@ -437,33 +471,52 @@ class TextSelection {
 
 	// Method: replaceWithText
 	// Replaces the selection contents with the specified `text`.
+	// This is the key path for "type/delete over selection" to override/replace.
 	replaceWithText(text = "") {
-		const normalized = this.normalizedRange();
-		const range = this.toDomRange(normalized);
-		if (!range) {
+		let domRange = this.toDomRange();
+		if (!domRange) {
+			// Robust fallback: if browser still has a live non-collapsed selection
+			// inside the editor, use it directly so replace always overrides.
+			try {
+				const ns = window.getSelection && window.getSelection();
+				if (ns && ns.rangeCount > 0) {
+					const nr = ns.getRangeAt(0);
+					const ed = this.cursor && this.cursor.editor;
+					const root = ed && ed.root;
+					if (root && ed.range && ed.range.within(root, nr) && !nr.collapsed) {
+						domRange = nr.cloneRange();
+					}
+				}
+			} catch (_) {}
+		}
+		if (!domRange) {
 			return null;
 		}
 		let point = null;
-		range.deleteContents();
+		domRange.deleteContents();
 		if (text.length > 0) {
 			const node = document.createTextNode(text);
-			range.insertNode(node);
+			domRange.insertNode(node);
 			point = { node, offset: text.length };
 		} else {
 			point = {
-				node: range.startContainer,
-				offset: range.startOffset,
+				node: domRange.startContainer,
+				offset: domRange.startOffset,
 			};
 		}
 		this.cursor.text.invalidatePositions();
+		// Ensure we can resolve the point after mutation (window may need expand)
 		this.cursor.text.ensurePositions();
-		const nextIndex = this.cursor.text.indexOfPoint(point);
+		const nextIndex = point ? this.cursor.text.indexOfPoint(point) : -1;
 		this.clear();
+		// Aggressively clear any lingering native selection so the caret doesn't appear stuck on the old range.
+		try {
+			const ns = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null;
+			if (ns && ns.removeAllRanges) ns.removeAllRanges();
+		} catch (_) {}
+		const fb = this.cursor.text.clampIndex((this.cursor && this.cursor.offset) || 0);
 		return {
-			index:
-				nextIndex >= 0
-					? nextIndex
-					: this.cursor.text.clampIndex(normalized.start ?? this.cursor.offset ?? 0),
+			index: nextIndex >= 0 ? nextIndex : fb,
 		};
 	}
 }
@@ -547,6 +600,7 @@ class EditorSelectionController {
 	setCaret(node, offset, session = null) {
 		const active = this.editor.activeSession(session);
 		this.editor.text.refresh();
+		// Ensure index resolution can expand window for the provided node/offset
 		const index = this.editor.text.indexOfPoint({ node, offset });
 		if (index < 0) {
 			return false;

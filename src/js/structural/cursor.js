@@ -516,6 +516,7 @@ class Cursor {
 	// Retrieves the active document TextAdapter.
 	get text() {
 		const text = this.editor.text;
+		// Ensure current window (lazy); far offsets will expand via ensureIndex in move/resolve paths
 		text.ensurePositions();
 		return text;
 	}
@@ -529,11 +530,13 @@ class Cursor {
 	// Method: insertText
 	// Inserts the specified `text` at the current cursor position or replaces selected content.
 	insertText(text) {
+		this._ensureSelectionFromNativeIfPresent();
 		if (this.selectionKind === "range") {
 			const next = this.selection.replaceWithText(text);
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index, { skipBoundaryCollapse: true });
+				try { const ns = window.getSelection && window.getSelection(); if (ns && ns.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
 			}
 			return;
 		}
@@ -541,6 +544,7 @@ class Cursor {
 			this.replaceSelectedNode(text);
 			return;
 		}
+		this.text.ensureIndex(this.offset);
 		const position = this.text.positionSlotAt(this.offset);
 		if (!this.text.acceptsText(position)) {
 			return;
@@ -553,11 +557,13 @@ class Cursor {
 	// Method: backspace
 	// Deletes the character or node immediately preceding the cursor.
 	backspace() {
+		this._ensureSelectionFromNativeIfPresent();
 		if (this.selectionKind === "range") {
 			const next = this.selection.replaceWithText("");
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
+				try { const ns = window.getSelection && window.getSelection(); if (ns && ns.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
 			}
 			return;
 		}
@@ -565,6 +571,7 @@ class Cursor {
 			this.removeSelectedNode();
 			return;
 		}
+		this.text.ensureIndex(this.offset);
 		const next = this.text.deleteBackwardAtIndex(this.offset);
 		this._desiredX = null;
 		this.moveTo(next.index, {
@@ -576,11 +583,13 @@ class Cursor {
 	// Method: delete
 	// Deletes the character or node immediately following the cursor.
 	delete() {
+		this._ensureSelectionFromNativeIfPresent();
 		if (this.selectionKind === "range") {
 			const next = this.selection.replaceWithText("");
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
+				try { const ns = window.getSelection && window.getSelection(); if (ns && ns.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
 			}
 			return;
 		}
@@ -588,6 +597,7 @@ class Cursor {
 			this.removeSelectedNode();
 			return;
 		}
+		this.text.ensureIndex(this.offset);
 		const next = this.text.deleteForwardAtIndex(this.offset);
 		this._desiredX = null;
 		this.moveTo(next.index, {
@@ -712,6 +722,7 @@ class Cursor {
 	// Method: _equivalentOffsetRange
 	// Computes the range of structurally equivalent positions surrounding the given `offset`.
 	_equivalentOffsetRange(offset) {
+		this.text.ensureIndex(offset);
 		const positions = this.text.positions();
 		const clamped = this.text.clampIndex(offset);
 		const origin = positions[clamped];
@@ -732,6 +743,7 @@ class Cursor {
 	// Method: _visibleEquivalentOffset
 	// Returns a visually apparent caret position from equivalent offset range.
 	_visibleEquivalentOffset(offset, direction = 0) {
+		this.text.ensureIndex(offset);
 		const clamped = this.text.clampIndex(offset);
 		if (this.text.hasVisibleRectAt(clamped)) {
 			return clamped;
@@ -756,6 +768,7 @@ class Cursor {
 	// Method: _canonicalOffset
 	// Determines the single canonical/collapsed caret offset for equivalent boundaries.
 	_canonicalOffset(offset, direction = 0) {
+		this.text.ensureIndex(offset);
 		const clamped = this.text.clampIndex(offset);
 		if (!this.collapseBoundary) {
 			return clamped;
@@ -832,6 +845,23 @@ class Cursor {
 		return path.reverse();
 	}
 
+	// Method: _ensureSelectionFromNativeIfPresent
+	// If the browser currently has a selection (range or caret) inside the editor root,
+	// sync it into our structural cursor/selection. This ensures that user mouse selections
+	// (and any out-of-band native selection) are respected for range replace/delete/typing.
+	_ensureSelectionFromNativeIfPresent() {
+		try {
+			const ed = this.editor;
+			if (!ed || !ed.root || !ed.range || !ed.selection) return;
+			const ns = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null;
+			if (!ns || !ns.rangeCount) return;
+			const nr = ns.getRangeAt(0);
+			if (!nr) return;
+			if (!ed.range.within(ed.root, nr)) return;
+			ed.selection.syncFromNative(ed.root);
+		} catch (_) {}
+	}
+
 	// Method: _resolveFocusedTrackableNode
 	// Determines the currently focused trackable element based on current state.
 	_resolveFocusedTrackableNode(current) {
@@ -846,8 +876,9 @@ class Cursor {
 	}
 
 	// Method: _resolveActiveTrackablePath
-	// Resolves full trackable path from the anchor node.
+	// Determines the current path of trackable nodes for cursor events.
 	_resolveActiveTrackablePath(current) {
+		this.text.ensurePositions();
 		if (
 			current?.selectionKind === "node" &&
 			this._isTrackableNode(current.selectedNode)
@@ -970,6 +1001,7 @@ class Cursor {
 	// Method: _entryIndexForNode
 	// Computes correct entry caret position when moving cursor into container `node`.
 	_entryIndexForNode(node, direction) {
+		this.text.ensurePositions();
 		const positions = this.text.positions();
 		const matches = [];
 		for (let i = 0; i < positions.length; i += 1) {
@@ -991,6 +1023,7 @@ class Cursor {
 	// Method: _exitIndexForNode
 	// Computes correct exit caret position when moving cursor out of container `node`.
 	_exitIndexForNode(node, direction, fallback = this.offset ?? 0) {
+		this.text.ensurePositions();
 		const positions = this.text.positions();
 		for (let i = 0; i < positions.length; i += 1) {
 			const boundary = positions[i]?.boundary;
@@ -1007,6 +1040,7 @@ class Cursor {
 	// Method: _boundaryIndexForNode
 	// Returns the caret position index immediately before or after container `node`.
 	_boundaryIndexForNode(node, side, fallback = this.offset ?? 0) {
+		this.text.ensurePositions();
 		const positions = this.text.positions();
 		for (let i = 0; i < positions.length; i += 1) {
 			const boundary = positions[i]?.boundary;
@@ -1056,6 +1090,8 @@ class Cursor {
 	// Method: _resolveMoveOffset
 	// Evaluates and adjusts target `offset` for whitespace, canonicalization, and visibility.
 	_resolveMoveOffset(offset, options = {}) {
+		// Expand window to cover requested target (window length is acceptable per spec)
+		this.text.ensureIndex(offset);
 		const positions = this.text.positions();
 		if (positions.length === 0) {
 			return null;
@@ -1288,6 +1324,7 @@ class Cursor {
 	// Method: _verticalTarget
 	// Solves target caret slot when traversing vertically.
 	_verticalTarget(origin, direction) {
+		this.text.ensureIndex(origin);
 		const visibleOrigin = this._visibleEquivalentOffset(origin, direction);
 		const next = this.text.indexFromLineMove(
 			visibleOrigin,
@@ -1549,6 +1586,7 @@ class Cursor {
 	// Method: moveTo
 	// Sets the cursor location to specified position `offset`.
 	moveTo(offset, options = {}) {
+		this.text.ensureIndex(offset);
 		const previous = this._snapshot();
 		const move = this._resolveMoveOffset(offset, options);
 		if (!move) {

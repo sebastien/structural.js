@@ -254,6 +254,7 @@
       </section>
 
       <div class="status" id="stats"></div>
+      <div class="status" id="perf" style="font-family: ui-monospace, monospace; font-size: 12px; color:#6c5e51;"></div>
       <div class="editor" id="editor"></div>
     </div>
 
@@ -309,6 +310,8 @@
           keymap: richTextKeymap(),
           classes: richTextClasses(),
           plugins: [RichText],
+          // Windowing/perf tuning exposed for the stress test
+          text: { eagerBlockCount: 12, maxCacheBytes: 100 * 1024 * 1024 },
           caret: {
             mode: "virtual",
             node: document.getElementById("caret"),
@@ -382,6 +385,15 @@
 
         editor.classes?.update();
         updateToolbar();
+
+        // Simple perf HUD: poll text adapter stats every 500ms
+        const perfEl = document.getElementById("perf");
+        function updatePerf() {
+          if (!editor || !editor.text || !perfEl) return;
+          const s = editor.text.stats || {};
+          perfEl.textContent = `rebuilds:${s.rebuildCount||0} ensures:${s.ensureCount||0} BCRs:${s.bcrCount||0} last:${(s.lastBuildMs||0).toFixed(1)}ms pos:${s.positionsLength||0} blocks:${s.blockCount||0} gen:${s.windowGen||0}`;
+        }
+        setInterval(updatePerf, 500);
       }
 
       async function loadAlice() {
@@ -396,6 +408,8 @@
         const navCount = editorNode.querySelectorAll("nav").length;
         stats.textContent = `${blockCount.toLocaleString()} editable blocks loaded across ${sectionCount.toLocaleString()} sections and ${navCount.toLocaleString()} navigation regions.`;
         docStatus.textContent = "Loaded from ref-alice_in_wonderland.html";
+        // Optional: expose stats for console inspection
+        window.__aliceStats = () => editor && editor.text && editor.text.stats;
       }
 
       configureNativeToggle();

@@ -127,6 +127,7 @@ class EditorRangeController {
 		const startPoint = this.editor.text.pointAtOffsetWithin(root, snapshot.start ?? 0, "forward");
 		const endPoint = this.editor.text.pointAtOffsetWithin(root, snapshot.end ?? snapshot.start ?? 0, "backward");
 		if (!startPoint?.node || !endPoint?.node) return false;
+		// indexOfPoint will expand window to cover points if needed
 		const start = this.editor.text.indexOfPoint(startPoint);
 		const end = this.editor.text.indexOfPoint(endPoint);
 		if (start < 0 || end < 0) return false;

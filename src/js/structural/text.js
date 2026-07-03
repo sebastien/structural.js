@@ -59,6 +59,23 @@ class TextAdapter {
 			? new Intl.Segmenter(undefined, { granularity: "grapheme" })
 			: null;
 		this._onMutations = this.onMutations.bind(this);
+		// Instrumentation
+		this._rebuildCount = 0;
+		this._ensureCount = 0;
+		this._bcrCount = 0;
+		this._lastBuildMs = 0;
+		// Window / cache configuration (decisions: window length OK, eager N blocks, 100MB cap, faster linear)
+		this.eagerBlockCount = options.eagerBlockCount ?? 8;
+		this.maxCacheBytes = options.maxCacheBytes ?? (100 * 1024 * 1024);
+		this._windowGen = 0;
+		// Block window state (hierarchical)
+		this._blockIndex = new Map(); // blockEl -> {start, end, length}
+		this._blockOrder = []; // top-to-bottom block elements in current window
+		this._prefixLengths = []; // parallel to _positions, prefix grapheme length up to slot i (for fast textOffsetAtIndex)
+		// Scheduling
+		this._rebuildScheduled = false;
+		this._rebuildRafId = 0;
+		this._idleScheduled = false;
 	}
 
 	_graphemeBoundaries(text = "") {
@@ -128,6 +145,7 @@ class TextAdapter {
 	onMutations(mutations) {
 		if (mutations?.length) {
 			this.invalidatePositions();
+			this._scheduleRebuild();
 		}
 	}
 
@@ -189,15 +207,213 @@ class TextAdapter {
 
 	// ----------------------------------------------------------------------------
 	//
+	// WINDOWING HELPERS (lazy hierarchical block window)
+	//
+	// ----------------------------------------------------------------------------
+
+	_getBlockSelector() {
+		if (this._schema && typeof this._schema.tagsOfType === "function") {
+			const tags = this._schema.tagsOfType("block");
+			const filtered = tags.filter(t => this._schema.contains ? this._schema.contains(t, "#text") || t === "blockquote" : true);
+			if (filtered.length) return filtered.join(",");
+		}
+		return "p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,div,section,nav,header";
+	}
+
+	_getTopLevelBlocks() {
+		const selector = this._getBlockSelector();
+		const all = Array.from(this.root.querySelectorAll(selector));
+		const candidates = all.filter(b => b && b.isConnected && this.root.contains(b));
+		// Return only root-most blocks (not contained inside another selected block)
+		// This prevents duplicate slots when walking overlapping nested blocks (ul/li/p etc.)
+		const set = new Set(candidates);
+		return candidates.filter(b => {
+			let p = b.parentElement;
+			while (p && p !== this.root) {
+				if (set.has(p)) return false;
+				p = p.parentElement;
+			}
+			return true;
+		});
+	}
+
+	_collectPositionSlotsFor(blockRoot, baseIndex = 0) {
+		const slots = [];
+		const seen = new Set();
+		const push = (point, focusNode) => {
+			if (!point?.node) return;
+			const key = `${nodeKey(point.node)}:${point.offset}`;
+			if (seen.has(key)) return;
+			seen.add(key);
+			const resolvedFocusNode = focusNode ?? point.node;
+			const kind = point.node.nodeType === Node.TEXT_NODE ? "text-point" : "element-boundary";
+			const boundary = this._boundaryAtPoint(point);
+			const char = this._charAroundPoint(point, boundary);
+			slots.push({ point, focusNode: resolvedFocusNode, kind, boundary, char });
+		};
+		for (const p of this.iwalk(blockRoot, { mode: "positions" })) {
+			push(p.point, p.focusNode);
+		}
+		return slots.map((slot, i) => ({ ...slot, index: baseIndex + i }));
+	}
+
+	_textLengthBefore(node) {
+		if (!node || node === this.root) return 0;
+		try {
+			const r = document.createRange();
+			r.setStart(this.root, 0);
+			r.setEnd(node, 0);
+			return this._graphemeCount(r.toString());
+		} catch {
+			return 0;
+		}
+	}
+
+	_rebuildPrefixTextOffsets() {
+		const n = this._positions.length;
+		this._prefixTextOffsets = new Array(n);
+		if (n === 0) return;
+		let running = this._textLengthBefore(this._blockOrder[0] || this.root);
+		this._prefixTextOffsets[0] = running;
+		for (let i = 1; i < n; i++) {
+			const p0 = this._positions[i - 1].point;
+			const p1 = this._positions[i].point;
+			let delta = 0;
+			if (p0 && p1 && p0.node === p1.node && p0.node && p0.node.nodeType === Node.TEXT_NODE) {
+				const s = Math.min(p0.offset, p1.offset);
+				const e = Math.max(p0.offset, p1.offset);
+				delta = this._graphemeCount(p0.node.data.slice(s, e));
+			}
+			running += delta;
+			this._prefixTextOffsets[i] = running;
+		}
+	}
+
+	_rebuildPrefixTextOffsetsForAppended(startIndex) {
+		if (!this._prefixTextOffsets) this._prefixTextOffsets = [];
+		const n = this._positions.length;
+		if (startIndex >= n) return;
+		let running = startIndex > 0 ? (this._prefixTextOffsets[startIndex - 1] || 0) : this._textLengthBefore(this._blockOrder[0] || this.root);
+		for (let i = startIndex; i < n; i++) {
+			if (i > startIndex) {
+				const p0 = this._positions[i - 1].point;
+				const p1 = this._positions[i].point;
+				let delta = 0;
+				if (p0 && p1 && p0.node === p1.node && p0.node?.nodeType === Node.TEXT_NODE) {
+					const s = Math.min(p0.offset, p1.offset);
+					const e = Math.max(p0.offset, p1.offset);
+					delta = this._graphemeCount(p0.node.data.slice(s, e));
+				}
+				running += delta;
+			}
+			this._prefixTextOffsets[i] = running;
+		}
+	}
+
+	_ensureBlockForPoint(point) {
+		if (!point?.node) return false;
+		const selector = this._getBlockSelector();
+		let el = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
+		let block = el ? el.closest(selector) : null;
+		if (!block || !this.root.contains(block)) {
+			// climb to a direct child of root
+			block = el;
+			while (block && block.parentElement && block.parentElement !== this.root) {
+				block = block.parentElement;
+			}
+		}
+		if (!block || this._blockIndex.has(block)) return false;
+		// append only if after current last in order (to avoid renumbering live prefix)
+		// for simplicity, append; caller decides
+		const start = this._positions.length;
+		const news = this._collectPositionSlotsFor(block, start);
+		this._positions.push(...news);
+		this._blockIndex.set(block, { start, end: this._positions.length, length: news.length });
+		this._blockOrder.push(block);
+		this._rebuildPrefixTextOffsetsForAppended(start);
+		this._windowGen += 1;
+		this._enforceMemoryCap();
+		return true;
+	}
+
+	_expandWindowToCoverIndex(targetIndex) {
+		const blocks = this._getTopLevelBlocks();
+		const have = new Set(this._blockOrder);
+		for (const b of blocks) {
+			if (have.has(b)) continue;
+			const start = this._positions.length;
+			const news = this._collectPositionSlotsFor(b, start);
+			this._positions.push(...news);
+			this._blockIndex.set(b, { start, end: this._positions.length, length: news.length });
+			this._blockOrder.push(b);
+			this._rebuildPrefixTextOffsetsForAppended(start);
+			if (this._positions.length > targetIndex) break;
+		}
+		this._windowGen += 1;
+		this._enforceMemoryCap();
+		return this._positions;
+	}
+
+	_enforceMemoryCap() {
+		if (!this.maxCacheBytes || this.maxCacheBytes <= 0) return;
+		// Very rough estimate; tune perSlot based on observed
+		const perSlot = 256;
+		let safety = 0;
+		while (this._positions.length > 0 && (this._positions.length * perSlot) > this.maxCacheBytes && safety < 10000) {
+			if (!this._blockOrder.length) break;
+			// drop tail block only
+			const last = this._blockOrder[this._blockOrder.length - 1];
+			const info = this._blockIndex.get(last);
+			if (!info) {
+				this._blockOrder.pop();
+				continue;
+			}
+			const keep = info.start;
+			this._positions.length = keep;
+			if (this._prefixTextOffsets) this._prefixTextOffsets.length = keep;
+			this._blockIndex.delete(last);
+			this._blockOrder.pop();
+			safety++;
+		}
+		if (safety > 0) this._windowGen += 1;
+	}
+
+	// ----------------------------------------------------------------------------
+	//
 	// POSITIONS
 	//
 	// ----------------------------------------------------------------------------
 
 	// Method: rebuildPositions
-	// Rebuilds the flat list of caret position slots starting from `root`.
+	// Rebuilds the flat list of caret position slots using windowed eager strategy.
 	rebuildPositions() {
-		this._positions = this._buildPositions(this.root);
+		const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
+		// Build initial window: eagerly load up to eagerBlockCount blocks from top
+		this._positions = [];
+		this._blockIndex = new Map();
+		this._blockOrder = [];
+		this._prefixTextOffsets = [];
+		const blocks = this._getTopLevelBlocks();
+		const limit = Math.max(1, this.eagerBlockCount | 0);
+		let base = 0;
+		for (let i = 0; i < blocks.length && i < limit; i++) {
+			const b = blocks[i];
+			const news = this._collectPositionSlotsFor(b, base);
+			this._positions.push(...news);
+			this._blockIndex.set(b, { start: base, end: base + news.length, length: news.length });
+			this._blockOrder.push(b);
+			base += news.length;
+		}
+		// If no blocks matched (edge), fall back to full root walk for current window
+		if (this._positions.length === 0) {
+			this._positions = this._buildPositions(this.root);
+		}
+		this._rebuildPrefixTextOffsets();
 		this._positionsDirty = false;
+		this._rebuildCount += 1;
+		if (t0) this._lastBuildMs = (performance.now() - t0);
+		this._windowGen += 1;
+		this._enforceMemoryCap();
 		return this._positions;
 	}
 
@@ -210,9 +426,20 @@ class TextAdapter {
 	// Method: ensurePositions
 	// Ensures that the positions array is built and up-to-date.
 	ensurePositions() {
+		this._ensureCount += 1;
 		if (this._positionsDirty) {
 			this.rebuildPositions();
 		}
+		return this._positions;
+	}
+
+	// Method: ensureIndex
+	// Ensures the window covers at least up to `index` (expands eagerly if needed).
+	ensureIndex(index) {
+		this.ensurePositions();
+		const want = Math.max(0, Number.isFinite(index) ? (index | 0) : 0);
+		if (want < this._positions.length) return this._positions;
+		this._expandWindowToCoverIndex(want);
 		return this._positions;
 	}
 
@@ -229,6 +456,80 @@ class TextAdapter {
 		return this.ensurePositions();
 	}
 
+	// Method: _scheduleRebuild
+	// Coalesces invalidations and rebuilds on next rAF.
+	_scheduleRebuild() {
+		if (this._rebuildScheduled) return;
+		this._rebuildScheduled = true;
+		this._rebuildRafId = (typeof requestAnimationFrame === "function")
+			? requestAnimationFrame(() => {
+				this._rebuildScheduled = false;
+				this._rebuildRafId = 0;
+				if (this._positionsDirty) {
+					this.rebuildPositions();
+				}
+			})
+			: 0;
+	}
+
+	// Method: _rebuildWindowStats
+	// Updates lightweight stats after a rebuild.
+	_rebuildWindowStats() {
+		// positionsLength and window info are derived on demand via getters below
+	}
+
+	// Method: _scheduleIdleExpand
+	// Schedules a best-effort expansion of the window using idle time (rIC or timeout).
+	_scheduleIdleExpand() {
+		if (this._idleScheduled) return;
+		this._idleScheduled = true;
+		const doExpand = () => {
+			this._idleScheduled = false;
+			try {
+				const blocks = this._getTopLevelBlocks();
+				const have = new Set(this._blockOrder);
+				let added = 0;
+				const budget = Math.max(1, this.eagerBlockCount | 0);
+				for (const b of blocks) {
+					if (have.has(b)) continue;
+					const start = this._positions.length;
+					const news = this._collectPositionSlotsFor(b, start);
+					this._positions.push(...news);
+					this._blockIndex.set(b, { start, end: this._positions.length, length: news.length });
+					this._blockOrder.push(b);
+					this._rebuildPrefixTextOffsetsForAppended(start);
+					have.add(b);
+					added++;
+					if (added >= budget) break;
+				}
+				if (added > 0) {
+					this._windowGen += 1;
+					this._enforceMemoryCap();
+				}
+			} catch {}
+		};
+		if (typeof requestIdleCallback === "function") {
+			requestIdleCallback(() => doExpand(), { timeout: 1200 });
+		} else {
+			setTimeout(doExpand, 0);
+		}
+	}
+
+	// Debug/stats accessors (instrumentation)
+	get stats() {
+		return {
+			rebuildCount: this._rebuildCount,
+			ensureCount: this._ensureCount,
+			bcrCount: this._bcrCount,
+			lastBuildMs: this._lastBuildMs,
+			positionsLength: this._positions.length,
+			windowGen: this._windowGen,
+			blockCount: this._blockOrder.length,
+			eagerBlockCount: this.eagerBlockCount,
+			maxCacheBytes: this.maxCacheBytes,
+		};
+	}
+
 	// ----------------------------------------------------------------------------
 	//
 	// POSITION ACCESS
@@ -238,23 +539,28 @@ class TextAdapter {
 	// Method: pointAt
 	// Gets the text point at the specified position `index`.
 	pointAt(index) {
-		const position = this.ensurePositions()[index];
+		const want = Math.max(0, Number.isFinite(index) ? (index | 0) : 0);
+		this.ensureIndex(want);
+		const position = this._positions[want];
 		return position?.point ?? null;
 	}
 
 	// Method: positionSlotAt
 	// Gets the complete position slot info at the specified `index`.
 	positionSlotAt(index) {
-		return this.ensurePositions()[index] ?? null;
+		const want = Math.max(0, Number.isFinite(index) ? (index | 0) : 0);
+		this.ensureIndex(want);
+		return this._positions[want] ?? null;
 	}
 
 	// Method: indexOfPoint
 	// Finds the slot index matching the specified `point`.
+	// Expands window best-effort when not found in current window.
 	indexOfPoint(point) {
 		if (!point?.node) {
 			return -1;
 		}
-		const positions = this.ensurePositions();
+		let positions = this.ensurePositions();
 		for (let i = 0; i < positions.length; i += 1) {
 			const candidate = positions[i]?.point;
 			if (
@@ -262,6 +568,17 @@ class TextAdapter {
 				candidate.offset === point.offset
 			) {
 				return i;
+			}
+		}
+		// Try to expand to cover this point's block and search again
+		const expanded = this._ensureBlockForPoint(point);
+		if (expanded) {
+			positions = this._positions;
+			for (let i = 0; i < positions.length; i += 1) {
+				const candidate = positions[i]?.point;
+				if (candidate?.node === point.node && candidate.offset === point.offset) {
+					return i;
+				}
 			}
 		}
 		return -1;
@@ -360,6 +677,7 @@ class TextAdapter {
 			range.setStart(point.node, point.offset);
 			range.collapse(true);
 			const rect = range.getBoundingClientRect();
+			this._bcrCount += 1;
 			if (rect.width !== 0 || rect.height !== 0) {
 				return { index, rect };
 			}
@@ -368,6 +686,7 @@ class TextAdapter {
 				const previousSibling = point.node.childNodes[point.offset - 1] ?? null;
 				const sibling = nextSibling ?? previousSibling;
 				const siblingRect = sibling?.getBoundingClientRect?.();
+				if (siblingRect) this._bcrCount += 1;
 				if (siblingRect && (siblingRect.width !== 0 || siblingRect.height !== 0)) {
 					return {
 						index,
@@ -378,6 +697,7 @@ class TextAdapter {
 					};
 				}
 				const nodeRect = point.node.getBoundingClientRect();
+				this._bcrCount += 1;
 				if (nodeRect.width !== 0 || nodeRect.height !== 0) {
 					return { index, rect: this._caretRectFromRect(nodeRect) };
 				}
@@ -476,13 +796,14 @@ class TextAdapter {
 	}
 
 	// Method: clampIndex
-	// Clamps the given `index` to a valid range within positions list.
+	// Clamps the given `index` to a valid range within positions list (window length acceptable).
+	// Expands window to cover requested index so that "end" and far numeric offsets work.
 	clampIndex(index) {
-		this.ensurePositions();
+		const value = Number.isFinite(index) ? (index | 0) : 0;
+		this.ensureIndex(value);
 		if (this._positions.length === 0) {
 			return 0;
 		}
-		const value = Number.isFinite(index) ? index : 0;
 		return Math.max(0, Math.min(value, this._positions.length - 1));
 	}
 
@@ -550,7 +871,7 @@ class TextAdapter {
 	// Method: indexFromLineMove
 	// Computes the best target index when moving cursor up or down from `index`.
 	indexFromLineMove(index, direction, desiredX) {
-		this.ensurePositions();
+		this.ensureIndex(index);
 		const clamped = this.clampIndex(index);
 		const current = this.visualPositionAt(clamped);
 		if (!current) {
@@ -648,9 +969,14 @@ class TextAdapter {
 
 	// Method: textOffsetAtIndex
 	// Computes the linear text offset inside the document corresponding to `index`.
+	// Uses block prefix cache (cumulative grapheme counts at each slot) for speed.
 	textOffsetAtIndex(index) {
-		this.ensurePositions();
+		this.ensureIndex(index);
 		const clamped = this.clampIndex(index);
+		if (this._prefixTextOffsets && this._prefixTextOffsets.length > clamped) {
+			return this._prefixTextOffsets[clamped] || 0;
+		}
+		// Fallback precise path (full walk)
 		const target = this._positions[clamped]?.point;
 		if (!target) {
 			return 0;

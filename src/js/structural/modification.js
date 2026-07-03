@@ -409,6 +409,7 @@ class Modification {
 	_restoreCursor() {
 		this.text.refresh();
 
+		this.text.ensurePositions();
 		if (this._savedWrapper) {
 			const bounds = this._wrapperBounds(this._savedWrapper);
 			if (bounds) {
@@ -447,6 +448,7 @@ class Modification {
 	// Method: _wrapperBounds
 	// Internal helper to compute start and end indices of text enclosed in wrapper element.
 	_wrapperBounds(wrapper) {
+		this.text.ensurePositions();
 		const positions = this.text.positions();
 		let outerStart = -1;
 		let outerEnd = -1;

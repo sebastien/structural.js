@@ -353,6 +353,7 @@ class RichText {
 		}));
 		const startPoint = this.editor.text.pointAtOffsetWithin(node, 0, "forward");
 		const endPoint = this.editor.text.pointAtOffsetWithin(node, endOffset, "backward");
+		// indexOfPoint expands window as needed
 		const start = startPoint ? this.editor.text.indexOfPoint(startPoint) : -1;
 		const end = endPoint ? this.editor.text.indexOfPoint(endPoint) : -1;
 		if (start < 0 || end < 0 || start === end) {

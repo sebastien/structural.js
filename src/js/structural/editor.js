@@ -569,6 +569,8 @@ class EditorSession {
 	// Method: snapshotSelection
 	// Records a serializable snapshot of the current cursor selection state.
 	snapshotSelection() {
+		// ensure current window before snapshot
+		this.text.ensurePositions();
 		return {
 			offset: this.cursor.offset ?? 0,
 			selectionKind: this.cursor.selectionKind,
@@ -769,6 +771,8 @@ class EditorTextInput {
 		this._onKeyUp = this.onKeyUp.bind(this);
 		this._onKeyDown = this.onKeyDown.bind(this);
 		this._onMouseDown = this.onMouseDown.bind(this);
+		this._onMouseUp = this.onMouseUp.bind(this);
+		this._onSelectionChange = this.onSelectionChange.bind(this);
 		let c = options.caret;
 		if (c === undefined) c = options.cursor?.caret;
 		if (typeof c === "string") c = { mode: c };
@@ -798,6 +802,8 @@ class EditorTextInput {
 			node.addEventListener("keyup", this._onKeyUp);
 			node.addEventListener("keydown", this._onKeyDown);
 			node.addEventListener("mousedown", this._onMouseDown);
+			node.addEventListener("mouseup", this._onMouseUp);
+			node.addEventListener("selectionchange", this._onSelectionChange);
 			this.editor = editor;
 		}
 		return this;
@@ -811,6 +817,8 @@ class EditorTextInput {
 			node.removeEventListener("keyup", this._onKeyUp);
 			node.removeEventListener("keydown", this._onKeyDown);
 			node.removeEventListener("mousedown", this._onMouseDown);
+			node.removeEventListener("mouseup", this._onMouseUp);
+			node.removeEventListener("selectionchange", this._onSelectionChange);
 		}
 		this.editor = null;
 		return this;
@@ -823,10 +831,36 @@ class EditorTextInput {
 		// swallowed before they perform browser-default actions.
 	}
 
+	// Method: onSelectionChange
+	// Syncs native browser selection back into the structural cursor so range replace works after mouse selection.
+	onSelectionChange() {
+		try {
+			const sel = window.getSelection && window.getSelection();
+			if (sel && sel.rangeCount > 0) {
+				const r = sel.getRangeAt(0);
+				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
+					this.editor.selection && this.editor.selection.syncFromNative(this.editor.root, this.session);
+				}
+			}
+		} catch (_) {}
+	}
+
 	// Method: onKeyDown
 	// Handles key presses translating arrows, deletes, letters to cursor calls.
 	onKeyDown(event) {
 		if (this.editor?.handleKeyEvent(event, this.session)) return;
+
+		// Ensure structural selection/caret matches any native selection (e.g. mouse select then type/delete)
+		// so that range replace (override) works.
+		try {
+			const sel = window.getSelection && window.getSelection();
+			if (sel && sel.rangeCount > 0) {
+				const r = sel.getRangeAt(0);
+				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
+					this.editor.selection && this.editor.selection.syncFromNative(this.editor.root, this.session);
+				}
+			}
+		} catch (_) {}
 
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
 
@@ -872,6 +906,20 @@ class EditorTextInput {
 				break;
 		}
 		if (handled) event.preventDefault();
+	}
+
+	// Method: onMouseUp
+	// After a mouse gesture, sync native selection back to structural so range replace works.
+	onMouseUp(_event) {
+		try {
+			const sel = window.getSelection && window.getSelection();
+			if (sel && sel.rangeCount > 0) {
+				const r = sel.getRangeAt(0);
+				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
+					this.editor.selection && this.editor.selection.syncFromNative(this.editor.root, this.session);
+				}
+			}
+		} catch (_) {}
 	}
 
 	// Method: onMouseDown
