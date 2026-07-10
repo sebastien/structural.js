@@ -578,6 +578,14 @@ class Cursor {
 			skipBoundaryCollapse: true,
 			skipFormattingWhitespace: true,
 		});
+		// Force native selection to our new structural position. This prevents stale
+		// native ranges (from click or prior sync) from causing syncFromNative to jump
+		// the cursor after the DOM mutation + rebuild.
+		try {
+			const sel = this.editor && this.editor.selection;
+			const active = this.editor ? this.editor.activeSession() : null;
+			if (sel && typeof sel.syncToNative === 'function') sel.syncToNative(active);
+		} catch (_) {}
 	}
 
 	// Method: delete
@@ -604,6 +612,12 @@ class Cursor {
 			skipBoundaryCollapse: true,
 			skipFormattingWhitespace: true,
 		});
+		// Force native selection to our new structural position (see backspace).
+		try {
+			const sel = this.editor && this.editor.selection;
+			const active = this.editor ? this.editor.activeSession() : null;
+			if (sel && typeof sel.syncToNative === 'function') sel.syncToNative(active);
+		} catch (_) {}
 	}
 
 	// ----------------------------------------------------------------------------

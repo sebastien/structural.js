@@ -1080,6 +1080,14 @@ class TextAdapter {
 			context.deleteBackward.node.remove();
 			this.invalidatePositions();
 			this.ensurePositions();
+			// Prefer re-resolving a safe nearby position; fall back to arithmetic.
+			try {
+				const positions = this.positions();
+				if (positions.length > 0) {
+					const probe = Math.max(0, Math.min(clamped - 1, positions.length - 1));
+					return { index: probe };
+				}
+			} catch (_) {}
 			return { index: this.clampIndex(clamped - 1) };
 		}
 		if (context?.point?.node?.nodeType === Node.ELEMENT_NODE && context.boundary?.leftNode?.nodeType === Node.TEXT_NODE) {
@@ -1091,6 +1099,10 @@ class TextAdapter {
 				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
 				this.invalidatePositions();
 				this.ensurePositions();
+				// Re-resolve the caret to the removal site in the (now shorter) text.
+				const afterPoint = { node, offset: startOffset };
+				const resolved = this.indexOfPoint(afterPoint);
+				if (resolved >= 0) return { index: resolved };
 				return { index: this.clampIndex(clamped - 1) };
 			}
 		}
@@ -1104,6 +1116,10 @@ class TextAdapter {
 			point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
 			this.invalidatePositions();
 			this.ensurePositions();
+			// Re-resolve via the post-edit DOM point for robustness across windowed rebuilds.
+			const afterPoint = { node: point.node, offset: startOffset };
+			const resolved = this.indexOfPoint(afterPoint);
+			if (resolved >= 0) return { index: resolved };
 			return { index: this.clampIndex(clamped - 1) };
 		}
 		this.deleteAt(this.textOffsetAtIndex(clamped) - 1, 1);
@@ -1121,6 +1137,13 @@ class TextAdapter {
 			context.deleteForward.node.remove();
 			this.invalidatePositions();
 			this.ensurePositions();
+			try {
+				const positions = this.positions();
+				if (positions.length > 0) {
+					const probe = Math.max(0, Math.min(clamped, positions.length - 1));
+					return { index: probe };
+				}
+			} catch (_) {}
 			return { index: this.clampIndex(clamped) };
 		}
 		if (context?.point?.node?.nodeType === Node.ELEMENT_NODE && context.boundary?.rightNode?.nodeType === Node.TEXT_NODE) {
@@ -1132,6 +1155,9 @@ class TextAdapter {
 				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
 				this.invalidatePositions();
 				this.ensurePositions();
+				const afterPoint = { node, offset: startOffset };
+				const resolved = this.indexOfPoint(afterPoint);
+				if (resolved >= 0) return { index: resolved };
 				return { index: this.clampIndex(clamped) };
 			}
 		}
@@ -1145,6 +1171,9 @@ class TextAdapter {
 			point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
 			this.invalidatePositions();
 			this.ensurePositions();
+			const afterPoint = { node: point.node, offset: startOffset };
+			const resolved = this.indexOfPoint(afterPoint);
+			if (resolved >= 0) return { index: resolved };
 			return { index: this.clampIndex(clamped) };
 		}
 		this.deleteAt(this.textOffsetAtIndex(clamped), 1);
