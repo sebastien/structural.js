@@ -655,6 +655,21 @@ class EditorSelectionController {
 		return true;
 	}
 
+	// Method: resolveOffsetFromPoint
+	// Resolves a structural text offset from viewport coordinates without moving the cursor or syncing native selection.
+	resolveOffsetFromPoint(root, x, y, session = null) {
+		if (!root?.isConnected) return null;
+		const nativePoint = this._nativeCaretPointFromClientPoint(x, y);
+		if (nativePoint && this._pointWithin(root, nativePoint.node)) {
+			this.editor.text.ensurePositions();
+			const index = this.editor.text.indexOfPoint(nativePoint);
+			return index >= 0 ? index : null;
+		}
+		const active = this.editor.activeSession(session);
+		const offset = active.cursor.offsetFromPointIn(root, x, y);
+		return offset;
+	}
+
 	// Method: placeCaretFromPoint
 	// Places the caret within subtree `root` using viewport coordinates `x` and `y`.
 	placeCaretFromPoint(root, x, y, session = null, options = {}) {
@@ -664,15 +679,16 @@ class EditorSelectionController {
 			return this.setCaret(nativePoint.node, nativePoint.offset, session);
 		}
 
-		const active = this.editor.activeSession(session);
-		const offset = active.cursor.offsetFromPointIn(root, x, y);
+		const offset = this.resolveOffsetFromPoint(root, x, y, session);
 		if (offset !== null) {
+			const active = this.editor.activeSession(session);
 			active.cursor._desiredX = null;
 			active.cursor.moveTo(offset);
 			this._syncSessionBlock(active);
 			return this.syncToNative(active);
 		}
 
+		const active = this.editor.activeSession(session);
 		if (options.fallback === "none") {
 			return false;
 		}

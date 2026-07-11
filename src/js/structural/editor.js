@@ -801,8 +801,11 @@ class EditorTextInput {
 		this._onKeyUp = this.onKeyUp.bind(this);
 		this._onKeyDown = this.onKeyDown.bind(this);
 		this._onMouseDown = this.onMouseDown.bind(this);
+		this._onMouseMove = this.onMouseMove.bind(this);
 		this._onMouseUp = this.onMouseUp.bind(this);
 		this._onSelectionChange = this.onSelectionChange.bind(this);
+		this._dragAnchor = null;
+		this._dragFocus = null;
 		let c = options.caret;
 		if (c === undefined) c = options.cursor?.caret;
 		if (typeof c === "string") c = { mode: c };
@@ -832,6 +835,7 @@ class EditorTextInput {
 			node.addEventListener("keyup", this._onKeyUp);
 			node.addEventListener("keydown", this._onKeyDown);
 			node.addEventListener("mousedown", this._onMouseDown);
+			node.addEventListener("mousemove", this._onMouseMove);
 			node.addEventListener("mouseup", this._onMouseUp);
 			node.addEventListener("selectionchange", this._onSelectionChange);
 			this.editor = editor;
@@ -847,10 +851,13 @@ class EditorTextInput {
 			node.removeEventListener("keyup", this._onKeyUp);
 			node.removeEventListener("keydown", this._onKeyDown);
 			node.removeEventListener("mousedown", this._onMouseDown);
+			node.removeEventListener("mousemove", this._onMouseMove);
 			node.removeEventListener("mouseup", this._onMouseUp);
 			node.removeEventListener("selectionchange", this._onSelectionChange);
 		}
 		this.editor = null;
+		this._dragAnchor = null;
+		this._dragFocus = null;
 		return this;
 	}
 
@@ -950,10 +957,41 @@ class EditorTextInput {
 				}
 			}
 		} catch (_) {}
+		this._dragAnchor = null;
+		this._dragFocus = null;
+	}
+
+	// Method: onMouseMove
+	// While the mouse button is held, extend the selection from the drag anchor.
+	// This provides reliable drag-to-select (including across block boundaries)
+	// even when using virtual selection mode (which clears native ranges).
+	onMouseMove(event) {
+		if (!event || event.buttons === 0 || this._dragAnchor == null) {
+			if (this._dragAnchor != null && event && event.buttons === 0) {
+				this._dragAnchor = null;
+				this._dragFocus = null;
+			}
+			return;
+		}
+		const root = this.editor && this.editor.root;
+		if (!root) return;
+		let focus = null;
+		if (this.editor.selection && typeof this.editor.selection.resolveOffsetFromPoint === "function") {
+			focus = this.editor.selection.resolveOffsetFromPoint(root, event.clientX, event.clientY, this.session);
+		} else if (this.session && this.session.cursor) {
+			focus = this.session.cursor.offsetFromPointIn(root, event.clientX, event.clientY);
+		}
+		if (focus == null || focus === this._dragFocus) return;
+		this._dragFocus = focus;
+		// Drive the selection structurally. This updates the virtual (or native) selection
+		// directly from pointer coords, without depending on the browser maintaining a live
+		// native range during the drag.
+		this.editor.selection.select(this._dragAnchor, focus, this.session);
 	}
 
 	// Method: onMouseDown
 	// Evaluates pointer coordinate clicks to accurately place caret or select blocks.
+	// Also initiates drag selection tracking (and shift-click extend).
 	onMouseDown(event) {
 		const targetElement = event.target?.nodeType === Node.ELEMENT_NODE
 			? event.target
@@ -964,6 +1002,8 @@ class EditorTextInput {
 			const rect = atom.getBoundingClientRect();
 			const side = event.clientX > rect.left + rect.width / 2 ? "after" : "before";
 			this.cursor.selectAtom(atom, side);
+			this._dragAnchor = null;
+			this._dragFocus = null;
 			return;
 		}
 		const container = targetElement?.closest(".container, .C");
@@ -975,6 +1015,8 @@ class EditorTextInput {
 				const side =
 					event.clientX > rect.left + rect.width / 2 ? "after" : "before";
 				this.cursor.selectContainer(container, side);
+				this._dragAnchor = null;
+				this._dragFocus = null;
 				return;
 			}
 			if (!this.editor.selection.placeCaretFromPoint(container, event.clientX, event.clientY, this.session, {
@@ -986,10 +1028,32 @@ class EditorTextInput {
 					event.clientX > rect.left + rect.width / 2 ? "after" : "before";
 				this.cursor.selectContainer(container, side);
 			}
+			this._dragAnchor = null;
+			this._dragFocus = null;
 			return;
 		}
+
+		const root = this.editor.root;
+		const focus = this.editor.selection && typeof this.editor.selection.resolveOffsetFromPoint === "function"
+			? this.editor.selection.resolveOffsetFromPoint(root, event.clientX, event.clientY, this.session)
+			: (this.session?.cursor?.offsetFromPointIn?.(root, event.clientX, event.clientY) ?? null);
+
+		if (event.shiftKey && focus != null) {
+			// Shift-click / shift-mousedown: extend from current anchor instead of resetting caret
+			const active = this.editor.activeSession(this.session);
+			const cur = active.cursor;
+			const anchor = cur.selection && cur.selection.isActive ? cur.selection.anchorOffset : (cur.offset ?? focus);
+			this.editor.selection.select(anchor, focus, this.session);
+			this._dragAnchor = anchor;
+			this._dragFocus = focus;
+			return;
+		}
+
+		// Normal click: place caret (this will be the drag anchor if user starts dragging)
 		// FIXME: Not great to have this here
-		this.editor.selection.placeCaretFromPoint(this.editor.root, event.clientX, event.clientY, this.session);
+		this.editor.selection.placeCaretFromPoint(root, event.clientX, event.clientY, this.session);
+		const active = this.editor.activeSession(this.session);
+		this._dragAnchor = active && active.cursor ? active.cursor.offset : null;
 	}
 }
 
