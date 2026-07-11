@@ -112,6 +112,7 @@ class SelectionOverlay {
 				block.style.top = `${rect.top + window.scrollY}px`;
 				block.style.width = `${rect.width}px`;
 				block.style.height = `${rect.height}px`;
+				block.style.boxSizing = "border-box";
 				block.style.pointerEvents = "none";
 				// default fallback only if no style provided
 				if (!cfg.direct && !cfg.byKey) {

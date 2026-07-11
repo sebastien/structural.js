@@ -6,10 +6,10 @@
 // Module: editor
 // Implements core editor orchestration, schemas, commands, transactions, and event listeners.
 
-import { TextAdapter } from "./text.js";
 import { Cursor as EditorCursor } from "./cursor.js";
 import { EditorRangeController } from "./range.js";
 import { EditorSelectionController } from "./selection.js";
+import { TextAdapter } from "./text.js";
 
 // Function: editorKeymap
 // Returns the built-in editing keys. Use this helper to compose custom maps.
@@ -58,14 +58,18 @@ class EditorSchema {
 		this.rules = rules;
 		this.options = options;
 		/* atoms: list of opaque tags (e.g. "aos-ref") preserved by normalizer and skipped in positions */
-		this._atomTags = new Set((options.atoms || []).map((t) => (typeof t === "string" ? t.toLowerCase() : t)).filter(Boolean));
+		this._atomTags = new Set(
+			(options.atoms || [])
+				.map((t) => (typeof t === "string" ? t.toLowerCase() : t))
+				.filter(Boolean),
+		);
 	}
 
 	// Method: rule
 	// Gets the rule associated with a specific tag name or DOM node.
 	rule(nodeOrTag) {
 		const tag = this.tag(nodeOrTag);
-		return tag ? this.rules[tag] ?? null : null;
+		return tag ? (this.rules[tag] ?? null) : null;
 	}
 
 	// Method: renderHint
@@ -154,7 +158,7 @@ class EditorSchema {
 		const tag = this.tag(nodeOrTag);
 		return {
 			...(this.options.normalize ?? {}),
-			...(tag ? this.rule(tag)?.normalize ?? {} : {}),
+			...(tag ? (this.rule(tag)?.normalize ?? {}) : {}),
 		};
 	}
 
@@ -439,7 +443,7 @@ class EditorNormalizer {
 		const known = !!this.schema.rule(childTag);
 		const action = known
 			? this.schema.normalizeAction(parentTag, "invalidChild", "preserve")
-			: this.schema.options.normalize?.unknownElement ?? "unwrap";
+			: (this.schema.options.normalize?.unknownElement ?? "unwrap");
 		this.applyInvalidAction(parent, child, action, transaction);
 	}
 
@@ -478,7 +482,11 @@ class EditorNormalizer {
 			const wrapper = document.createElement(this.schema.defaultChild(this.schemaTag(parent)));
 			parent.insertBefore(wrapper, child);
 			wrapper.appendChild(child);
-			transaction.steps.push({ type: "wrapNode", tag: this.schema.tag(child), wrapper: wrapper.tagName.toLowerCase() });
+			transaction.steps.push({
+				type: "wrapNode",
+				tag: this.schema.tag(child),
+				wrapper: wrapper.tagName.toLowerCase(),
+			});
 		} else if (action === "lift") {
 			parent.parentNode?.insertBefore(child, parent.nextSibling);
 			transaction.steps.push({ type: "liftNode", tag: this.schema.tag(child) });
@@ -501,8 +509,8 @@ class EditorNormalizer {
 			this.normalizeEmpty(child, transaction);
 			transaction.steps.push({ type: "fillEmpty", tag });
 		} else if (action === "placeholder") {
-			const placeholders = [...node.childNodes].filter(child =>
-				child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br"
+			const placeholders = [...node.childNodes].filter(
+				(child) => child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br",
 			);
 			if (placeholders.length === 0) {
 				node.appendChild(document.createElement("br"));
@@ -525,9 +533,10 @@ class EditorNormalizer {
 	// Method: isEmpty
 	// Checks if the node contains only empty text or placeholder line breaks.
 	isEmpty(node) {
-		return [...node.childNodes].every(child =>
-			(child.nodeType === Node.TEXT_NODE && child.data.length === 0) ||
-			(child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br")
+		return [...node.childNodes].every(
+			(child) =>
+				(child.nodeType === Node.TEXT_NODE && child.data.length === 0) ||
+				(child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br"),
 		);
 	}
 
@@ -552,11 +561,16 @@ class EditorSession {
 		this.id = id;
 		this.actor = options.actor ?? id;
 		this.mode = options.mode ?? "insert";
-		const caretOpt = options.caret !== undefined ? options.caret : (options.cursor && options.cursor.caret);
-		const selOpt = options.selection !== undefined ? options.selection : (options.cursor && options.cursor.selection);
-		const wantNativeCaret = (caretOpt === "native") || (caretOpt && caretOpt.mode === "native");
-		const wantNativeSel = (selOpt === "native") || (selOpt && selOpt.mode === "native");
-		this.nativeSelection = options.nativeSelection ?? ((wantNativeCaret || wantNativeSel) ? "sync" : "none");
+		const caretOpt =
+			options.caret !== undefined ? options.caret : options.cursor && options.cursor.caret;
+		const selOpt =
+			options.selection !== undefined
+				? options.selection
+				: options.cursor && options.cursor.selection;
+		const wantNativeCaret = caretOpt === "native" || (caretOpt && caretOpt.mode === "native");
+		const wantNativeSel = selOpt === "native" || (selOpt && selOpt.mode === "native");
+		this.nativeSelection =
+			options.nativeSelection ?? (wantNativeCaret || wantNativeSel ? "sync" : "none");
 		this.currentBlock = null;
 		const cursorOpts = { ...(options.cursor || {}) };
 		if (options.caret !== undefined) {
@@ -570,10 +584,14 @@ class EditorSession {
 			cursorOpts.selection = options.cursor.selection;
 		}
 		// also allow session-level caret/selection to be picked up by Cursor
-		if (options.caret !== undefined && cursorOpts.caret === undefined) cursorOpts.caret = options.caret;
-		if (options.selection !== undefined && cursorOpts.selection === undefined) cursorOpts.selection = options.selection;
+		if (options.caret !== undefined && cursorOpts.caret === undefined)
+			cursorOpts.caret = options.caret;
+		if (options.selection !== undefined && cursorOpts.selection === undefined)
+			cursorOpts.selection = options.selection;
 		this.cursor = new EditorCursor(this, cursorOpts);
-		this.classes = options.classes ? new EditorClassController(this, options.classes).attach() : null;
+		this.classes = options.classes
+			? new EditorClassController(this, options.classes).attach()
+			: null;
 	}
 
 	// Property: root
@@ -604,7 +622,9 @@ class EditorSession {
 		return {
 			offset: this.cursor.offset ?? 0,
 			selectionKind: this.cursor.selectionKind,
-			anchorOffset: this.cursor.anchor ? this.text.indexOfPoint({ node: this.cursor.anchor, offset: 0 }) : -1,
+			anchorOffset: this.cursor.anchor
+				? this.text.indexOfPoint({ node: this.cursor.anchor, offset: 0 })
+				: -1,
 		};
 	}
 
@@ -676,17 +696,18 @@ class EditorClassController {
 	// Method: className
 	// Resolves custom or standard class name for target status category.
 	className(key) {
-		return this.options[key] ?? key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
+		return this.options[key] ?? key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 	}
 
 	// Method: selector
 	// Resolves selection elements matching active block/inline tag names.
 	selector() {
 		const tracked = this.editor.schema?.tagsWithRenderHint("track", true)?.join(", ");
-		const selector = this.options.selector ?? [
-			this.editor.schema?.selector("block"),
-			this.editor.schema?.selector("inline"),
-		].filter(Boolean);
+		const selector =
+			this.options.selector ??
+			[this.editor.schema?.selector("block"), this.editor.schema?.selector("inline")].filter(
+				Boolean,
+			);
 		if (Array.isArray(selector)) {
 			return [...selector, tracked].filter(Boolean).join(", ");
 		}
@@ -739,7 +760,11 @@ class EditorClassController {
 		let range = null;
 		if (cursor.selectionKind === "range") range = cursor.selection.toDomRange();
 		const nativeSelection = window.getSelection();
-		if ((!range || range.collapsed) && nativeSelection?.rangeCount > 0 && !nativeSelection.isCollapsed) {
+		if (
+			(!range || range.collapsed) &&
+			nativeSelection?.rangeCount > 0 &&
+			!nativeSelection.isCollapsed
+		) {
 			const nativeRange = nativeSelection.getRangeAt(0);
 			if (this.rangeWithinEditor(nativeRange)) range = nativeRange;
 		}
@@ -750,8 +775,8 @@ class EditorClassController {
 			if (range.intersectsNode(tracked)) candidates.push(tracked);
 		}
 		for (const tracked of candidates) {
-			const hasIntersectingChild = candidates.some(candidate =>
-				candidate !== tracked && tracked.contains(candidate)
+			const hasIntersectingChild = candidates.some(
+				(candidate) => candidate !== tracked && tracked.contains(candidate),
 			);
 			if (!hasIntersectingChild) nodes.add(tracked);
 		}
@@ -812,15 +837,18 @@ class EditorTextInput {
 		let s = options.selection;
 		if (s === undefined) s = options.cursor?.selection;
 		// propagate native mode hints to nativeSelection default
-		const wantNative = (c === "native") || (c && c.mode === "native") || (s === "native") || (s && s.mode === "native");
-		const ns = options.nativeSelection ?? (wantNative ? "sync" : "sync");
-		this.session = options.session ?? editor.session("local", {
-			actor: "local",
-			nativeSelection: ns,
-			caret: c,
-			selection: s,
-			cursor: options.cursor,
-		});
+		const wantNative =
+			c === "native" || (c && c.mode === "native") || s === "native" || (s && s.mode === "native");
+		const ns = options.nativeSelection ?? (wantNative ? "sync" : "none");
+		this.session =
+			options.session ??
+			editor.session("local", {
+				actor: "local",
+				nativeSelection: ns,
+				caret: c,
+				selection: s,
+				cursor: options.cursor,
+			});
 		this.cursor = this.session.cursor;
 		this.editor = null;
 		this.bind(editor);
@@ -876,7 +904,8 @@ class EditorTextInput {
 			if (sel && sel.rangeCount > 0) {
 				const r = sel.getRangeAt(0);
 				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
-					this.editor.selection && this.editor.selection.syncFromNative(this.editor.root, this.session);
+					this.editor.selection &&
+						this.editor.selection.syncFromNative(this.editor.root, this.session);
 				}
 			}
 		} catch (_) {}
@@ -894,7 +923,8 @@ class EditorTextInput {
 			if (sel && sel.rangeCount > 0) {
 				const r = sel.getRangeAt(0);
 				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
-					this.editor.selection && this.editor.selection.syncFromNative(this.editor.root, this.session);
+					this.editor.selection &&
+						this.editor.selection.syncFromNative(this.editor.root, this.session);
 				}
 			}
 		} catch (_) {}
@@ -925,13 +955,28 @@ class EditorTextInput {
 			case "Return":
 				// Swallow newline insertion for now.
 				break;
+			case " ":
+				{
+					const shouldInsert = this.editor.shouldInsertText?.(event.key, this.session) !== false;
+					if (shouldInsert) {
+						this.editor.removePlaceholderInCurrentBlock?.(this.session);
+						this.cursor.insertText(event.key);
+					} else if (this.cursor?.selectionKind === "caret") {
+						const ctx = this.cursor.getContext?.();
+						const pointNode = ctx?.point?.node;
+						if (
+							!this.editor?.text?.isWhitespacePreserved?.(pointNode) &&
+							/\s/.test(ctx?.char?.after ?? "")
+						) {
+							// Advance caret past the existing space instead of a silent no-op (no double space inserted).
+							this.cursor.right();
+						}
+						// If caret is already after the space, swallow — position is already post-space.
+					}
+				}
+				break;
 			default:
-				if (
-					event.key.length === 1 &&
-					!event.metaKey &&
-					!event.ctrlKey &&
-					!event.altKey
-				) {
+				if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
 					const shouldInsert = this.editor.shouldInsertText?.(event.key, this.session) !== false;
 					if (shouldInsert) {
 						this.editor.removePlaceholderInCurrentBlock?.(this.session);
@@ -953,7 +998,8 @@ class EditorTextInput {
 			if (sel && sel.rangeCount > 0) {
 				const r = sel.getRangeAt(0);
 				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
-					this.editor.selection && this.editor.selection.syncFromNative(this.editor.root, this.session);
+					this.editor.selection &&
+						this.editor.selection.syncFromNative(this.editor.root, this.session);
 				}
 			}
 		} catch (_) {}
@@ -976,8 +1022,16 @@ class EditorTextInput {
 		const root = this.editor && this.editor.root;
 		if (!root) return;
 		let focus = null;
-		if (this.editor.selection && typeof this.editor.selection.resolveOffsetFromPoint === "function") {
-			focus = this.editor.selection.resolveOffsetFromPoint(root, event.clientX, event.clientY, this.session);
+		if (
+			this.editor.selection &&
+			typeof this.editor.selection.resolveOffsetFromPoint === "function"
+		) {
+			focus = this.editor.selection.resolveOffsetFromPoint(
+				root,
+				event.clientX,
+				event.clientY,
+				this.session,
+			);
 		} else if (this.session && this.session.cursor) {
 			focus = this.session.cursor.offsetFromPointIn(root, event.clientX, event.clientY);
 		}
@@ -993,9 +1047,8 @@ class EditorTextInput {
 	// Evaluates pointer coordinate clicks to accurately place caret or select blocks.
 	// Also initiates drag selection tracking (and shift-click extend).
 	onMouseDown(event) {
-		const targetElement = event.target?.nodeType === Node.ELEMENT_NODE
-			? event.target
-			: event.target?.parentElement;
+		const targetElement =
+			event.target?.nodeType === Node.ELEMENT_NODE ? event.target : event.target?.parentElement;
 		const atom = targetElement?.closest(".atom, .atomic");
 		if (atom && this.editor?.text.isAtom(atom)) {
 			this.cursor._desiredX = null;
@@ -1012,20 +1065,26 @@ class EditorTextInput {
 			if (skipped && container.contains(skipped)) {
 				this.cursor._desiredX = null;
 				const rect = container.getBoundingClientRect();
-				const side =
-					event.clientX > rect.left + rect.width / 2 ? "after" : "before";
+				const side = event.clientX > rect.left + rect.width / 2 ? "after" : "before";
 				this.cursor.selectContainer(container, side);
 				this._dragAnchor = null;
 				this._dragFocus = null;
 				return;
 			}
-			if (!this.editor.selection.placeCaretFromPoint(container, event.clientX, event.clientY, this.session, {
-				fallback: "none",
-			})) {
+			if (
+				!this.editor.selection.placeCaretFromPoint(
+					container,
+					event.clientX,
+					event.clientY,
+					this.session,
+					{
+						fallback: "none",
+					},
+				)
+			) {
 				this.cursor._desiredX = null;
 				const rect = container.getBoundingClientRect();
-				const side =
-					event.clientX > rect.left + rect.width / 2 ? "after" : "before";
+				const side = event.clientX > rect.left + rect.width / 2 ? "after" : "before";
 				this.cursor.selectContainer(container, side);
 			}
 			this._dragAnchor = null;
@@ -1034,15 +1093,24 @@ class EditorTextInput {
 		}
 
 		const root = this.editor.root;
-		const focus = this.editor.selection && typeof this.editor.selection.resolveOffsetFromPoint === "function"
-			? this.editor.selection.resolveOffsetFromPoint(root, event.clientX, event.clientY, this.session)
-			: (this.session?.cursor?.offsetFromPointIn?.(root, event.clientX, event.clientY) ?? null);
+		const focus =
+			this.editor.selection && typeof this.editor.selection.resolveOffsetFromPoint === "function"
+				? this.editor.selection.resolveOffsetFromPoint(
+						root,
+						event.clientX,
+						event.clientY,
+						this.session,
+					)
+				: (this.session?.cursor?.offsetFromPointIn?.(root, event.clientX, event.clientY) ?? null);
 
 		if (event.shiftKey && focus != null) {
 			// Shift-click / shift-mousedown: extend from current anchor instead of resetting caret
 			const active = this.editor.activeSession(this.session);
 			const cur = active.cursor;
-			const anchor = cur.selection && cur.selection.isActive ? cur.selection.anchorOffset : (cur.offset ?? focus);
+			const anchor =
+				cur.selection && cur.selection.isActive
+					? cur.selection.anchorOffset
+					: (cur.offset ?? focus);
 			this.editor.selection.select(anchor, focus, this.session);
 			this._dragAnchor = anchor;
 			this._dragFocus = focus;
@@ -1065,9 +1133,10 @@ class Editor {
 	// Initializes and configures the parent Editor environment.
 	constructor(node, options = {}) {
 		this.root = node;
-		this.schema = options.schema instanceof EditorSchema
-			? options.schema
-			: new EditorSchema(options.schema ?? {});
+		this.schema =
+			options.schema instanceof EditorSchema
+				? options.schema
+				: new EditorSchema(options.schema ?? {});
 		this.normalizer = options.normalizer ?? new EditorNormalizer(this.schema);
 		// Custom maps override individual defaults without disabling unrelated editor keys.
 		this.keymap = editorKeymap(options.keymap ?? {});
@@ -1079,9 +1148,16 @@ class Editor {
 		this._currentBlock = null;
 		this.text = new TextAdapter(node, options.text).attach();
 		this.text._schema = this.schema;
+		const topC = options.caret !== undefined ? options.caret : options.cursor?.caret;
+		const topS = options.selection !== undefined ? options.selection : options.cursor?.selection;
+		const wantTopNative =
+			topC === "native" ||
+			(topC && topC.mode === "native") ||
+			topS === "native" ||
+			(topS && topS.mode === "native");
 		const sessionOpts = {
 			actor: "local",
-			nativeSelection: "sync",
+			nativeSelection: options.nativeSelection ?? (wantTopNative ? "sync" : "none"),
 			classes: options.classes,
 			cursor: options.cursor,
 		};
@@ -1107,11 +1183,20 @@ class Editor {
 				const cursor = session.cursor;
 				const extend = command.args.extend === true;
 				switch (command.args.direction) {
-					case "left": cursor.left(extend); break;
-					case "right": cursor.right(extend); break;
-					case "up": cursor.up(extend); break;
-					case "down": cursor.down(extend); break;
-					default: return false;
+					case "left":
+						cursor.left(extend);
+						break;
+					case "right":
+						cursor.right(extend);
+						break;
+					case "up":
+						cursor.up(extend);
+						break;
+					case "down":
+						cursor.down(extend);
+						break;
+					default:
+						return false;
 				}
 				return true;
 			},
@@ -1123,8 +1208,7 @@ class Editor {
 				this.selectStructuralScope(command.args.mode, session),
 			moveStructural: (command, { session }) =>
 				this.moveStructural(command.args.direction, command.args.extend === true, session),
-			moveTraversal: (command, { session }) =>
-				this.moveTraversal(command.args.direction, session),
+			moveTraversal: (command, { session }) => this.moveTraversal(command.args.direction, session),
 			collapseSelection: (_command, { session }) => {
 				const cursor = session.cursor;
 				cursor.moveTo(cursor.selection.isActive ? cursor.selection.focusOffset : cursor.offset);
@@ -1141,7 +1225,9 @@ class Editor {
 		});
 		this.installPlugins(options.plugins ?? []);
 		this.classes = this.localSession.classes;
-		this.input.cursor.moveTo(8);
+		// Do not force an initial cursor position here; callers (or first interaction)
+		// should place the caret at a valid/visible slot. A previous moveTo(8) was a
+		// debug leftover that caused bad initial state on small/empty documents.
 	}
 
 	// Method: structuralScopeNodes
@@ -1159,7 +1245,8 @@ class Editor {
 			scope = element.closest(selector);
 			if (!scope || !this.root.contains(scope)) scope = null;
 		} else {
-			while (element !== this.root && element.parentElement && element.parentElement !== this.root) element = element.parentElement;
+			while (element !== this.root && element.parentElement && element.parentElement !== this.root)
+				element = element.parentElement;
 			scope = element === this.root ? this.root : element;
 		}
 		if (!scope) scope = this.root;
@@ -1194,7 +1281,11 @@ class Editor {
 		const scopes = [];
 		for (const node of this.structuralScopeNodes(session)) {
 			const range = this.structuralRangeFor(node);
-			if (range && range.end > range.start && !scopes.some(scope => scope.start === range.start && scope.end === range.end)) {
+			if (
+				range &&
+				range.end > range.start &&
+				!scopes.some((scope) => scope.start === range.start && scope.end === range.end)
+			) {
 				scopes.push(range);
 			}
 		}
@@ -1202,27 +1293,54 @@ class Editor {
 	}
 
 	// Method: selectStructuralScope
-	// Expands to the next scope or contracts an existing scope one level.
+	// Selects the current block (innermost scope containing caret). If the
+	// current block is already exactly selected, expands (or contracts) to
+	// the adjacent scope. This matches the requested Ctrl-A behavior:
+	// "only select the current block and expand up if the current block is selected".
 	selectStructuralScope(mode = "expand", session = null) {
 		const active = this.activeSession(session);
 		const scopes = this.structuralScopes(active);
 		if (!scopes.length) return false;
-		// A text-only editor has only its root scope; preserve select-all semantics.
-		if (mode !== "contract" && scopes.length === 1 && this.structuralScopeNodes(active)[0] === this.root) {
-			const selected = active.cursor.select(0, this.text.clampIndex(0x7fffffff));
-			if (selected) this.selection.syncToNative(active);
-			return selected;
+
+		const pos = active.cursor.offset ?? 0;
+		// Find innermost scope containing the caret (scopes[0] is innermost)
+		let currentIdx = 0;
+		for (let i = 0; i < scopes.length; i += 1) {
+			const s = scopes[i];
+			if (pos >= s.start && pos <= s.end) {
+				currentIdx = i;
+				break;
+			}
 		}
-		const selected = active.cursor.selection.normalizedRange();
-		const current = scopes.findIndex(scope => scope.start === selected.start && scope.end === selected.end);
-		if (mode === "contract" && current === 0) {
-			active.cursor.moveTo(active.cursor.selection.focusOffset ?? active.cursor.offset);
+
+		const currentBlock = scopes[currentIdx];
+		const sel = active.cursor.selection.normalizedRange() || { start: pos, end: pos };
+		const exactlyCurrent = sel.start === currentBlock.start && sel.end === currentBlock.end;
+
+		if (mode === "contract") {
+			if (currentIdx === 0 || exactlyCurrent) {
+				// contract from current block → collapse inside it (or to focus)
+				active.cursor.moveTo(
+					active.cursor.selection.focusOffset ?? active.cursor.offset ?? currentBlock.start,
+				);
+				return this.selection.syncToNative(active);
+			}
+			// contract to previous (inner) scope
+			const target = scopes[currentIdx - 1];
+			this.selection.select(target.start, target.end, active);
 			return this.selection.syncToNative(active);
 		}
-		const index = mode === "contract"
-			? (current > 0 ? current - 1 : 0)
-			: (current >= 0 ? Math.min(current + 1, scopes.length - 1) : 0);
-		const target = scopes[index];
+
+		// expand mode (the common Ctrl-A case)
+		if (!exactlyCurrent) {
+			// First press (or selection not exactly the block): select the current block only
+			this.selection.select(currentBlock.start, currentBlock.end, active);
+			return this.selection.syncToNative(active);
+		}
+
+		// Already exactly the current block → expand up to parent scope
+		const nextIdx = Math.min(currentIdx + 1, scopes.length - 1);
+		const target = scopes[nextIdx];
 		this.selection.select(target.start, target.end, active);
 		return this.selection.syncToNative(active);
 	}
@@ -1237,7 +1355,7 @@ class Editor {
 		}
 		const selector = tags.join(", ");
 		const all = [...this.root.querySelectorAll(selector)];
-		return all.filter(node => !node.querySelector(selector));
+		return all.filter((node) => !node.querySelector(selector));
 	}
 
 	// Method: moveStructural
@@ -1248,20 +1366,26 @@ class Editor {
 		if (!blocks.length) return false;
 		const offset = active.cursor.offset ?? 0;
 		const scopes = this.structuralScopeNodes(active);
-		let index = blocks.findIndex(block => scopes.includes(block));
+		let index = blocks.findIndex((block) => scopes.includes(block));
 		if (index < 0) {
-			const containing = blocks.findIndex(block => block.contains(this.text.pointAt(offset)?.node));
+			const containing = blocks.findIndex((block) =>
+				block.contains(this.text.pointAt(offset)?.node),
+			);
 			index = containing >= 0 ? containing : 0;
 		}
 		const backwards = direction === "left" || direction === "up";
 		let range = this.structuralRangeFor(blocks[index]);
 		if (!range) return false;
-		if (backwards && offset <= range.start && index > 0) range = this.structuralRangeFor(blocks[--index]);
-		if (!backwards && offset >= range.end && index < blocks.length - 1) range = this.structuralRangeFor(blocks[++index]);
+		if (backwards && offset <= range.start && index > 0)
+			range = this.structuralRangeFor(blocks[--index]);
+		if (!backwards && offset >= range.end && index < blocks.length - 1)
+			range = this.structuralRangeFor(blocks[++index]);
 		if (!range) return false;
 		const target = backwards ? range.start : range.end;
 		if (extend) {
-			const anchor = active.cursor.selection.isActive ? active.cursor.selection.anchorOffset : offset;
+			const anchor = active.cursor.selection.isActive
+				? active.cursor.selection.anchorOffset
+				: offset;
 			this.selection.select(anchor, target, active);
 		} else {
 			active.cursor.moveTo(target);
@@ -1290,21 +1414,80 @@ class Editor {
 		if (!targets.length) return false;
 		const backwards = direction === "backward";
 		const point = this.text.pointAt(active.cursor.offset ?? 0);
-		const element = active.cursor.selectedNode ??
+		let element =
+			active.cursor.selectedNode ??
 			(point?.node?.nodeType === Node.ELEMENT_NODE ? point.node : point?.node?.parentElement);
-		let index = targets.findIndex(target => target === element || target.contains(element));
-		if (active.cursor.selectedNode && index >= 0) index += backwards ? -1 : 1;
-		else if (index >= 0) index += backwards ? -1 : 1;
-		else index = backwards ? targets.length - 1 : 0;
-		if (index < 0 || index >= targets.length) return false;
+		if (!element && active.cursor.anchor) {
+			element =
+				active.cursor.anchor.nodeType === Node.ELEMENT_NODE
+					? active.cursor.anchor
+					: active.cursor.anchor.parentElement;
+		}
+		// Robust lookup: walk up from element to find a traversal target, or find a target contained in element.
+		let index = -1;
+		if (element) {
+			let node = element;
+			while (node && this.root.contains(node)) {
+				const i = targets.indexOf(node);
+				if (i >= 0) {
+					index = i;
+					break;
+				}
+				node = node.parentElement;
+			}
+		}
+		if (index < 0 && element) {
+			for (let i = 0; i < targets.length; i++) {
+				if (element.contains(targets[i]) || targets[i].contains(element)) {
+					index = i;
+					break;
+				}
+			}
+		}
+		if (index < 0) {
+			index = backwards ? targets.length - 1 : 0;
+		} else if (index >= 0) {
+			index += backwards ? -1 : 1;
+		}
+		if (index < 0 || index >= targets.length) {
+			index = backwards ? targets.length - 1 : 0;
+		}
 
 		const target = targets[index];
 		if (this.text.isAtom(target)) {
 			active.cursor.selectAtom(target, backwards ? "after" : "before");
 		} else {
-			const range = this.structuralRangeFor(target);
-			if (!range) return false;
-			active.cursor.moveTo(backwards ? range.end : range.start);
+			// Prefer an explicit position at the target element itself. This ensures
+			// we land on a distinct slot even for empty placeholders/slots (structuralRangeFor
+			// can return collapsed ranges when there's no text content inside).
+			this.text.refresh();
+			let pos = this.text.indexOfPoint({ node: target, offset: 0 });
+			if (pos < 0 && target.childNodes.length > 0) {
+				pos = this.text.indexOfPoint({ node: target, offset: target.childNodes.length });
+			}
+			const moveOpts = { skipBoundaryCollapse: true };
+			if (pos >= 0) {
+				active.cursor.moveTo(pos, moveOpts);
+			} else {
+				const range = this.structuralRangeFor(target);
+				if (!range) return false;
+				active.cursor.moveTo(backwards ? range.end : range.start, moveOpts);
+			}
+			// Ensure visual caret is at the target for empty terminals (0-text slots).
+			// Force using target's BCR; fall back to a positive height so caret shows
+			// even if target has no intrinsic size yet (empty placeholder before styles/content).
+			const cr = target.getBoundingClientRect ? target.getBoundingClientRect() : null;
+			if (cr && active.cursor && active.cursor.caret && active.cursor.caret.node) {
+				const c = active.cursor.caret;
+				const sx = window.scrollX,
+					sy = window.scrollY;
+				const s = (v) => Math.round(v);
+				const h = cr.height > 0 ? cr.height : 18;
+				c.node.style.left = `${s(cr.left + sx)}px`;
+				c.node.style.top = `${s(cr.top + sy)}px`;
+				c.node.style.height = `${Math.max(1, s(h))}px`;
+				c.node.style.visibility = "visible";
+			}
 		}
 		return this.selection.syncToNative(active);
 	}
@@ -1352,9 +1535,12 @@ class Editor {
 	// Installs a single editor plugin instance, class, or factory.
 	installPlugin(plugin) {
 		if (!plugin) return null;
-		const instance = typeof plugin === "function"
-			? (plugin.prototype?.attach ? new plugin() : plugin(this))
-			: plugin;
+		const instance =
+			typeof plugin === "function"
+				? plugin.prototype?.attach
+					? new plugin()
+					: plugin(this)
+				: plugin;
 		instance?.attach?.(this);
 		if (instance) this.plugins.push(instance);
 		return instance ?? null;
@@ -1367,7 +1553,8 @@ class Editor {
 		for (const plugin of this.plugins) {
 			if (plugin === type) return plugin;
 			if (typeof type === "string") {
-				if (plugin.constructor?.pluginName === type || plugin.constructor?.name === type) return plugin;
+				if (plugin.constructor?.pluginName === type || plugin.constructor?.name === type)
+					return plugin;
 			} else if (plugin instanceof type) {
 				return plugin;
 			}
@@ -1396,13 +1583,14 @@ class Editor {
 		if (!fn) return new EditorTransaction(command, { result: false });
 		const selectionBefore = session.snapshotSelection();
 		const result = fn(command, { editor: this, session, event: options.event });
-		const transaction = result instanceof EditorTransaction
-			? result
-			: new EditorTransaction(command, {
-				result,
-				selectionBefore,
-				selectionAfter: session.snapshotSelection(),
-			});
+		const transaction =
+			result instanceof EditorTransaction
+				? result
+				: new EditorTransaction(command, {
+						result,
+						selectionBefore,
+						selectionAfter: session.snapshotSelection(),
+					});
 		if (transaction.handled) this.history.push(transaction);
 		return transaction;
 	}
@@ -1436,29 +1624,30 @@ class Editor {
 	// Method: normalize
 	// Performs incremental DOM sanitizations on designated targets.
 	normalize(target = this.root, context = {}) {
-		return this.normalizer?.normalize(target, {
-			editor: this,
-			root: this.root,
-			schema: this.schema,
-			...context,
-		}) ?? new EditorTransaction(new EditorCommand("normalize"), { result: false });
+		return (
+			this.normalizer?.normalize(target, {
+				editor: this,
+				root: this.root,
+				schema: this.schema,
+				...context,
+			}) ?? new EditorTransaction(new EditorCommand("normalize"), { result: false })
+		);
 	}
-
 }
 
 export {
+	Editor,
 	EditorAdapter,
 	EditorClassController,
 	EditorCommand,
 	EditorCursor,
-	Editor,
-	editorKeymap,
 	EditorNormalizer,
 	EditorRangeController,
 	EditorSchema,
 	EditorSelectionController,
 	EditorSession,
 	EditorTransaction,
+	editorKeymap,
 };
 
 // EOF

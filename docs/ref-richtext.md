@@ -125,8 +125,8 @@ The plugin binds these helpers directly to `editor` while installed:
 ## Editing behavior
 
 **Typing.** Empty-block `<br>` placeholders are removed before input. A normal
-space is rejected when both adjacent characters are whitespace, except in
-whitespace-preserving content such as `pre`.
+space is rejected when adjacent to whitespace (outside `pre` etc.) to avoid
+doubles; instead the caret advances past a following space.
 
 **Enter.** Paragraphs, `pre`, and list items split to the same tag. Headings use
 their parent default, normally a paragraph. `Shift+Enter` inserts a line break.
