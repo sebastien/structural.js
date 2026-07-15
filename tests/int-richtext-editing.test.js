@@ -1659,3 +1659,126 @@ test("selection: caret visible and selectionKind caret after range replace", asy
 		expect(state.caretVisible).toBe(true);
 	});
 });
+
+const REPORTED_LOAN_PARAGRAPH =
+	"Antony Barbara Head (43) and Leonard Bertha Ballard (45) arasdase married NZ citizens. Both own their home and reside together. Antony is employed FT with an annual income of $62,400. Leonard is employed PT with an annual income of $31,148. The application is for a top-up loan in their personal names.";
+
+const LONG_SINGLE_PARAGRAPH =
+	"Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content." +
+	REPORTED_LOAN_PARAGRAPH.repeat(10);
+
+test("performance: long single paragraph keeps keyboard editing interactions responsive", async () => {
+	await runWithFresh(async (page) => {
+		const result = await page.evaluate((paragraph) => {
+			const root = document.getElementById("editor");
+			const editor = window.__editor;
+			const cursor = editor.input.cursor;
+			const text = editor.text;
+			const samplesPerOperation = 5;
+
+			window.__test.setHTML(`<p class="focus">${paragraph}</p>`);
+			const textNode = root.querySelector("p.focus")?.firstChild;
+			if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+				throw new Error("long-paragraph fixture did not create one text node");
+			}
+
+			const midpoint = text.indexOfPoint({
+				node: textNode,
+				offset: Math.floor(textNode.data.length / 2),
+			});
+			if (midpoint < 0) {
+				throw new Error("could not resolve the long paragraph midpoint");
+			}
+
+			const dispatch = (key, shiftKey = false) => {
+				document.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						key,
+						shiftKey,
+						bubbles: true,
+						cancelable: true,
+					}),
+				);
+			};
+			const caretIsVisible = () =>
+				!!cursor.caret.node && getComputedStyle(cursor.caret.node).visibility === "visible";
+			const percentile95 = (samples) => {
+				const sorted = [...samples].sort((a, b) => a - b);
+				return sorted[Math.ceil(sorted.length * 0.95) - 1];
+			};
+			const measure = (name, action, verify) => {
+				const samples = [];
+				for (let i = 0; i < samplesPerOperation; i += 1) {
+					cursor.moveTo(midpoint);
+					const before = {
+						offset: cursor.offset,
+						textLength: root.textContent.length,
+					};
+					const started = performance.now();
+					action();
+					samples.push(performance.now() - started);
+					verify(before);
+				}
+				return { name, samples, p95: percentile95(samples) };
+			};
+
+			// Warm the position and layout caches before measuring steady-state interaction latency.
+			cursor.moveTo(midpoint);
+			dispatch("ArrowRight");
+			cursor.moveTo(midpoint);
+
+			const operations = [
+				measure(
+					"cursor movement",
+					() => dispatch("ArrowRight"),
+					(before) => {
+						if (cursor.offset <= before.offset || !caretIsVisible()) {
+							throw new Error("ArrowRight did not advance a visible caret");
+						}
+					},
+				),
+				measure(
+					"range selection",
+					() => dispatch("ArrowRight", true),
+					(before) => {
+						if (
+							cursor.selectionKind !== "range" ||
+							cursor.selection.focusOffset <= before.offset
+						) {
+							throw new Error("Shift+ArrowRight did not extend the selection");
+						}
+					},
+				),
+				measure(
+					"text insertion",
+					() => dispatch("x"),
+					(before) => {
+						if (
+							root.textContent.length !== before.textLength + 1 ||
+							cursor.offset <= before.offset ||
+							!caretIsVisible()
+						) {
+							throw new Error("text insertion did not update text and caret");
+						}
+					},
+				),
+			];
+
+			return {
+				paragraphLength: paragraph.length,
+				positions: text.positions().length,
+				operations,
+				stats: text.stats,
+			};
+		}, LONG_SINGLE_PARAGRAPH);
+
+		expect(result.paragraphLength).toBeGreaterThanOrEqual(3000);
+		for (const operation of result.operations) {
+			if (operation.p95 > 100) {
+				throw new Error(
+					`${operation.name} p95=${operation.p95}ms exceeds 100ms; diagnostics=${JSON.stringify(result)}`,
+				);
+			}
+		}
+	});
+});

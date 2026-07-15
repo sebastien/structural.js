@@ -1479,14 +1479,15 @@ class Editor {
 			const cr = target.getBoundingClientRect ? target.getBoundingClientRect() : null;
 			if (cr && active.cursor && active.cursor.caret && active.cursor.caret.node) {
 				const c = active.cursor.caret;
-				const sx = window.scrollX,
-					sy = window.scrollY;
-				const s = (v) => Math.round(v);
 				const h = cr.height > 0 ? cr.height : 18;
-				c.node.style.left = `${s(cr.left + sx)}px`;
-				c.node.style.top = `${s(cr.top + sy)}px`;
-				c.node.style.height = `${Math.max(1, s(h))}px`;
-				c.node.style.visibility = "visible";
+				const parent = c.node.offsetParent;
+				const local = parent
+					? {
+						x: cr.left - parent.getBoundingClientRect().left + parent.scrollLeft,
+						y: cr.top - parent.getBoundingClientRect().top + parent.scrollTop,
+					}
+					: { x: cr.left + window.scrollX, y: cr.top + window.scrollY };
+				c._showAt(local.x, local.y, h);
 			}
 		}
 		return this.selection.syncToNative(active);

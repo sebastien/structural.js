@@ -140,9 +140,22 @@ cursor.selection.apply();
 | `replaceWithText(text)` | Replace selected DOM content and return `{ index }`. |
 
 `SelectionOverlay` is the lower-level renderer. Construct it with a node or
-`{ node, mode, ...stateConfig }`, then call `apply(range, mode)`, `clear()`, or
-`destroy()`. Virtual overlays are mounted beneath `document.body` and positioned
-from client rectangles.
+`{ node, mode, container?, ...stateConfig }`, then call `apply(range, mode)`,
+`clear()`, or `destroy()`. Virtual caret and selection hosts are mounted as
+**siblings of the editor root** (under the root's parent) so they share the same
+scroll and offset parent as the edited content. Highlight and caret coordinates
+are host/offset-parent relative, not document-absolute.
+
+Place the hosts next to the editor inside a shared shell when the editor scrolls
+inside an overflow container:
+
+```html
+<div class="editor-shell" style="position: relative; overflow: auto">
+  <div id="editor">…</div>
+  <div id="selection" aria-hidden="true"></div>
+  <div id="caret" aria-hidden="true"></div>
+</div>
+```
 
 ## `EditorSelectionController`
 

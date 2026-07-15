@@ -5,9 +5,12 @@
   <title>Rich Text Editing Harness</title>
   <style>
     body { margin: 0; font: 16px/1.6 system-ui, sans-serif; }
-    #editor {
+    .editor-shell {
+      position: relative;
       max-width: 640px;
       margin: 24px auto;
+    }
+    #editor {
       padding: 16px;
       border: 1px solid #ccc;
       min-height: 120px;
@@ -46,9 +49,11 @@
   </script>
 </head>
 <body>
-  <div id="editor"><p>Hello world. Edit me.</p></div>
-  <div id="caret"></div>
-  <div id="selection"></div>
+  <div class="editor-shell">
+    <div id="editor"><p>Hello world. Edit me.</p></div>
+    <div id="caret"></div>
+    <div id="selection"></div>
+  </div>
 
   <script type="module">
     import { Editor } from "structural/editor";

@@ -41,7 +41,8 @@ You can learn more about each component:
     .editor { max-width: 600px; margin: 2rem auto; line-height: 1.6; }
     .focus { outline: 2px solid #0056cc; }
     .atom { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }
-    /* Virtual selection/caret hosts are positioned over the editor by Structural. */
+    /* Virtual selection/caret hosts sit beside the editor and scroll with it. */
+    .editor-shell { position: relative; }
     #selection, #caret { position: absolute; left: 0; top: 0; pointer-events: none; }
     #selection { visibility: hidden; z-index: 10; }
     #caret { width: 2px; height: 1lh; background: #0056cc; visibility: hidden; z-index: 11; }
@@ -56,13 +57,14 @@ You can learn more about each component:
 </head>
 <body>
 
-<div id="editor" class="editor">
-  <h1>Editable Document</h1>
-  <p>Modify this text, or interact with this <span class="atom">{AtomicToken}</span>.</p>
+<div class="editor-shell">
+  <div id="editor" class="editor">
+    <h1>Editable Document</h1>
+    <p>Modify this text, or interact with this <span class="atom">{AtomicToken}</span>.</p>
+  </div>
+  <div id="selection"></div>
+  <div id="caret"></div>
 </div>
-
-<div id="selection"></div>
-<div id="caret"></div>
 
 <script type="module">
 import { Editor } from "structural/editor";

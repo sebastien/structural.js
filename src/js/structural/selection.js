@@ -8,6 +8,61 @@
 
 // ----------------------------------------------------------------------------
 //
+// OVERLAY HOST HELPERS
+//
+// ----------------------------------------------------------------------------
+
+// Prepares a virtual overlay host (selection or caret) and optionally mounts it
+// under `container` so it shares the editor's scroll/offset parent.
+// Always force absolute positioning: detached nodes report computed position as
+// "" (not "static"), so a static-only check leaves left/top inert and misaligns
+// selection blocks against a padded offset parent.
+function prepareOverlayHost(node, container = null) {
+	if (!node) return null;
+	node.style.position = "absolute";
+	if (!node.style.left) node.style.left = "0px";
+	if (!node.style.top) node.style.top = "0px";
+	if (!node.style.visibility) node.style.visibility = "hidden";
+	node.setAttribute("aria-hidden", "true");
+	node.style.pointerEvents = "none";
+	if (container && container.nodeType === Node.ELEMENT_NODE) {
+		const containerPos = container.style.position || getComputedStyle(container).position;
+		if (!containerPos || containerPos === "static") {
+			container.style.position = "relative";
+		}
+		if (node.parentNode !== container) {
+			container.appendChild(node);
+		}
+	}
+	return node;
+}
+
+// Converts viewport client coordinates to coordinates relative to an overlay host
+// (selection blocks are children of a host at left/top 0).
+function clientToHostLocal(clientX, clientY, host) {
+	if (!host) {
+		return { x: clientX + window.scrollX, y: clientY + window.scrollY };
+	}
+	const origin = host.getBoundingClientRect();
+	return { x: clientX - origin.left, y: clientY - origin.top };
+}
+
+// Converts viewport client coordinates to left/top for an absolutely positioned
+// element (caret) relative to its offset parent.
+function clientToOffsetParent(clientX, clientY, node) {
+	const parent = node?.offsetParent;
+	if (!parent) {
+		return { x: clientX + window.scrollX, y: clientY + window.scrollY };
+	}
+	const origin = parent.getBoundingClientRect();
+	return {
+		x: clientX - origin.left + parent.scrollLeft,
+		y: clientY - origin.top + parent.scrollTop,
+	};
+}
+
+// ----------------------------------------------------------------------------
+//
 // CLASSES
 //
 // ----------------------------------------------------------------------------
@@ -23,21 +78,11 @@ class SelectionOverlay {
 		this._config = config || {};
 		this.mode = (this._config.mode === "native") ? "native" : "virtual";
 		this.node = (this.mode === "virtual" ? (this._config.node ?? null) : null);
-		// Ensure provided selection overlay node is mounted under body.
-		// Absolute selection rects are positioned using viewport + scroll coords.
+		this._container = this._config.container ?? null;
+		// Mount alongside the editor (shared offset/scroll parent), not under body.
+		// Highlight rects are positioned relative to this host.
 		if (this.mode === "virtual" && this.node) {
-			const d = this.node.ownerDocument || document;
-			const b = d.body || d.documentElement;
-			if (b && this.node.parentNode !== b) {
-				if (getComputedStyle(this.node).position === "static") {
-					this.node.style.position = "absolute";
-				}
-				if (!this.node.style.left) this.node.style.left = "0px";
-				if (!this.node.style.top) this.node.style.top = "0px";
-				if (!this.node.style.visibility) this.node.style.visibility = "hidden";
-				if (this.node.parentNode) this.node.parentNode.removeChild(this.node);
-				b.appendChild(this.node);
-			}
+			prepareOverlayHost(this.node, this._container);
 		}
 		this._className = this._config.className || null;
 		this._classes = this._config.classes || null;
@@ -46,13 +91,16 @@ class SelectionOverlay {
 		this._managedClasses = new Set();
 		this._managedStyleProps = new Set();
 		this._destroyed = false;
-		if (this.node) {
-			this.node.setAttribute("aria-hidden", "true");
-			this.node.style.pointerEvents = "none";
-			if (getComputedStyle(this.node).position === "static") {
-				this.node.style.position = "absolute";
-			}
+	}
+
+	// Method: setContainer
+	// Mounts the overlay host under `container` (typically the editor root's parent).
+	setContainer(container) {
+		this._container = container ?? null;
+		if (this.mode === "virtual" && this.node) {
+			prepareOverlayHost(this.node, this._container);
 		}
+		return this;
 	}
 
 	// Method: _clearVirtual
@@ -106,10 +154,11 @@ class SelectionOverlay {
 		const cfg = this._resolveStateConfig(state);
 		this.node.replaceChildren(
 			...rects.map(rect => {
+				const local = clientToHostLocal(rect.left, rect.top, this.node);
 				const block = document.createElement("div");
 				block.style.position = "absolute";
-				block.style.left = `${rect.left + window.scrollX}px`;
-				block.style.top = `${rect.top + window.scrollY}px`;
+				block.style.left = `${local.x}px`;
+				block.style.top = `${local.y}px`;
 				block.style.width = `${rect.width}px`;
 				block.style.height = `${rect.height}px`;
 				block.style.boxSizing = "border-box";
@@ -755,6 +804,13 @@ class EditorSelectionController {
 	}
 }
 
-export { EditorSelectionController, SelectionOverlay, TextSelection };
+export {
+	EditorSelectionController,
+	SelectionOverlay,
+	TextSelection,
+	prepareOverlayHost,
+	clientToHostLocal,
+	clientToOffsetParent,
+};
 
 // EOF

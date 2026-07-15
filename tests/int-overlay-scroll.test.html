@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Overlay Scroll Container Test</title>
+  <style>
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+    .editor-shell {
+      position: relative;
+      height: 120px;
+      overflow: auto;
+      border: 1px solid #ccc;
+      margin: 16px;
+    }
+    #editor { padding: 8px; }
+    #editor p { margin: 0 0 1em; height: 80px; }
+    #selection {
+      position: absolute;
+      left: 0;
+      top: 0;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #caret {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 2px;
+      height: 1lh;
+      background: #c00;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 11;
+    }
+  </style>
+  <script type="importmap">
+  { "imports": {
+    "structural/editor": "/src/js/structural/editor.js",
+    "structural/cursor": "/src/js/structural/cursor.js",
+    "structural/text": "/src/js/structural/text.js",
+    "structural/selection": "/src/js/structural/selection.js",
+    "structural/range": "/src/js/structural/range.js",
+    "structural/modification": "/src/js/structural/modification.js"
+  }}
+  </script>
+</head>
+<body>
+  <div class="editor-shell" id="shell">
+    <div id="editor">
+      <p>Line one of scrollable content for overlay alignment.</p>
+      <p>Line two of scrollable content for overlay alignment.</p>
+      <p>Line three of scrollable content for overlay alignment.</p>
+      <p>Line four of scrollable content for overlay alignment.</p>
+    </div>
+    <div id="selection"></div>
+    <div id="caret"></div>
+  </div>
+  <script type="module">
+    import { Editor } from "structural/editor";
+
+    function measure(el) {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    }
+
+    try {
+      const shell = document.getElementById("shell");
+      const root = document.getElementById("editor");
+      const selectionHost = document.getElementById("selection");
+      const caretHost = document.getElementById("caret");
+
+      const editor = new Editor(root, {
+        caret: { mode: "virtual", node: caretHost, focused: true },
+        selection: { mode: "virtual", node: selectionHost },
+      });
+
+      const mountedUnderShell =
+        selectionHost.parentNode === shell && caretHost.parentNode === shell;
+      const notUnderBody =
+        selectionHost.parentNode !== document.body &&
+        caretHost.parentNode !== document.body;
+
+      // Select text in the first paragraph
+      const text = root.querySelector("p").firstChild;
+      const start = editor.text.indexOfPoint({ node: text, offset: 0 });
+      const end = editor.text.indexOfPoint({ node: text, offset: 8 });
+      editor.input.cursor.select(start, end);
+
+      const range = editor.input.cursor.selection.toDomRange();
+      const expectedBefore = Array.from(range.getClientRects())
+        .filter((r) => r.width !== 0 || r.height !== 0)
+        .map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height }));
+      const blocksBefore = [...selectionHost.children].map(measure);
+
+      // Place caret and capture
+      editor.input.cursor.moveTo(start);
+      const caretBefore = measure(caretHost);
+      const point = editor.text.pointAt(start);
+      const caretRange = document.createRange();
+      caretRange.setStart(point.node, point.offset);
+      caretRange.collapse(true);
+      const caretRect = caretRange.getBoundingClientRect();
+
+      // Scroll the shell; overlays should move with content (same viewport delta)
+      shell.scrollTop = 90;
+      // Force layout
+      void shell.offsetHeight;
+
+      // Re-select after scroll (paint uses current client rects; host moves with scroll)
+      editor.input.cursor.select(start, end);
+      const rangeAfter = editor.input.cursor.selection.toDomRange();
+      const expectedAfter = Array.from(rangeAfter.getClientRects())
+        .filter((r) => r.width !== 0 || r.height !== 0)
+        .map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height }));
+      const blocksAfter = [...selectionHost.children].map(measure);
+
+      editor.input.cursor.moveTo(start);
+      const caretAfter = measure(caretHost);
+      const point2 = editor.text.pointAt(start);
+      const caretRange2 = document.createRange();
+      caretRange2.setStart(point2.node, point2.offset);
+      caretRange2.collapse(true);
+      const caretRectAfter = caretRange2.getBoundingClientRect();
+
+      const tol = 2;
+      const near = (a, b) => Math.abs(a - b) <= tol;
+      const blocksAlign = expectedAfter.length > 0
+        && blocksAfter.length === expectedAfter.length
+        && blocksAfter.every((b, i) =>
+          near(b.left, expectedAfter[i].left)
+          && near(b.top, expectedAfter[i].top)
+          && near(b.width, expectedAfter[i].width)
+          && near(b.height, expectedAfter[i].height));
+
+      const caretAlign =
+        near(caretAfter.left, caretRectAfter.left)
+        && near(caretAfter.top, caretRectAfter.top);
+
+      // After scroll without re-apply, host-relative coords keep alignment when
+      // host shares the scroll parent — verify host moved with shell content.
+      editor.input.cursor.select(start, end);
+      const midBlocks = [...selectionHost.children].map(measure);
+      shell.scrollTop = 40;
+      void shell.offsetHeight;
+      const midBlocksAfterScroll = [...selectionHost.children].map(measure);
+      // Content moved by ~50px in viewport; overlay blocks should move similarly
+      // without re-apply because they live inside the scrolled shell.
+      const scrollDelta = midBlocksAfterScroll.length && midBlocks.length
+        ? midBlocksAfterScroll[0].top - midBlocks[0].top
+        : 0;
+      // scrollTop went 90 -> 40, so content moves down by ~50 in viewport
+      const freeScrollSync = Math.abs(scrollDelta - 50) <= 5;
+
+      window.__result = {
+        mountedUnderShell,
+        notUnderBody,
+        blocksAlign,
+        caretAlign,
+        freeScrollSync,
+        scrollDelta,
+        expectedBeforeCount: expectedBefore.length,
+        blocksBeforeCount: blocksBefore.length,
+        expectedAfterCount: expectedAfter.length,
+        blocksAfterCount: blocksAfter.length,
+        caretBefore,
+        caretAfter,
+        caretRectAfter: {
+          left: caretRectAfter.left,
+          top: caretRectAfter.top,
+        },
+      };
+    } catch (error) {
+      window.__result = { error: String(error?.stack || error) };
+    }
+  </script>
+</body>
+</html>

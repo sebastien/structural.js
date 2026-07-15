@@ -45,19 +45,16 @@ class TextAdapter {
 	// Initializes the `TextAdapter` with a `root` DOM element and `options`.
 	constructor(root, options = {}) {
 		this.root = root;
-		this._acceptsText =
-			typeof options.acceptsText === "function" ? options.acceptsText : null;
-		this.skipFormattingWhitespaceConfigured = Object.hasOwn(
-			options,
-			"skipFormattingWhitespace",
-		);
+		this._acceptsText = typeof options.acceptsText === "function" ? options.acceptsText : null;
+		this.skipFormattingWhitespaceConfigured = Object.hasOwn(options, "skipFormattingWhitespace");
 		this.skipFormattingWhitespace = options.skipFormattingWhitespace ?? false;
 		this._positions = [];
 		this._positionsDirty = true;
 		this._observer = null;
-		this._segmenter = typeof Intl !== "undefined" && Intl.Segmenter
-			? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-			: null;
+		this._segmenter =
+			typeof Intl !== "undefined" && Intl.Segmenter
+				? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+				: null;
 		this._onMutations = this.onMutations.bind(this);
 		// Instrumentation
 		this._rebuildCount = 0;
@@ -66,7 +63,7 @@ class TextAdapter {
 		this._lastBuildMs = 0;
 		// Window / cache configuration (decisions: window length OK, eager N blocks, 100MB cap, faster linear)
 		this.eagerBlockCount = options.eagerBlockCount ?? 8;
-		this.maxCacheBytes = options.maxCacheBytes ?? (100 * 1024 * 1024);
+		this.maxCacheBytes = options.maxCacheBytes ?? 100 * 1024 * 1024;
 		this._windowGen = 0;
 		// Block window state (hierarchical)
 		this._blockIndex = new Map(); // blockEl -> {start, end, length}
@@ -76,16 +73,28 @@ class TextAdapter {
 		this._rebuildScheduled = false;
 		this._rebuildRafId = 0;
 		this._idleScheduled = false;
+		// Programmatic edits rebuild explicitly; skip MutationObserver double-work.
+		this._editDepth = 0;
+		// Caches for hot paths
+		this._graphemeCache = new WeakMap();
+		this._visualCache = new Map(); // index -> rect (cleared on dirty)
 	}
 
-	_graphemeBoundaries(text = "") {
+	_graphemeBoundaries(text = "", node = null) {
+		if (node && this._graphemeCache?.has(node)) {
+			return this._graphemeCache.get(node);
+		}
 		const boundaries = [0];
-		if (!text) return boundaries;
+		if (!text) {
+			if (node) this._graphemeCache?.set(node, boundaries);
+			return boundaries;
+		}
 		if (this._segmenter) {
 			for (const { index, segment } of this._segmenter.segment(text)) {
 				const next = index + segment.length;
 				if (next !== boundaries[boundaries.length - 1]) boundaries.push(next);
 			}
+			if (node) this._graphemeCache?.set(node, boundaries);
 			return boundaries;
 		}
 		let offset = 0;
@@ -93,15 +102,19 @@ class TextAdapter {
 			offset += char.length;
 			boundaries.push(offset);
 		}
+		if (node) this._graphemeCache?.set(node, boundaries);
 		return boundaries;
 	}
 
-	_graphemeCount(text = "") {
-		return Math.max(0, this._graphemeBoundaries(text).length - 1);
+	_graphemeCount(text = "", node = null) {
+		if (node && this._graphemeCache?.has(node)) {
+			return Math.max(0, this._graphemeCache.get(node).length - 1);
+		}
+		return Math.max(0, this._graphemeBoundaries(text, node).length - 1);
 	}
 
-	_codeUnitOffsetAtGrapheme(text = "", graphemeIndex = 0) {
-		const boundaries = this._graphemeBoundaries(text);
+	_codeUnitOffsetAtGrapheme(text = "", graphemeIndex = 0, node = null) {
+		const boundaries = this._graphemeBoundaries(text, node);
 		const index = Math.max(0, Math.min(graphemeIndex, boundaries.length - 1));
 		return boundaries[index] ?? text.length;
 	}
@@ -144,6 +157,15 @@ class TextAdapter {
 	// Handles DOM mutation events to invalidate positions.
 	onMutations(mutations) {
 		if (mutations?.length) {
+			for (const m of mutations) {
+				if (m.type === "characterData" && m.target?.nodeType === Node.TEXT_NODE) {
+					this._graphemeCache?.delete(m.target);
+				}
+			}
+		}
+		// insertAtIndex/delete* already refresh; ignore nested observer noise.
+		if (this._editDepth > 0) return;
+		if (mutations?.length) {
 			this.invalidatePositions();
 			this._scheduleRebuild();
 		}
@@ -168,10 +190,7 @@ class TextAdapter {
 	// Method: isContainer
 	// Checks if the given `node` is marked as a structural container.
 	isContainer(node) {
-		return (
-			node?.classList?.contains("container") ||
-			node?.classList?.contains("C")
-		);
+		return node?.classList?.contains("container") || node?.classList?.contains("C");
 	}
 
 	/* Method: isAtom
@@ -189,8 +208,7 @@ class TextAdapter {
 	// Method: isWhitespacePreserved
 	// Checks if the given `node` or its parent preserves whitespace (e.g. pre or code).
 	isWhitespacePreserved(node) {
-		const element =
-			node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+		const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
 		if (!element) {
 			return false;
 		}
@@ -198,11 +216,7 @@ class TextAdapter {
 			return true;
 		}
 		const whiteSpace = window.getComputedStyle(element).whiteSpace;
-		return (
-			whiteSpace === "pre" ||
-			whiteSpace === "pre-wrap" ||
-			whiteSpace === "break-spaces"
-		);
+		return whiteSpace === "pre" || whiteSpace === "pre-wrap" || whiteSpace === "break-spaces";
 	}
 
 	// ----------------------------------------------------------------------------
@@ -214,7 +228,9 @@ class TextAdapter {
 	_getBlockSelector() {
 		if (this._schema && typeof this._schema.tagsOfType === "function") {
 			const tags = this._schema.tagsOfType("block");
-			const filtered = tags.filter(t => this._schema.contains ? this._schema.contains(t, "#text") || t === "blockquote" : true);
+			const filtered = tags.filter((t) =>
+				this._schema.contains ? this._schema.contains(t, "#text") || t === "blockquote" : true,
+			);
 			if (filtered.length) return filtered.join(",");
 		}
 		return "p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,div,section,nav,header";
@@ -223,11 +239,11 @@ class TextAdapter {
 	_getTopLevelBlocks() {
 		const selector = this._getBlockSelector();
 		const all = Array.from(this.root.querySelectorAll(selector));
-		const candidates = all.filter(b => b && b.isConnected && this.root.contains(b));
+		const candidates = all.filter((b) => b?.isConnected && this.root.contains(b));
 		// Return only root-most blocks (not contained inside another selected block)
 		// This prevents duplicate slots when walking overlapping nested blocks (ul/li/p etc.)
 		const set = new Set(candidates);
-		return candidates.filter(b => {
+		return candidates.filter((b) => {
 			let p = b.parentElement;
 			while (p && p !== this.root) {
 				if (set.has(p)) return false;
@@ -255,6 +271,31 @@ class TextAdapter {
 			push(p.point, p.focusNode);
 		}
 		return slots.map((slot, i) => ({ ...slot, index: baseIndex + i }));
+	}
+
+	// Collect position slots only for one text node (used for incremental refresh).
+	_collectSlotsForTextNode(textNode, baseIndex = 0) {
+		const slots = [];
+		if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return slots;
+		const seen = new Set();
+		for (const p of this.iwalk(textNode, { mode: "positions" })) {
+			const pt = p?.point;
+			if (!pt?.node) continue;
+			const key = `${nodeKey(pt.node)}:${pt.offset}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			const boundary = this._boundaryAtPoint(pt);
+			const char = this._charAroundPoint(pt, boundary);
+			slots.push({
+				point: pt,
+				focusNode: p.focusNode || textNode.parentNode || textNode,
+				kind: "text-point",
+				boundary,
+				char,
+				index: baseIndex + slots.length,
+			});
+		}
+		return slots;
 	}
 
 	_textLengthBefore(node) {
@@ -293,7 +334,10 @@ class TextAdapter {
 		if (!this._prefixTextOffsets) this._prefixTextOffsets = [];
 		const n = this._positions.length;
 		if (startIndex >= n) return;
-		let running = startIndex > 0 ? (this._prefixTextOffsets[startIndex - 1] || 0) : this._textLengthBefore(this._blockOrder[0] || this.root);
+		let running =
+			startIndex > 0
+				? this._prefixTextOffsets[startIndex - 1] || 0
+				: this._textLengthBefore(this._blockOrder[0] || this.root);
 		for (let i = startIndex; i < n; i++) {
 			if (i > startIndex) {
 				const p0 = this._positions[i - 1].point;
@@ -330,15 +374,122 @@ class TextAdapter {
 	_blockForPoint(point) {
 		if (!point?.node) return null;
 		const selector = this._getBlockSelector();
-		let el = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
+		const el = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
 		let block = el ? el.closest(selector) : null;
 		if (!block || !this.root.contains(block)) {
 			block = el;
-			while (block && block.parentElement && block.parentElement !== this.root) {
+			while (block?.parentElement && block.parentElement !== this.root) {
 				block = block.parentElement;
 			}
 		}
 		return block && this.root.contains(block) ? block : null;
+	}
+
+	_beginEdit() {
+		this._editDepth = (this._editDepth | 0) + 1;
+	}
+
+	_endEdit() {
+		this._editDepth = Math.max(0, (this._editDepth | 0) - 1);
+	}
+
+	// Rebuilds slots for a single known block and renumbers the rest of the window.
+	_refreshBlock(block) {
+		const info = block ? this._blockIndex.get(block) : null;
+		if (!info) {
+			this.invalidatePositions();
+			return this.ensurePositions();
+		}
+		const news = this._collectPositionSlotsFor(block, info.start);
+		const oldLen = info.length;
+		const newLen = news.length;
+		this._positions.splice(info.start, oldLen, ...news);
+		info.end = info.start + newLen;
+		info.length = newLen;
+		const delta = newLen - oldLen;
+		if (delta !== 0) {
+			let seen = false;
+			for (const b of this._blockOrder) {
+				if (b === block) {
+					seen = true;
+					continue;
+				}
+				if (!seen) continue;
+				const bi = this._blockIndex.get(b);
+				if (!bi) continue;
+				bi.start += delta;
+				bi.end += delta;
+			}
+		}
+		for (let i = info.start; i < this._positions.length; i++) {
+			this._positions[i].index = i;
+		}
+		this._rebuildPrefixTextOffsets();
+		this._positionsDirty = false;
+		this._windowGen += 1;
+		this._enforceMemoryCap();
+		return this._positions;
+	}
+
+	// After a local text edit, refresh only the affected block when possible.
+	_refreshAfterPointEdit(point) {
+		if (point?.node?.nodeType === Node.TEXT_NODE) {
+			return this._refreshTextNode(point.node);
+		}
+		const block = this._blockForPoint(point);
+		if (block && this._blockIndex.has(block)) {
+			return this._refreshBlock(block);
+		}
+		this.invalidatePositions();
+		return this.ensurePositions();
+	}
+
+	// Refresh slots for a single text node by splicing only its range (big win for long paras).
+	_refreshTextNode(textNode) {
+		if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+			this.invalidatePositions();
+			return this.ensurePositions();
+		}
+		// locate current slot range for this exact node (contiguous)
+		let start = -1,
+			end = -1;
+		for (let k = 0; k < this._positions.length; k++) {
+			if (this._positions[k]?.point?.node === textNode) {
+				if (start < 0) start = k;
+				end = k;
+			} else if (start >= 0) {
+				break;
+			}
+		}
+		if (start < 0) {
+			this.invalidatePositions();
+			return this.ensurePositions();
+		}
+		const oldLen = end - start + 1;
+		const news = this._collectSlotsForTextNode(textNode, start);
+		const newLen = news.length;
+		this._positions.splice(start, oldLen, ...news);
+		for (let k = start; k < this._positions.length; k++) {
+			this._positions[k].index = k;
+		}
+		const delta = newLen - oldLen;
+		// adjust later blocks
+		if (delta !== 0) {
+			const _seen = false;
+			for (const b of this._blockOrder) {
+				const info = this._blockIndex.get(b);
+				if (!info) continue;
+				if (info.start > end) {
+					info.start += delta;
+					info.end += delta;
+				}
+			}
+		}
+		this._rebuildPrefixTextOffsets();
+		this._positionsDirty = false;
+		this._windowGen += 1;
+		this._enforceMemoryCap();
+		return this._positions;
 	}
 
 	_expandWindowToCoverIndex(targetIndex) {
@@ -364,7 +515,11 @@ class TextAdapter {
 		// Very rough estimate; tune perSlot based on observed
 		const perSlot = 256;
 		let safety = 0;
-		while (this._positions.length > 0 && (this._positions.length * perSlot) > this.maxCacheBytes && safety < 10000) {
+		while (
+			this._positions.length > 0 &&
+			this._positions.length * perSlot > this.maxCacheBytes &&
+			safety < 10000
+		) {
 			if (!this._blockOrder.length) break;
 			// drop tail block only
 			const last = this._blockOrder[this._blockOrder.length - 1];
@@ -392,7 +547,7 @@ class TextAdapter {
 	// Method: rebuildPositions
 	// Rebuilds the flat list of caret position slots using windowed eager strategy.
 	rebuildPositions() {
-		const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
+		const t0 = typeof performance !== "undefined" && performance.now ? performance.now() : 0;
 		// Build initial window: eagerly load up to eagerBlockCount blocks from top
 		this._positions = [];
 		this._blockIndex = new Map();
@@ -416,7 +571,7 @@ class TextAdapter {
 		this._rebuildPrefixTextOffsets();
 		this._positionsDirty = false;
 		this._rebuildCount += 1;
-		if (t0) this._lastBuildMs = (performance.now() - t0);
+		if (t0) this._lastBuildMs = performance.now() - t0;
 		this._windowGen += 1;
 		this._enforceMemoryCap();
 		return this._positions;
@@ -426,6 +581,7 @@ class TextAdapter {
 	// Marks the current cached position slots as dirty/invalid.
 	invalidatePositions() {
 		this._positionsDirty = true;
+		if (this._visualCache) this._visualCache.clear();
 	}
 
 	// Method: ensurePositions
@@ -442,7 +598,7 @@ class TextAdapter {
 	// Ensures the window covers at least up to `index` (expands eagerly if needed).
 	ensureIndex(index) {
 		this.ensurePositions();
-		const want = Math.max(0, Number.isFinite(index) ? (index | 0) : 0);
+		const want = Math.max(0, Number.isFinite(index) ? index | 0 : 0);
 		if (want < this._positions.length) return this._positions;
 		this._expandWindowToCoverIndex(want);
 		return this._positions;
@@ -466,15 +622,16 @@ class TextAdapter {
 	_scheduleRebuild() {
 		if (this._rebuildScheduled) return;
 		this._rebuildScheduled = true;
-		this._rebuildRafId = (typeof requestAnimationFrame === "function")
-			? requestAnimationFrame(() => {
-				this._rebuildScheduled = false;
-				this._rebuildRafId = 0;
-				if (this._positionsDirty) {
-					this.rebuildPositions();
-				}
-			})
-			: 0;
+		this._rebuildRafId =
+			typeof requestAnimationFrame === "function"
+				? requestAnimationFrame(() => {
+						this._rebuildScheduled = false;
+						this._rebuildRafId = 0;
+						if (this._positionsDirty) {
+							this.rebuildPositions();
+						}
+					})
+				: 0;
 	}
 
 	// Method: _rebuildWindowStats
@@ -544,7 +701,7 @@ class TextAdapter {
 	// Method: pointAt
 	// Gets the text point at the specified position `index`.
 	pointAt(index) {
-		const want = Math.max(0, Number.isFinite(index) ? (index | 0) : 0);
+		const want = Math.max(0, Number.isFinite(index) ? index | 0 : 0);
 		this.ensureIndex(want);
 		const position = this._positions[want];
 		return position?.point ?? null;
@@ -553,7 +710,7 @@ class TextAdapter {
 	// Method: positionSlotAt
 	// Gets the complete position slot info at the specified `index`.
 	positionSlotAt(index) {
-		const want = Math.max(0, Number.isFinite(index) ? (index | 0) : 0);
+		const want = Math.max(0, Number.isFinite(index) ? index | 0 : 0);
 		this.ensureIndex(want);
 		return this._positions[want] ?? null;
 	}
@@ -572,10 +729,7 @@ class TextAdapter {
 		const end = range?.end ?? positions.length;
 		for (let i = start; i < end; i += 1) {
 			const candidate = positions[i]?.point;
-			if (
-				candidate?.node === point.node &&
-				candidate.offset === point.offset
-			) {
+			if (candidate?.node === point.node && candidate.offset === point.offset) {
 				return i;
 			}
 		}
@@ -602,7 +756,8 @@ class TextAdapter {
 		if (!root?.isConnected || !point?.node) {
 			return -1;
 		}
-		const element = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
+		const element =
+			point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentElement;
 		if (!element || (element !== root && !root.contains(element))) {
 			return -1;
 		}
@@ -680,8 +835,11 @@ class TextAdapter {
 	// Method: visualPositionAt
 	// Gets the visual bounding client rect for the position at `index`.
 	visualPositionAt(index) {
+		const cached = this._visualCache?.get(index);
+		if (cached !== undefined) return cached ? { index, rect: cached } : null;
 		const point = this.pointAt(index);
 		if (!point) {
+			this._visualCache?.set(index, null);
 			return null;
 		}
 		const range = document.createRange();
@@ -691,6 +849,7 @@ class TextAdapter {
 			const rect = range.getBoundingClientRect();
 			this._bcrCount += 1;
 			if (rect.width !== 0 || rect.height !== 0) {
+				this._visualCache?.set(index, rect);
 				return { index, rect };
 			}
 			if (point.node?.nodeType === Node.ELEMENT_NODE) {
@@ -700,22 +859,22 @@ class TextAdapter {
 				const siblingRect = sibling?.getBoundingClientRect?.();
 				if (siblingRect) this._bcrCount += 1;
 				if (siblingRect && (siblingRect.width !== 0 || siblingRect.height !== 0)) {
-					return {
-						index,
-						rect: this._caretRectFromRect(
-							siblingRect,
-							nextSibling ? "start" : "end",
-						),
-					};
+					const outRect = this._caretRectFromRect(siblingRect, nextSibling ? "start" : "end");
+					this._visualCache?.set(index, outRect);
+					return { index, rect: outRect };
 				}
 				const nodeRect = point.node.getBoundingClientRect();
 				this._bcrCount += 1;
 				if (nodeRect.width !== 0 || nodeRect.height !== 0) {
-					return { index, rect: this._caretRectFromRect(nodeRect) };
+					const outRect = this._caretRectFromRect(nodeRect);
+					this._visualCache?.set(index, outRect);
+					return { index, rect: outRect };
 				}
 			}
+			this._visualCache?.set(index, rect);
 			return { index, rect };
 		} catch (_e) {
+			this._visualCache?.set(index, null);
 			return null;
 		}
 	}
@@ -811,7 +970,7 @@ class TextAdapter {
 	// Clamps the given `index` to a valid range within positions list (window length acceptable).
 	// Expands window to cover requested index so that "end" and far numeric offsets work.
 	clampIndex(index) {
-		const value = Number.isFinite(index) ? (index | 0) : 0;
+		const value = Number.isFinite(index) ? index | 0 : 0;
 		this.ensureIndex(value);
 		if (this._positions.length === 0) {
 			return 0;
@@ -864,12 +1023,7 @@ class TextAdapter {
 	_getCrossedChar(fromIndex, toIndex) {
 		const from = this._positions[fromIndex]?.point;
 		const to = this._positions[toIndex]?.point;
-		if (
-			!from ||
-			!to ||
-			from.node !== to.node ||
-			from.node?.nodeType !== Node.TEXT_NODE
-		) {
+		if (!from || !to || from.node !== to.node || from.node?.nodeType !== Node.TEXT_NODE) {
 			return null;
 		} else if (to.offset === from.offset + 1) {
 			return { node: from.node, char: from.node.data[from.offset] ?? "" };
@@ -882,6 +1036,7 @@ class TextAdapter {
 
 	// Method: indexFromLineMove
 	// Computes the best target index when moving cursor up or down from `index`.
+	// Walks directionally from current to avoid O(N) full scan + BCRs.
 	indexFromLineMove(index, direction, desiredX) {
 		this.ensureIndex(index);
 		const clamped = this.clampIndex(index);
@@ -891,43 +1046,71 @@ class TextAdapter {
 		}
 		const currentTop = current.rect.top;
 		const targetX = desiredX ?? current.rect.left;
+		const lineEpsilon = 4;
+		const dir = direction < 0 ? -1 : 1;
 		let best = null;
 		let bestLineDistance = Infinity;
 		let bestHorizontalDistance = Infinity;
-		const lineEpsilon = 4;
 
-		for (let i = 0; i < this._positions.length; i += 1) {
-			if (i === clamped) {
+		// Walk from current in the movement direction, collect the first different line
+		let i = clamped + dir;
+		const targetLine = [];
+		while (i >= 0 && i < this._positions.length) {
+			const pos = this._positions[i];
+			if (!this.acceptsText(pos) || this.isFormattingWhitespaceSlot(i)) {
+				i += dir;
 				continue;
 			}
-			if (!this.acceptsText(this._positions[i]) || this.isFormattingWhitespaceSlot(i)) {
+			const cand = this.visualPositionAt(i);
+			if (!cand) {
+				i += dir;
 				continue;
 			}
-			const candidate = this.visualPositionAt(i);
-			if (!candidate) {
+			const y = cand.rect.top;
+			const ld = Math.abs(y - currentTop);
+			if (ld <= lineEpsilon) {
+				i += dir;
 				continue;
 			}
-			const y = candidate.rect.top;
-			if (direction < 0 && y >= currentTop - lineEpsilon) {
-				continue;
+			// different line: collect the whole line group
+			targetLine.push({ index: i, rect: cand.rect });
+			let j = i + dir;
+			while (j >= 0 && j < this._positions.length) {
+				const p2 = this._positions[j];
+				if (!this.acceptsText(p2) || this.isFormattingWhitespaceSlot(j)) {
+					j += dir;
+					continue;
+				}
+				const c2 = this.visualPositionAt(j);
+				if (!c2) break;
+				if (Math.abs(c2.rect.top - y) <= lineEpsilon) {
+					targetLine.push({ index: j, rect: c2.rect });
+					j += dir;
+				} else {
+					break;
+				}
 			}
-			if (direction > 0 && y <= currentTop + lineEpsilon) {
-				continue;
-			}
-			const lineDistance = Math.abs(y - currentTop);
-			const horizontalDistance = Math.abs(candidate.rect.left - targetX);
+			break;
+		}
+
+		for (const t of targetLine) {
+			const hd = Math.abs(t.rect.left - targetX);
+			const ld = Math.abs(t.rect.top - currentTop);
 			if (
-				lineDistance < bestLineDistance - lineEpsilon ||
-				(Math.abs(lineDistance - bestLineDistance) <= lineEpsilon &&
-					horizontalDistance < bestHorizontalDistance)
+				ld < bestLineDistance - lineEpsilon ||
+				(Math.abs(ld - bestLineDistance) <= lineEpsilon && hd < bestHorizontalDistance)
 			) {
-				best = candidate;
-				bestLineDistance = lineDistance;
-				bestHorizontalDistance = horizontalDistance;
+				best = { index: t.index, rect: t.rect };
+				bestLineDistance = ld;
+				bestHorizontalDistance = hd;
 			}
 		}
 
-		return { index: best?.index ?? clamped, desiredX: targetX };
+		if (!best) {
+			// fallback: try opposite direction or return current
+			return { index: clamped, desiredX: targetX };
+		}
+		return { index: best.index, desiredX: targetX };
 	}
 
 	// ----------------------------------------------------------------------------
@@ -945,10 +1128,7 @@ class TextAdapter {
 		}
 		const point = current.point;
 		const focusNode = current.focusNode;
-		const parent =
-			point.node.nodeType === Node.ELEMENT_NODE
-				? point.node
-				: point.node.parentNode;
+		const parent = point.node.nodeType === Node.ELEMENT_NODE ? point.node : point.node.parentNode;
 		const prevChild =
 			parent?.childNodes && point.node.nodeType === Node.ELEMENT_NODE
 				? parent.childNodes[point.offset - 1]
@@ -1008,9 +1188,10 @@ class TextAdapter {
 	positionFromPoint(x, y) {
 		const pos = document.caretPositionFromPoint(x, y);
 		const position = this.positionFromNode(pos.offsetNode);
-		position.offset += pos.offsetNode?.nodeType === Node.TEXT_NODE
-			? this._graphemeIndexAtCodeUnit(pos.offsetNode.data, pos.offset)
-			: pos.offset;
+		position.offset +=
+			pos.offsetNode?.nodeType === Node.TEXT_NODE
+				? this._graphemeIndexAtCodeUnit(pos.offsetNode.data, pos.offset)
+				: pos.offset;
 		return position;
 	}
 
@@ -1058,14 +1239,17 @@ class TextAdapter {
 			return { index: clamped };
 		}
 		const point = this.pointAt(clamped);
-		const insertedPoint = point ? this.insertAtPoint(point, text) : null;
-		this.invalidatePositions();
-		this.ensurePositions();
-		const nextIndex = this.indexOfPoint(insertedPoint);
-		return {
-			index:
-				nextIndex >= 0 ? nextIndex : this.clampIndex(clamped + this._graphemeCount(text)),
-		};
+		this._beginEdit();
+		try {
+			const insertedPoint = point ? this.insertAtPoint(point, text) : null;
+			this._refreshAfterPointEdit(point ?? insertedPoint);
+			const nextIndex = this.indexOfPoint(insertedPoint);
+			return {
+				index: nextIndex >= 0 ? nextIndex : this.clampIndex(clamped + this._graphemeCount(text)),
+			};
+		} finally {
+			this._endEdit();
+		}
 	}
 
 	// Method: deleteBackwardAtIndex
@@ -1076,56 +1260,63 @@ class TextAdapter {
 			return { index: clamped };
 		}
 		const context = this.contextAt(clamped);
-		if (context?.deleteBackward?.type === "node") {
-			context.deleteBackward.node.remove();
-			this.invalidatePositions();
-			this.ensurePositions();
-			// Prefer re-resolving a safe nearby position; fall back to arithmetic.
-			try {
-				const positions = this.positions();
-				if (positions.length > 0) {
-					const probe = Math.max(0, Math.min(clamped - 1, positions.length - 1));
-					return { index: probe };
-				}
-			} catch (_) {}
-			return { index: this.clampIndex(clamped - 1) };
-		}
-		if (context?.point?.node?.nodeType === Node.ELEMENT_NODE && context.boundary?.leftNode?.nodeType === Node.TEXT_NODE) {
-			const node = context.boundary.leftNode;
-			const boundaries = this._graphemeBoundaries(node.data);
-			if (boundaries.length > 1) {
-				const startOffset = boundaries[boundaries.length - 2];
-				const endOffset = boundaries[boundaries.length - 1];
-				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+		this._beginEdit();
+		try {
+			if (context?.deleteBackward?.type === "node") {
+				context.deleteBackward.node.remove();
 				this.invalidatePositions();
 				this.ensurePositions();
-				// Re-resolve the caret to the removal site in the (now shorter) text.
-				const afterPoint = { node, offset: startOffset };
+				// Prefer re-resolving a safe nearby position; fall back to arithmetic.
+				try {
+					const positions = this.positions();
+					if (positions.length > 0) {
+						const probe = Math.max(0, Math.min(clamped - 1, positions.length - 1));
+						return { index: probe };
+					}
+				} catch (_) {}
+				return { index: this.clampIndex(clamped - 1) };
+			}
+			if (
+				context?.point?.node?.nodeType === Node.ELEMENT_NODE &&
+				context.boundary?.leftNode?.nodeType === Node.TEXT_NODE
+			) {
+				const node = context.boundary.leftNode;
+				const boundaries = this._graphemeBoundaries(node.data);
+				if (boundaries.length > 1) {
+					const startOffset = boundaries[boundaries.length - 2];
+					const endOffset = boundaries[boundaries.length - 1];
+					node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+					this._refreshAfterPointEdit({ node, offset: startOffset });
+					// Re-resolve the caret to the removal site in the (now shorter) text.
+					const afterPoint = { node, offset: startOffset };
+					const resolved = this.indexOfPoint(afterPoint);
+					if (resolved >= 0) return { index: resolved };
+					return { index: this.clampIndex(clamped - 1) };
+				}
+			}
+			const point = this.pointAt(clamped);
+			if (point?.node?.nodeType === Node.TEXT_NODE && point.offset > 0) {
+				const boundaries = this._graphemeBoundaries(point.node.data);
+				const current = boundaries.indexOf(point.offset);
+				const gIndex =
+					current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
+				const startOffset = boundaries[Math.max(0, gIndex - 1)] ?? 0;
+				const endOffset = boundaries[gIndex] ?? point.offset;
+				point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
+				this._refreshAfterPointEdit(point);
+				// Re-resolve via the post-edit DOM point for robustness across windowed rebuilds.
+				const afterPoint = { node: point.node, offset: startOffset };
 				const resolved = this.indexOfPoint(afterPoint);
 				if (resolved >= 0) return { index: resolved };
 				return { index: this.clampIndex(clamped - 1) };
 			}
-		}
-		const point = this.pointAt(clamped);
-		if (point?.node?.nodeType === Node.TEXT_NODE && point.offset > 0) {
-			const boundaries = this._graphemeBoundaries(point.node.data);
-			const current = boundaries.indexOf(point.offset);
-			const index = current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
-			const startOffset = boundaries[Math.max(0, index - 1)] ?? 0;
-			const endOffset = boundaries[index] ?? point.offset;
-			point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
+			this.deleteAt(this.textOffsetAtIndex(clamped) - 1, 1);
 			this.invalidatePositions();
 			this.ensurePositions();
-			// Re-resolve via the post-edit DOM point for robustness across windowed rebuilds.
-			const afterPoint = { node: point.node, offset: startOffset };
-			const resolved = this.indexOfPoint(afterPoint);
-			if (resolved >= 0) return { index: resolved };
 			return { index: this.clampIndex(clamped - 1) };
+		} finally {
+			this._endEdit();
 		}
-		this.deleteAt(this.textOffsetAtIndex(clamped) - 1, 1);
-		this.invalidatePositions();
-		this.ensurePositions();
-		return { index: this.clampIndex(clamped - 1) };
 	}
 
 	// Method: deleteForwardAtIndex
@@ -1133,53 +1324,60 @@ class TextAdapter {
 	deleteForwardAtIndex(index) {
 		const clamped = this.clampIndex(index);
 		const context = this.contextAt(clamped);
-		if (context?.deleteForward?.type === "node") {
-			context.deleteForward.node.remove();
-			this.invalidatePositions();
-			this.ensurePositions();
-			try {
-				const positions = this.positions();
-				if (positions.length > 0) {
-					const probe = Math.max(0, Math.min(clamped, positions.length - 1));
-					return { index: probe };
-				}
-			} catch (_) {}
-			return { index: this.clampIndex(clamped) };
-		}
-		if (context?.point?.node?.nodeType === Node.ELEMENT_NODE && context.boundary?.rightNode?.nodeType === Node.TEXT_NODE) {
-			const node = context.boundary.rightNode;
-			const boundaries = this._graphemeBoundaries(node.data);
-			if (boundaries.length > 1) {
-				const startOffset = boundaries[0];
-				const endOffset = boundaries[1];
-				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+		this._beginEdit();
+		try {
+			if (context?.deleteForward?.type === "node") {
+				context.deleteForward.node.remove();
 				this.invalidatePositions();
 				this.ensurePositions();
-				const afterPoint = { node, offset: startOffset };
+				try {
+					const positions = this.positions();
+					if (positions.length > 0) {
+						const probe = Math.max(0, Math.min(clamped, positions.length - 1));
+						return { index: probe };
+					}
+				} catch (_) {}
+				return { index: this.clampIndex(clamped) };
+			}
+			if (
+				context?.point?.node?.nodeType === Node.ELEMENT_NODE &&
+				context.boundary?.rightNode?.nodeType === Node.TEXT_NODE
+			) {
+				const node = context.boundary.rightNode;
+				const boundaries = this._graphemeBoundaries(node.data);
+				if (boundaries.length > 1) {
+					const startOffset = boundaries[0];
+					const endOffset = boundaries[1];
+					node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+					this._refreshAfterPointEdit({ node, offset: startOffset });
+					const afterPoint = { node, offset: startOffset };
+					const resolved = this.indexOfPoint(afterPoint);
+					if (resolved >= 0) return { index: resolved };
+					return { index: this.clampIndex(clamped) };
+				}
+			}
+			const point = this.pointAt(clamped);
+			if (point?.node?.nodeType === Node.TEXT_NODE && point.offset < point.node.data.length) {
+				const boundaries = this._graphemeBoundaries(point.node.data);
+				const current = boundaries.indexOf(point.offset);
+				const gIndex =
+					current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
+				const startOffset = boundaries[gIndex] ?? point.offset;
+				const endOffset = boundaries[Math.min(boundaries.length - 1, gIndex + 1)] ?? point.offset;
+				point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
+				this._refreshAfterPointEdit(point);
+				const afterPoint = { node: point.node, offset: startOffset };
 				const resolved = this.indexOfPoint(afterPoint);
 				if (resolved >= 0) return { index: resolved };
 				return { index: this.clampIndex(clamped) };
 			}
-		}
-		const point = this.pointAt(clamped);
-		if (point?.node?.nodeType === Node.TEXT_NODE && point.offset < point.node.data.length) {
-			const boundaries = this._graphemeBoundaries(point.node.data);
-			const current = boundaries.indexOf(point.offset);
-			const index = current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
-			const startOffset = boundaries[index] ?? point.offset;
-			const endOffset = boundaries[Math.min(boundaries.length - 1, index + 1)] ?? point.offset;
-			point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
+			this.deleteAt(this.textOffsetAtIndex(clamped), 1);
 			this.invalidatePositions();
 			this.ensurePositions();
-			const afterPoint = { node: point.node, offset: startOffset };
-			const resolved = this.indexOfPoint(afterPoint);
-			if (resolved >= 0) return { index: resolved };
 			return { index: this.clampIndex(clamped) };
+		} finally {
+			this._endEdit();
 		}
-		this.deleteAt(this.textOffsetAtIndex(clamped), 1);
-		this.invalidatePositions();
-		this.ensurePositions();
-		return { index: this.clampIndex(clamped) };
 	}
 
 	// ----------------------------------------------------------------------------
@@ -1200,24 +1398,22 @@ class TextAdapter {
 	insertAtPoint(point, text) {
 		const { node, offset } = point;
 		switch (node?.nodeType) {
-			case Node.TEXT_NODE:
-				{
-					const data = node.data;
-					node.data = `${data.slice(0, offset)}${text}${data.slice(offset)}`;
-					return { node, offset: offset + text.length };
+			case Node.TEXT_NODE: {
+				const data = node.data;
+				node.data = `${data.slice(0, offset)}${text}${data.slice(offset)}`;
+				return { node, offset: offset + text.length };
+			}
+			case Node.ELEMENT_NODE: {
+				const beforeNode = node.childNodes[offset] ?? null;
+				if (beforeNode && beforeNode.nodeType === Node.TEXT_NODE) {
+					const o = Math.min(beforeNode.data.length, 0);
+					beforeNode.data = `${beforeNode.data.slice(0, o)}${text}${beforeNode.data.slice(o)}`;
+					return { node: beforeNode, offset: o + text.length };
 				}
-			case Node.ELEMENT_NODE:
-				{
-					const beforeNode = node.childNodes[offset] ?? null;
-					if (beforeNode && beforeNode.nodeType === Node.TEXT_NODE) {
-						const o = Math.min(beforeNode.data.length, 0);
-						beforeNode.data = `${beforeNode.data.slice(0, o)}${text}${beforeNode.data.slice(o)}`;
-						return { node: beforeNode, offset: o + text.length };
-					}
-					const textNode = document.createTextNode(text);
-					node.insertBefore(textNode, beforeNode);
-					return { node: textNode, offset: text.length };
-				}
+				const textNode = document.createTextNode(text);
+				node.insertBefore(textNode, beforeNode);
+				return { node: textNode, offset: text.length };
+			}
 		}
 		return null;
 	}
@@ -1353,10 +1549,7 @@ class TextAdapter {
 			}
 			seen.add(key);
 			const resolvedFocusNode = focusNode ?? point.node;
-			const kind =
-				point.node?.nodeType === Node.TEXT_NODE
-					? "text-point"
-					: "element-boundary";
+			const kind = point.node?.nodeType === Node.TEXT_NODE ? "text-point" : "element-boundary";
 			const boundary = this._boundaryAtPoint(point);
 			const char = this._charAroundPoint(point, boundary);
 			slots.push({
@@ -1410,28 +1603,22 @@ class TextAdapter {
 			const boundaries = this._graphemeBoundaries(node.data);
 			const index = boundaries.indexOf(offset);
 			return {
-				before:
-					index > 0
-						? node.data.slice(boundaries[index - 1], boundaries[index])
-						: null,
+				before: index > 0 ? node.data.slice(boundaries[index - 1], boundaries[index]) : null,
 				after:
 					index >= 0 && index < boundaries.length - 1
 						? node.data.slice(boundaries[index], boundaries[index + 1])
 						: null,
 			};
 		}
-		const leftText =
-			boundary.leftNode?.nodeType === Node.TEXT_NODE
-				? boundary.leftNode.data
-				: null;
+		const leftText = boundary.leftNode?.nodeType === Node.TEXT_NODE ? boundary.leftNode.data : null;
 		const rightText =
-			boundary.rightNode?.nodeType === Node.TEXT_NODE
-				? boundary.rightNode.data
-				: null;
+			boundary.rightNode?.nodeType === Node.TEXT_NODE ? boundary.rightNode.data : null;
 		return {
 			before:
 				leftText && leftText.length > 0
-					? leftText.slice(this._codeUnitOffsetAtGrapheme(leftText, this._graphemeCount(leftText) - 1))
+					? leftText.slice(
+							this._codeUnitOffsetAtGrapheme(leftText, this._graphemeCount(leftText) - 1),
+						)
 					: null,
 			after:
 				rightText && rightText.length > 0
@@ -1454,7 +1641,7 @@ class TextAdapter {
 		const walk = function* (current, parent, childIndex) {
 			if (mode === "positions") {
 				if (current.nodeType === Node.TEXT_NODE) {
-					for (const i of this._graphemeBoundaries(current.data)) {
+					for (const i of this._graphemeBoundaries(current.data, current)) {
 						yield {
 							point: { node: current, offset: i },
 							focusNode: current.parentNode ?? parent,
@@ -1497,7 +1684,7 @@ class TextAdapter {
 			}
 
 			if (current.nodeType === Node.TEXT_NODE) {
-				const length = this._graphemeCount(current.data);
+				const length = this._graphemeCount(current.data, current);
 				yield { node: current, offset: state.offset, length };
 				state.offset += length;
 				return;

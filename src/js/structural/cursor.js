@@ -6,7 +6,11 @@
 // Module: cursor
 // Implements the caret rendering and the logical navigation cursor.
 
-import { TextSelection } from "./selection.js";
+import {
+	TextSelection,
+	prepareOverlayHost,
+	clientToOffsetParent,
+} from "./selection.js";
 
 // ----------------------------------------------------------------------------
 //
@@ -27,21 +31,11 @@ class Caret {
 		this._config = config || {};
 		this.mode = (this._config.mode === "native") ? "native" : "virtual";
 		this.node = (this.mode === "virtual" ? (this._config.node ?? null) : null);
-		// Ensure the provided caret node is mounted at the right place (body level)
-		// so that the absolute left/top we set (from viewport + scroll) work correctly.
+		this._container = this._config.container ?? null;
+		// Mount alongside the editor (shared offset/scroll parent), not under body.
+		// Caret left/top are relative to the host's offset parent.
 		if (this.mode === "virtual" && this.node) {
-			const d = this.node.ownerDocument || document;
-			const b = d.body || d.documentElement;
-			if (b && this.node.parentNode !== b) {
-				if (getComputedStyle(this.node).position === "static") {
-					this.node.style.position = "absolute";
-				}
-				if (!this.node.style.left) this.node.style.left = "0px";
-				if (!this.node.style.top) this.node.style.top = "0px";
-				if (!this.node.style.visibility) this.node.style.visibility = "hidden";
-				if (this.node.parentNode) this.node.parentNode.removeChild(this.node);
-				b.appendChild(this.node);
-			}
+			prepareOverlayHost(this.node, this._container);
 		}
 		this.focused = !!this._config.focused;
 		this._className = this._config.className || null;
@@ -53,17 +47,20 @@ class Caret {
 		this._destroyed = false;
 		this._measureCanvas = document.createElement("canvas");
 		this._onSelectionChange = this._onSelectionChange.bind(this);
-		if (this.mode !== "native" && this.node) {
-			this.node.setAttribute("aria-hidden", "true");
-			this.node.style.pointerEvents = "none";
-			if (getComputedStyle(this.node).position === "static") {
-				this.node.style.position = "absolute";
-			}
-		}
 		if (this.mode !== "native") {
 			document.addEventListener("selectionchange", this._onSelectionChange);
 		}
 		this._applyInitialVisual();
+	}
+
+	// Method: setContainer
+	// Mounts the caret node under `container` (typically the editor root's parent).
+	setContainer(container) {
+		this._container = container ?? null;
+		if (this.mode === "virtual" && this.node) {
+			prepareOverlayHost(this.node, this._container);
+		}
+		return this;
 	}
 
 	_applyInitialVisual() {
@@ -263,9 +260,14 @@ class Caret {
 				left.node?.nodeType === Node.ELEMENT_NODE
 					? this._edgeRect(this._deepCaretPoint(left.node, "end")?.node, "end")
 					: null;
+			const local = clientToOffsetParent(
+				left.rect.right,
+				point?.rect.top ?? left.rect.top,
+				this.node,
+			);
 			return {
-				x: left.rect.right + window.scrollX,
-				y: (point?.rect.top ?? left.rect.top) + window.scrollY,
+				x: local.x,
+				y: local.y,
 				height: left.rect.height,
 				source: "left-boundary",
 			};
@@ -277,9 +279,14 @@ class Caret {
 				right.node?.nodeType === Node.ELEMENT_NODE
 					? this._edgeRect(this._deepCaretPoint(right.node, "start")?.node, "start")
 					: null;
+			const local = clientToOffsetParent(
+				right.rect.left,
+				point?.rect.top ?? right.rect.top,
+				this.node,
+			);
 			return {
-				x: right.rect.left + window.scrollX,
-				y: (point?.rect.top ?? right.rect.top) + window.scrollY,
+				x: local.x,
+				y: local.y,
 				height: right.rect.height,
 				source: "right-boundary",
 			};
@@ -406,8 +413,13 @@ class Caret {
 				: null;
 		const rect = result?.rect;
 		if (rect && (rect.width !== 0 || rect.height !== 0)) {
-			const x = rect.left + window.scrollX + (rect.width === 0 ? trailingSpaceWidth : 0);
-			const y = rect.top + window.scrollY;
+			const local = clientToOffsetParent(
+				rect.left + (rect.width === 0 ? trailingSpaceWidth : 0),
+				rect.top,
+				this.node,
+			);
+			const x = local.x;
+			const y = local.y;
 			if (editable) {
 				this._showAt(x, y, rect.height);
 			} else {
@@ -504,6 +516,19 @@ class Cursor {
 		this._input = input;
 		this._eventFocusedNode = null;
 		this._eventActivePath = [];
+		this.bindOverlayHosts();
+	}
+
+	// Method: bindOverlayHosts
+	// Mounts virtual caret/selection hosts as siblings of the editor root so they
+	// share the same scroll and offset parent as the edited content.
+	bindOverlayHosts() {
+		const root = this.editor?.root;
+		const container = root?.parentNode;
+		if (!container || container.nodeType !== Node.ELEMENT_NODE) return this;
+		this.selection?.overlay?.setContainer?.(container);
+		this.caret?.setContainer?.(container);
+		return this;
 	}
 
 	// Property: editor

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Overlay Position (bare nodes) Test</title>
+  <style>
+    body { margin: 0; font: 14px/1.25 system-ui, sans-serif; }
+    /* Mirrors LarryTextEditor: padded relative host, cover editor, bare overlay nodes */
+    .shell {
+      position: relative;
+      padding: 14px;
+      margin: 16px;
+      width: 420px;
+      border: 1px solid #ccc;
+    }
+    #editor {
+      position: absolute;
+      inset: 0;
+      outline: none;
+    }
+    #editor p { margin: 0; }
+  </style>
+  <script type="importmap">
+  { "imports": {
+    "structural/editor": "/src/js/structural/editor.js",
+    "structural/cursor": "/src/js/structural/cursor.js",
+    "structural/text": "/src/js/structural/text.js",
+    "structural/selection": "/src/js/structural/selection.js",
+    "structural/range": "/src/js/structural/range.js",
+    "structural/modification": "/src/js/structural/modification.js"
+  }}
+  </script>
+</head>
+<body>
+  <div class="shell" id="shell">
+    <div id="editor">
+      <p>Antony Barbara Head owns their home and resides together.</p>
+    </div>
+  </div>
+  <script type="module">
+    import { Editor } from "structural/editor";
+
+    function measure(el) {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    }
+
+    function near(a, b, tol = 1.5) {
+      return Math.abs(a - b) <= tol;
+    }
+
+    try {
+      const shell = document.getElementById("shell");
+      const root = document.getElementById("editor");
+      // Bare nodes — same as LarryTextEditor (no pre-set position/CSS)
+      const caretHost = document.createElement("div");
+      const selectionHost = document.createElement("div");
+
+      const editor = new Editor(root, {
+        caret: {
+          mode: "virtual",
+          node: caretHost,
+          className: "TestCaret",
+          focused: true,
+          styles: {
+            default: { background: "#c00", width: "2px" },
+            focus: { background: "#c00", width: "2px" },
+          },
+        },
+        selection: {
+          mode: "virtual",
+          node: selectionHost,
+          className: "TestSelection",
+          styles: {
+            default: { background: "rgba(255,136,0,0.3)" },
+          },
+        },
+      });
+
+      const caretPosition = getComputedStyle(caretHost).position;
+      const selectionPosition = getComputedStyle(selectionHost).position;
+      const caretParent = caretHost.parentNode === shell;
+      const selectionParent = selectionHost.parentNode === shell;
+
+      const text = root.querySelector("p").firstChild;
+      const mid = editor.text.indexOfPoint({ node: text, offset: 10 });
+      editor.input.cursor.moveTo(mid);
+
+      const caretCs = getComputedStyle(caretHost);
+      const caretRect = measure(caretHost);
+      const point = editor.text.pointAt(mid);
+      const range = document.createRange();
+      range.setStart(point.node, point.offset);
+      range.collapse(true);
+      const expected = range.getBoundingClientRect();
+
+      const caretAlign =
+        caretCs.position === "absolute"
+        && caretCs.visibility === "visible"
+        && near(caretRect.left, expected.left)
+        && near(caretRect.top, expected.top)
+        && caretRect.height >= 1;
+
+      const start = editor.text.indexOfPoint({ node: text, offset: 0 });
+      const end = editor.text.indexOfPoint({ node: text, offset: 12 });
+      editor.input.cursor.select(start, end);
+      const domRange = editor.input.cursor.selection.toDomRange();
+      const expectedBlocks = Array.from(domRange.getClientRects())
+        .filter((r) => r.width !== 0 || r.height !== 0)
+        .map((r) => ({ left: r.left, top: r.top, width: r.width, height: r.height }));
+      const blocks = [...selectionHost.children].map(measure);
+      const selectionAlign =
+        selectionPosition === "absolute"
+        && expectedBlocks.length > 0
+        && blocks.length === expectedBlocks.length
+        && blocks.every((b, i) =>
+          near(b.left, expectedBlocks[i].left)
+          && near(b.top, expectedBlocks[i].top)
+          && near(b.width, expectedBlocks[i].width)
+          && near(b.height, expectedBlocks[i].height));
+
+      // Typing should keep caret absolute and aligned
+      editor.input.cursor.moveTo(mid);
+      editor.input.cursor.insertText("X");
+      const after = editor.input.cursor.offset;
+      const afterPoint = editor.text.pointAt(after);
+      const afterRange = document.createRange();
+      afterRange.setStart(afterPoint.node, afterPoint.offset);
+      afterRange.collapse(true);
+      const afterExpected = afterRange.getBoundingClientRect();
+      const afterCaret = measure(caretHost);
+      const caretAfterType =
+        getComputedStyle(caretHost).position === "absolute"
+        && near(afterCaret.left, afterExpected.left)
+        && near(afterCaret.top, afterExpected.top);
+
+      // Long single-block vertical navigation (perf + correctness)
+      editor.input.cursor.moveTo(0);
+      const t0 = performance.now();
+      for (let k = 0; k < 5; k++) editor.input.cursor.down();
+      const dt = performance.now() - t0;
+      const longCaretAbs = getComputedStyle(caretHost).position === "absolute";
+
+      window.__result = {
+        caretPosition,
+        selectionPosition,
+        caretParent,
+        selectionParent,
+        caretAlign,
+        selectionAlign,
+        caretAfterType,
+        caretRect,
+        expected: { left: expected.left, top: expected.top, height: expected.height },
+        blocksCount: blocks.length,
+        expectedBlocksCount: expectedBlocks.length,
+        longMoveMs: dt,
+        longCaretAbs,
+      };
+    } catch (error) {
+      window.__result = { error: String(error?.stack || error) };
+    }
+  </script>
+</body>
+</html>
