@@ -1783,3 +1783,146 @@ test("performance: long single paragraph keeps keyboard editing interactions res
 		}
 	});
 });
+
+test("selection: dragging upward from a paragraph end selects preceding text", async () => {
+	await runWithFresh(async (page) => {
+		const points = await page.evaluate(() => {
+			window.__test.setHTML(`<p>${"word ".repeat(70)}</p>`);
+			const node = document.querySelector("#editor p")?.firstChild;
+			if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+			const pointAt = (offset) => {
+				const range = document.createRange();
+				range.setStart(node, offset);
+				range.collapse(true);
+				const rect = range.getBoundingClientRect();
+				return { x: rect.left, y: rect.top + rect.height / 2 };
+			};
+			return { end: pointAt(node.data.length), earlier: pointAt(20) };
+		});
+		if (!points) throw new Error("could not resolve paragraph drag points");
+
+		await page.mouse.move(points.end.x, points.end.y);
+		await page.mouse.down();
+		await page.mouse.move(points.earlier.x, points.earlier.y, { steps: 4 });
+		const selection = await page.evaluate(() => {
+			const cursor = window.__editor.input.cursor;
+			const range = cursor.selection.normalizedRange();
+			return {
+				kind: cursor.selectionKind,
+				anchor: cursor.selection.anchorOffset,
+				focus: cursor.selection.focusOffset,
+				start: range.start,
+				end: range.end,
+			};
+		});
+		await page.mouse.up();
+
+		expect(selection.kind).toBe("range");
+		expect(selection.anchor).toBeGreaterThan(selection.focus);
+		expect(selection.end).toBeGreaterThan(selection.start);
+	});
+});
+
+test("editing: observer rebuild after an insert keeps the next insert in the same late block", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => {
+			const leading = Array.from({ length: 12 }, (_, i) => `<p>lead ${i}</p>`).join("");
+			window.__editor.text.eagerBlockCount = 4;
+			window.__test.setHTML(
+				`${leading}<nav><p>The Mock Turtle's Story</p></nav><p>Alice was beginning to get very tired</p>`,
+			);
+			const node = [...document.querySelectorAll("#editor p")].find((p) =>
+				p.textContent.includes("Alice was beginning"),
+			)?.firstChild;
+			if (!node) throw new Error("late target paragraph missing");
+			const offset = window.__editor.text.indexOfPoint({ node, offset: node.data.length });
+			if (offset < 0) throw new Error("late target paragraph is not indexed");
+			window.__editor.input.cursor.moveTo(offset);
+			window.__editor.input.cursor.insertText("x");
+		});
+
+		// Let the MutationObserver process the first DOM mutation before the next key event.
+		await page.waitForTimeout(20);
+		const state = await page.evaluate(() => {
+			window.__editor.input.cursor.insertText("x");
+			return {
+				target: [...document.querySelectorAll("#editor p")].find((p) =>
+					p.textContent.includes("Alice was beginning"),
+				)?.textContent,
+				toc: [...document.querySelectorAll("#editor p")].find((p) =>
+					p.textContent.includes("The Mock Turtle's Story"),
+				)?.textContent,
+			};
+		});
+
+		expect(state.target).toBe("Alice was beginning to get very tiredxx");
+		expect(state.toc).toBe("The Mock Turtle's Story");
+	});
+});
+
+test("selection: Ctrl+A grows from a paragraph to its section and Ctrl+Shift+A shrinks", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => {
+			window.__test.setHTML(
+				"<nav><p>The Mock Turtle's Story</p></nav><section><p>target paragraph</p><p>second paragraph</p></section><p>outside</p>",
+			);
+			const offset = window.__test.indexOfText("target paragraph", 3);
+			window.__editor.input.cursor.moveTo(offset);
+		});
+		const snapshot = () =>
+			page.evaluate(() => {
+				const cursor = window.__editor.input.cursor;
+				return {
+					scope: cursor._structuralScopeNode?.tagName?.toLowerCase() ?? null,
+					text: cursor.selection.toDomRange()?.toString() ?? "",
+				};
+			});
+
+		await press(page, "Control+A");
+		const paragraph = await snapshot();
+		await press(page, "Control+A");
+		const section = await snapshot();
+		await press(page, "Control+Shift+A");
+		const shrunk = await snapshot();
+
+		expect(paragraph).toEqual({ scope: "p", text: "target paragraph" });
+		expect(section).toEqual({
+			scope: "section",
+			text: "target paragraphsecond paragraph",
+		});
+		expect(shrunk).toEqual({ scope: "p", text: "target paragraph" });
+	});
+});
+
+test("editing: replacing a late selection keeps the next insert in that paragraph", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => {
+			const leading = Array.from({ length: 12 }, (_, i) => `<p>lead ${i}</p>`).join("");
+			window.__editor.text.eagerBlockCount = 4;
+			window.__test.setHTML(
+				`${leading}<p>White Rabbit</p><p>Alice felt VERY tired</p>`,
+			);
+			const start = window.__test.indexOfText("VERY", 0);
+			const end = window.__test.indexOfText("VERY", 4);
+			window.__editor.input.cursor.select(start, end);
+			window.__editor.input.cursor.insertText("X");
+		});
+
+		// The observer must not invalidate the replacement's refreshed positions.
+		await page.waitForTimeout(20);
+		const state = await page.evaluate(() => {
+			window.__editor.input.cursor.insertText("X");
+			return {
+				target: [...document.querySelectorAll("#editor p")].find((p) =>
+					p.textContent.includes("Alice felt"),
+				)?.textContent,
+				previous: [...document.querySelectorAll("#editor p")].find((p) =>
+					p.textContent.includes("White Rabbit"),
+				)?.textContent,
+			};
+		});
+
+		expect(state.target).toBe("Alice felt XX tired");
+		expect(state.previous).toBe("White Rabbit");
+	});
+});

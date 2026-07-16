@@ -421,7 +421,17 @@ class TextAdapter {
 	}
 
 	_endEdit() {
-		this._editDepth = Math.max(0, (this._editDepth | 0) - 1);
+		// MutationObserver delivery occurs at the microtask checkpoint after a
+		// synchronous DOM edit. Keep the transaction active through that delivery
+		// so the observer does not invalidate the incremental refresh we just did.
+		const release = () => {
+			this._editDepth = Math.max(0, (this._editDepth | 0) - 1);
+		};
+		if (typeof queueMicrotask === "function") {
+			queueMicrotask(release);
+		} else {
+			Promise.resolve().then(release);
+		}
 	}
 
 	// Rebuilds slots for a single known block and renumbers the rest of the window.

@@ -571,7 +571,7 @@ class RichText {
 
 	ensureTextTarget(block) {
 		if (!block) return null;
-		let tn = this.firstTextNode(block);
+		const tn = this.firstTextNode(block);
 		if (tn) return tn;
 		for (const ch of block.childNodes) {
 			if (ch.nodeType === Node.TEXT_NODE) return ch;

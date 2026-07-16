@@ -562,11 +562,11 @@ class EditorSession {
 		this.actor = options.actor ?? id;
 		this.mode = options.mode ?? "insert";
 		const caretOpt =
-			options.caret !== undefined ? options.caret : options.cursor && options.cursor.caret;
+			options.caret !== undefined ? options.caret : options.cursor?.caret;
 		const selOpt =
 			options.selection !== undefined
 				? options.selection
-				: options.cursor && options.cursor.selection;
+				: options.cursor?.selection;
 		const wantNativeCaret = caretOpt === "native" || (caretOpt && caretOpt.mode === "native");
 		const wantNativeSel = selOpt === "native" || (selOpt && selOpt.mode === "native");
 		this.nativeSelection =
@@ -900,12 +900,11 @@ class EditorTextInput {
 	// Syncs native browser selection back into the structural cursor so range replace works after mouse selection.
 	onSelectionChange() {
 		try {
-			const sel = window.getSelection && window.getSelection();
+			const sel = window.getSelection?.();
 			if (sel && sel.rangeCount > 0) {
 				const r = sel.getRangeAt(0);
-				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
-					this.editor.selection &&
-						this.editor.selection.syncFromNative(this.editor.root, this.session);
+				if (this.editor?.range?.within(this.editor.root, r)) {
+					this.editor.selection?.syncFromNative(this.editor.root, this.session);
 				}
 			}
 		} catch (_) {}
@@ -919,12 +918,11 @@ class EditorTextInput {
 		// Ensure structural selection/caret matches any native selection (e.g. mouse select then type/delete)
 		// so that range replace (override) works.
 		try {
-			const sel = window.getSelection && window.getSelection();
+			const sel = window.getSelection?.();
 			if (sel && sel.rangeCount > 0) {
 				const r = sel.getRangeAt(0);
-				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
-					this.editor.selection &&
-						this.editor.selection.syncFromNative(this.editor.root, this.session);
+				if (this.editor?.range?.within(this.editor.root, r)) {
+					this.editor.selection?.syncFromNative(this.editor.root, this.session);
 				}
 			}
 		} catch (_) {}
@@ -994,12 +992,11 @@ class EditorTextInput {
 	// After a mouse gesture, sync native selection back to structural so range replace works.
 	onMouseUp(_event) {
 		try {
-			const sel = window.getSelection && window.getSelection();
+			const sel = window.getSelection?.();
 			if (sel && sel.rangeCount > 0) {
 				const r = sel.getRangeAt(0);
-				if (this.editor && this.editor.range && this.editor.range.within(this.editor.root, r)) {
-					this.editor.selection &&
-						this.editor.selection.syncFromNative(this.editor.root, this.session);
+				if (this.editor?.range?.within(this.editor.root, r)) {
+					this.editor.selection?.syncFromNative(this.editor.root, this.session);
 				}
 			}
 		} catch (_) {}
@@ -1019,7 +1016,7 @@ class EditorTextInput {
 			}
 			return;
 		}
-		const root = this.editor && this.editor.root;
+		const root = this.editor?.root;
 		if (!root) return;
 		let focus = null;
 		if (
@@ -1032,7 +1029,7 @@ class EditorTextInput {
 				event.clientY,
 				this.session,
 			);
-		} else if (this.session && this.session.cursor) {
+		} else if (this.session?.cursor) {
 			focus = this.session.cursor.offsetFromPointIn(root, event.clientX, event.clientY);
 		}
 		if (focus == null || focus === this._dragFocus) return;
@@ -1108,7 +1105,7 @@ class EditorTextInput {
 			const active = this.editor.activeSession(this.session);
 			const cur = active.cursor;
 			const anchor =
-				cur.selection && cur.selection.isActive
+				cur.selection?.isActive
 					? cur.selection.anchorOffset
 					: (cur.offset ?? focus);
 			this.editor.selection.select(anchor, focus, this.session);
@@ -1118,10 +1115,26 @@ class EditorTextInput {
 		}
 
 		// Normal click: place caret (this will be the drag anchor if user starts dragging)
-		// FIXME: Not great to have this here
-		this.editor.selection.placeCaretFromPoint(root, event.clientX, event.clientY, this.session);
+		// Reuse the resolved offset above. Resolving it again through setCaret() can
+		// refresh the text cache and, at a paragraph edge, may choose an outer
+		// boundary instead of the text endpoint used to start a drag.
 		const active = this.editor.activeSession(this.session);
-		this._dragAnchor = active && active.cursor ? active.cursor.offset : null;
+		let placed = false;
+		if (focus != null && active?.cursor) {
+			active.cursor._desiredX = null;
+			active.cursor.moveTo(focus);
+			this.editor.selection.syncToNative(active);
+			placed = true;
+		} else {
+			const block = this.editor.blockFor?.(targetElement) ?? root;
+			placed = this.editor.selection.placeCaretFromPoint(
+				block,
+				event.clientX,
+				event.clientY,
+				this.session,
+			);
+		}
+		this._dragAnchor = placed && active?.cursor ? active.cursor.offset : null;
 	}
 }
 
@@ -1263,13 +1276,16 @@ class Editor {
 	// Converts an element's text contents to the editor's logical selection range.
 	structuralRangeFor(node) {
 		if (!node?.isConnected) return null;
-		this.text.refresh();
-		if (node === this.root) {
-			return { start: 0, end: this.text.clampIndex(0x7fffffff) };
-		}
-		const length = this.text.offsetWithin(node, { node, offset: node.childNodes.length });
+		// Do not refresh the lazy position window here. Ctrl+A grows a DOM scope one
+		// level at a time; rebuilding from the document start can remap the active
+		// numeric cursor offset into an unrelated early block.
 		const startPoint = this.text.pointAtOffsetWithin(node, 0, "forward");
-		const endPoint = this.text.pointAtOffsetWithin(node, Math.max(0, length), "backward");
+		let lastText = null;
+		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) lastText = walker.currentNode;
+		const endPoint = lastText
+			? { node: lastText, offset: lastText.data.length }
+			: { node, offset: node.childNodes.length };
 		const start = startPoint ? this.text.indexOfPoint(startPoint) : -1;
 		const end = endPoint ? this.text.indexOfPoint(endPoint) : -1;
 		return start >= 0 && end >= start ? { start, end } : null;
@@ -1299,49 +1315,32 @@ class Editor {
 	// "only select the current block and expand up if the current block is selected".
 	selectStructuralScope(mode = "expand", session = null) {
 		const active = this.activeSession(session);
-		const scopes = this.structuralScopes(active);
+		const storedScopes = active.cursor._structuralScopePath?.filter((node) => node.isConnected);
+		const scopes = storedScopes?.length ? storedScopes : this.structuralScopeNodes(active);
 		if (!scopes.length) return false;
-
-		const pos = active.cursor.offset ?? 0;
-		// Find innermost scope containing the caret (scopes[0] is innermost)
-		let currentIdx = 0;
-		for (let i = 0; i < scopes.length; i += 1) {
-			const s = scopes[i];
-			if (pos >= s.start && pos <= s.end) {
-				currentIdx = i;
-				break;
-			}
-		}
-
-		const currentBlock = scopes[currentIdx];
-		const sel = active.cursor.selection.normalizedRange() || { start: pos, end: pos };
-		const exactlyCurrent = sel.start === currentBlock.start && sel.end === currentBlock.end;
+		let currentIdx = scopes.indexOf(active.cursor._structuralScopeNode);
 
 		if (mode === "contract") {
-			if (currentIdx === 0 || exactlyCurrent) {
-				// contract from current block → collapse inside it (or to focus)
+			if (currentIdx <= 0) {
+				// Contract from the innermost scope to a caret at the current focus.
 				active.cursor.moveTo(
-					active.cursor.selection.focusOffset ?? active.cursor.offset ?? currentBlock.start,
+					active.cursor.selection.focusOffset ?? active.cursor.offset ?? 0,
 				);
 				return this.selection.syncToNative(active);
 			}
-			// contract to previous (inner) scope
-			const target = scopes[currentIdx - 1];
-			this.selection.select(target.start, target.end, active);
-			return this.selection.syncToNative(active);
+			currentIdx -= 1;
+		} else {
+			// First Ctrl+A selects the innermost block; subsequent presses move to
+			// its enclosing DOM scopes without relying on rebuilt numeric offsets.
+			currentIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, scopes.length - 1);
 		}
 
-		// expand mode (the common Ctrl-A case)
-		if (!exactlyCurrent) {
-			// First press (or selection not exactly the block): select the current block only
-			this.selection.select(currentBlock.start, currentBlock.end, active);
-			return this.selection.syncToNative(active);
-		}
-
-		// Already exactly the current block → expand up to parent scope
-		const nextIdx = Math.min(currentIdx + 1, scopes.length - 1);
-		const target = scopes[nextIdx];
-		this.selection.select(target.start, target.end, active);
+		const target = scopes[currentIdx];
+		const range = this.structuralRangeFor(target);
+		if (!range) return false;
+		this.selection.select(range.start, range.end, active);
+		active.cursor._structuralScopeNode = target;
+		active.cursor._structuralScopePath = scopes;
 		return this.selection.syncToNative(active);
 	}
 
@@ -1477,7 +1476,7 @@ class Editor {
 			// Force using target's BCR; fall back to a positive height so caret shows
 			// even if target has no intrinsic size yet (empty placeholder before styles/content).
 			const cr = target.getBoundingClientRect ? target.getBoundingClientRect() : null;
-			if (cr && active.cursor && active.cursor.caret && active.cursor.caret.node) {
+		if (cr && active.cursor?.caret?.node) {
 				const c = active.cursor.caret;
 				const h = cr.height > 0 ? cr.height : 18;
 				const parent = c.node.offsetParent;

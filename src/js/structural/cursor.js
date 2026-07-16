@@ -82,8 +82,8 @@ class Caret {
 		const toAdd = new Set();
 		const add = (v) => {
 			if (!v) return;
-			if (Array.isArray(v)) v.forEach(x => x && toAdd.add(String(x)));
-			else String(v).split(/\s+/).forEach(x => x && toAdd.add(x));
+			if (Array.isArray(v)) v.forEach(x => { if (x) toAdd.add(String(x)); });
+			else String(v).split(/\s+/).forEach(x => { if (x) toAdd.add(x); });
 		};
 		add(this._className);
 		if (stateCfg?.classes) {
@@ -105,11 +105,11 @@ class Caret {
 		merge(stateCfg?.byKey || null);
 		merge(stateCfg?.direct || null);
 		for (const p of this._managedStyleProps) {
-			if (!(p in next)) this.node.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+			if (!(p in next)) this.node.style.removeProperty(p.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
 		}
 		const applied = new Set();
 		for (const [k, v] of Object.entries(next)) {
-			const css = k.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+			const css = k.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`);
 			this.node.style.setProperty(css, String(v));
 			applied.add(k);
 		}
@@ -140,7 +140,7 @@ class Caret {
 		if (this.node) {
 			for (const c of this._managedClasses) this.node.classList.remove(c);
 			for (const p of this._managedStyleProps) {
-				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
 			}
 			this.node.style.visibility = "hidden";
 		}
@@ -561,7 +561,7 @@ class Cursor {
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index, { skipBoundaryCollapse: true });
-				try { const ns = window.getSelection && window.getSelection(); if (ns && ns.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
+				try { const ns = window.getSelection?.(); if (ns?.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
 			}
 			return;
 		}
@@ -588,7 +588,7 @@ class Cursor {
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
-				try { const ns = window.getSelection && window.getSelection(); if (ns && ns.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
+				try { const ns = window.getSelection?.(); if (ns?.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
 			}
 			return;
 		}
@@ -607,7 +607,7 @@ class Cursor {
 		// native ranges (from click or prior sync) from causing syncFromNative to jump
 		// the cursor after the DOM mutation + rebuild.
 		try {
-			const sel = this.editor && this.editor.selection;
+			const sel = this.editor?.selection;
 			const active = this.editor ? this.editor.activeSession() : null;
 			if (sel && typeof sel.syncToNative === 'function') sel.syncToNative(active);
 		} catch (_) {}
@@ -622,7 +622,7 @@ class Cursor {
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
-				try { const ns = window.getSelection && window.getSelection(); if (ns && ns.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
+				try { const ns = window.getSelection?.(); if (ns?.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
 			}
 			return;
 		}
@@ -639,7 +639,7 @@ class Cursor {
 		});
 		// Force native selection to our new structural position (see backspace).
 		try {
-			const sel = this.editor && this.editor.selection;
+			const sel = this.editor?.selection;
 			const active = this.editor ? this.editor.activeSession() : null;
 			if (sel && typeof sel.syncToNative === 'function') sel.syncToNative(active);
 		} catch (_) {}
@@ -891,9 +891,9 @@ class Cursor {
 	_ensureSelectionFromNativeIfPresent() {
 		try {
 			const ed = this.editor;
-			if (!ed || !ed.root || !ed.range || !ed.selection) return;
+			if (!ed?.root || !ed.range || !ed.selection) return;
 			const ns = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null;
-			if (!ns || !ns.rangeCount) return;
+			if (!ns?.rangeCount) return;
 			const nr = ns.getRangeAt(0);
 			if (!nr) return;
 			if (!ed.range.within(ed.root, nr)) return;
@@ -1627,6 +1627,10 @@ class Cursor {
 	moveTo(offset, options = {}) {
 		this.text.ensureIndex(offset);
 		const previous = this._snapshot();
+		// Any explicit caret movement begins a new structural-scope selection
+		// sequence; Ctrl+A expansion state is only valid while its range remains.
+		this._structuralScopeNode = null;
+		this._structuralScopePath = null;
 		const move = this._resolveMoveOffset(offset, options);
 		if (!move) {
 			this._clearNodeSelection();

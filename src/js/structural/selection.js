@@ -196,7 +196,7 @@ class SelectionOverlay {
 		};
 		add(this._className);
 		if (stateCfg?.classes) {
-			add(stateCfg.classes["selected"] || stateCfg.classes[state] || stateCfg.classes.default || null);
+			add(stateCfg.classes.selected || stateCfg.classes[state] || stateCfg.classes.default || null);
 		}
 		for (const c of this._managedClasses) {
 			if (!toAdd.has(c)) block.classList.remove(c);
@@ -211,11 +211,11 @@ class SelectionOverlay {
 		merge(stateCfg?.byKey || null);
 		merge(stateCfg?.direct || null);
 		for (const p of this._managedStyleProps) {
-			if (!(p in next)) block.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+			if (!(p in next)) block.style.removeProperty(p.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
 		}
 		const applied = new Set();
 		for (const [k, v] of Object.entries(next)) {
-			const css = k.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+			const css = k.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`);
 			block.style.setProperty(css, String(v));
 			applied.add(k);
 		}
@@ -241,7 +241,7 @@ class SelectionOverlay {
 		if (this.node) {
 			for (const c of this._managedClasses) this.node.classList.remove(c);
 			for (const p of this._managedStyleProps) {
-				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => "-" + m.toLowerCase()));
+				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
 			}
 			this.node.style.visibility = "hidden";
 		}
@@ -267,7 +267,7 @@ class TextSelection {
 			selCfg = options.selection || options.selectionConfig || options;
 		}
 		if (typeof selCfg === "string") selCfg = { mode: selCfg };
-		this.mode = (selCfg && selCfg.mode) || selCfg?.selectionMode || "virtual";
+		this.mode = (selCfg?.mode) || selCfg?.selectionMode || "virtual";
 		// normalize shorthand
 		const overlayCfg = (typeof selCfg === "object" && selCfg) ? { ...selCfg, mode: this.mode } : { mode: this.mode };
 		// legacy hostId support
@@ -342,8 +342,8 @@ class TextSelection {
 		this.focusOffset = cf;
 		const ap = this.cursor.text.pointAt(ca);
 		const fp = this.cursor.text.pointAt(cf);
-		this._anchorPoint = ap && ap.node ? { node: ap.node, offset: ap.offset } : null;
-		this._focusPoint = fp && fp.node ? { node: fp.node, offset: fp.offset } : null;
+		this._anchorPoint = ap?.node ? { node: ap.node, offset: ap.offset } : null;
+		this._focusPoint = fp?.node ? { node: fp.node, offset: fp.offset } : null;
 		return this;
 	}
 
@@ -530,12 +530,12 @@ class TextSelection {
 			// Robust fallback: if browser still has a live non-collapsed selection
 			// inside the editor, use it directly so replace always overrides.
 			try {
-				const ns = window.getSelection && window.getSelection();
+			const ns = window.getSelection?.();
 				if (ns && ns.rangeCount > 0) {
 					const nr = ns.getRangeAt(0);
-					const ed = this.cursor && this.cursor.editor;
-					const root = ed && ed.root;
-					if (root && ed.range && ed.range.within(root, nr) && !nr.collapsed) {
+					const ed = this.cursor?.editor;
+					const root = ed?.root;
+					if (root && ed.range?.within(root, nr) && !nr.collapsed) {
 						domRange = nr.cloneRange();
 					}
 				}
@@ -544,32 +544,38 @@ class TextSelection {
 		if (!domRange) {
 			return null;
 		}
-		let point = null;
-		domRange.deleteContents();
-		if (text.length > 0) {
-			const node = document.createTextNode(text);
-			domRange.insertNode(node);
-			point = { node, offset: text.length };
-		} else {
-			point = {
-				node: domRange.startContainer,
-				offset: domRange.startOffset,
-			};
-		}
-		this.cursor.text.invalidatePositions();
-		// Ensure we can resolve the point after mutation (window may need expand)
-		this.cursor.text.ensurePositions();
-		const nextIndex = point ? this.cursor.text.indexOfPoint(point) : -1;
-		this.clear();
-		// Aggressively clear any lingering native selection so the caret doesn't appear stuck on the old range.
+		const adapter = this.cursor.text;
+		adapter._beginEdit();
 		try {
-			const ns = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null;
-			if (ns && ns.removeAllRanges) ns.removeAllRanges();
-		} catch (_) {}
-		const fb = this.cursor.text.clampIndex((this.cursor && this.cursor.offset) || 0);
-		return {
-			index: nextIndex >= 0 ? nextIndex : fb,
-		};
+			let point = null;
+			domRange.deleteContents();
+			if (text.length > 0) {
+				const node = document.createTextNode(text);
+				domRange.insertNode(node);
+				point = { node, offset: text.length };
+			} else {
+				point = {
+					node: domRange.startContainer,
+					offset: domRange.startOffset,
+				};
+			}
+			adapter.invalidatePositions();
+			// Ensure we can resolve the point after mutation (window may need expand)
+			adapter.ensurePositions();
+			const nextIndex = point ? adapter.indexOfPoint(point) : -1;
+			this.clear();
+			// Aggressively clear any lingering native selection so the caret doesn't appear stuck on the old range.
+			try {
+				const ns = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null;
+			if (ns?.removeAllRanges) ns.removeAllRanges();
+			} catch (_) {}
+		const fb = adapter.clampIndex((this.cursor?.offset) || 0);
+			return {
+				index: nextIndex >= 0 ? nextIndex : fb,
+			};
+		} finally {
+			adapter._endEdit();
+		}
 	}
 }
 
