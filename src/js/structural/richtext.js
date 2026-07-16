@@ -412,6 +412,19 @@ class RichText {
 		if (this.editor.text.isWhitespacePreserved(pointNode)) {
 			return true;
 		}
+		// char.before/after on the current slot miss spaces across inline boundaries
+		// (e.g. caret at start of <em> after "with "). Walk adjacent position slots.
+		const offset = cursor?.offset;
+		if (Number.isInteger(offset)) {
+			this.editor.text.ensureIndex(offset);
+			const positions = this.editor.text.positions();
+			const prev = positions[offset - 1]?.char;
+			const cur = positions[offset]?.char;
+			const next = positions[offset + 1]?.char;
+			const before = cur?.before ?? prev?.after ?? prev?.before ?? "";
+			const after = cur?.after ?? next?.before ?? next?.after ?? "";
+			return !/\s/.test(before) && !/\s/.test(after);
+		}
 		return !/\s/.test(context?.char?.before ?? "") && !/\s/.test(context?.char?.after ?? "");
 	}
 
@@ -428,12 +441,40 @@ class RichText {
 	}
 
 	isFullySelectedBlock(range, block) {
-		const blockRange = document.createRange();
-		blockRange.selectNode(block);
-		return (
-			range.compareBoundaryPoints(Range.START_TO_START, blockRange) <= 0 &&
-			range.compareBoundaryPoints(Range.END_TO_END, blockRange) >= 0
-		);
+		if (!range || !block) return false;
+		const covers = (blockRange) => {
+			try {
+				return (
+					range.compareBoundaryPoints(Range.START_TO_START, blockRange) <= 0 &&
+					range.compareBoundaryPoints(Range.END_TO_END, blockRange) >= 0
+				);
+			} catch (_) {
+				return false;
+			}
+		};
+		const around = document.createRange();
+		around.selectNode(block);
+		if (covers(around)) return true;
+		// Structural selections usually cover node contents, not the element chrome
+		// that Range.selectNode() includes — accept full content coverage too.
+		const contents = document.createRange();
+		contents.selectNodeContents(block);
+		if (covers(contents)) return true;
+		// Fallback: structural indices for the block lie inside the selection.
+		const structural = this.editor.structuralRangeFor?.(block);
+		if (!structural) return false;
+		const start = this.editor.text.indexOfPoint({
+			node: range.startContainer,
+			offset: range.startOffset,
+		});
+		const end = this.editor.text.indexOfPoint({
+			node: range.endContainer,
+			offset: range.endOffset,
+		});
+		if (start < 0 || end < 0) return false;
+		const a = Math.min(start, end);
+		const b = Math.max(start, end);
+		return a <= structural.start && b >= structural.end;
 	}
 
 	fullySelectedBlocks(session = null) {
@@ -483,7 +524,11 @@ class RichText {
 		const range = this.editor.range.current(this.editor.root, session);
 		if (!range?.collapsed) return false;
 		const block = this.blockFor(range.startContainer);
-		if (!block || !this.isEmptyBlock(block)) return false;
+		if (!block) return false;
+		// Treat a caret in a block with no meaningful text as empty so Delete
+		// after splitting at a block end removes the new empty list item / block.
+		const empty = this.isEmptyBlock(block) || !(this.blockText(block) ?? "").replace(/\u200b/g, "").trim();
+		if (!empty) return false;
 		const afterBlock = this.firstBlockIn(block.nextElementSibling);
 		const beforeBlock = this.lastBlockIn(block.previousElementSibling);
 		this.removeBlock(block);

@@ -148,6 +148,11 @@ class Modification {
 		}
 
 		this._restoreCursor();
+		// Keep native selection aligned with the remapped structural range so a later
+		// keydown does not re-import a stale pre-wrap browser range.
+		try {
+			this.editor.selection?.syncToNative(this.session ?? this.editor.localSession);
+		} catch (_) {}
 	}
 
 	// Method: _overlappingTags
@@ -448,35 +453,21 @@ class Modification {
 	// Method: _wrapperBounds
 	// Internal helper to compute start and end indices of text enclosed in wrapper element.
 	_wrapperBounds(wrapper) {
+		if (!wrapper?.isConnected) return null;
 		this.text.ensurePositions();
-		const positions = this.text.positions();
-		let outerStart = -1;
-		let outerEnd = -1;
-		for (let i = 0; i < positions.length; i += 1) {
-			const slot = positions[i];
-			if (outerStart < 0 && slot.boundary?.rightNode === wrapper) outerStart = i;
-			if (outerStart >= 0 && slot.boundary?.leftNode === wrapper && slot.boundary?.rightNode !== wrapper) {
-				outerEnd = i;
-				break;
-			}
+		// Prefer DOM points inside the wrapper over boundary-slot heuristics. Boundary
+		// adjacency on the previous sibling text node can look like "inside" the mark.
+		const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+		let first = null;
+		let last = null;
+		while (walker.nextNode()) {
+			if (!first) first = walker.currentNode;
+			last = walker.currentNode;
 		}
-		if (outerStart < 0 || outerEnd < 0) return null;
-
-		let start = -1;
-		for (let i = outerStart + 1; i < outerEnd; i += 1) {
-			if (positions[i].point?.node?.nodeType === Node.TEXT_NODE) {
-				start = i;
-				break;
-			}
-		}
-		let end = -1;
-		for (let i = outerEnd - 1; i > outerStart; i -= 1) {
-			if (positions[i].point?.node?.nodeType === Node.TEXT_NODE) {
-				end = i + 1;
-				break;
-			}
-		}
-		return start >= 0 && end >= 0 ? { start, end } : null;
+		if (!first || !last) return null;
+		const start = this.text.indexOfPoint({ node: first, offset: 0 });
+		const end = this.text.indexOfPoint({ node: last, offset: last.data.length });
+		return start >= 0 && end >= start ? { start, end } : null;
 	}
 
 	// Method: _heading

@@ -81,8 +81,15 @@ class TextAdapter {
 	}
 
 	_graphemeBoundaries(text = "", node = null) {
+		// Cache is keyed by text node identity. splitText/extractContents keep the
+		// same node object while changing node.data — reject stale entries whose
+		// last boundary no longer matches the current text length.
 		if (node && this._graphemeCache?.has(node)) {
-			return this._graphemeCache.get(node);
+			const cached = this._graphemeCache.get(node);
+			if (cached[cached.length - 1] === text.length) {
+				return cached;
+			}
+			this._graphemeCache.delete(node);
 		}
 		const boundaries = [0];
 		if (!text) {
@@ -107,9 +114,6 @@ class TextAdapter {
 	}
 
 	_graphemeCount(text = "", node = null) {
-		if (node && this._graphemeCache?.has(node)) {
-			return Math.max(0, this._graphemeCache.get(node).length - 1);
-		}
 		return Math.max(0, this._graphemeBoundaries(text, node).length - 1);
 	}
 

@@ -831,6 +831,10 @@ class EditorTextInput {
 		this._onSelectionChange = this.onSelectionChange.bind(this);
 		this._dragAnchor = null;
 		this._dragFocus = null;
+		// While true, ignore collapsed browser carets (click placement is often off-by-one
+		// vs our point resolution). Cleared after mouseup re-asserts structural→native.
+		this._suppressCollapsedNative = false;
+		this._syncingNative = false;
 		let c = options.caret;
 		if (c === undefined) c = options.cursor?.caret;
 		if (typeof c === "string") c = { mode: c };
@@ -897,35 +901,55 @@ class EditorTextInput {
 	}
 
 	// Method: onSelectionChange
-	// Syncs native browser selection back into the structural cursor so range replace works after mouse selection.
+	// Syncs browser selection into the structural cursor. Collapsed carets are skipped
+	// while a click is in progress (_suppressCollapsedNative) or in virtual-only mode.
 	onSelectionChange() {
+		if (this._dragAnchor != null || this._syncingNative) return;
+		this._syncNativeSelection({ allowCollapsed: true });
+	}
+
+	// Method: _syncNativeSelection
+	// Imports browser selection into structural state.
+	// - Non-collapsed ranges always import (mouse drag / programmatic select).
+	// - Collapsed carets import only when allowCollapsed and not suppressed (suppressed
+	//   between mousedown placement and mouseup re-assert, to ignore off-by-one clicks).
+	_syncNativeSelection({ allowCollapsed = false } = {}) {
+		if (this._syncingNative) return;
 		try {
 			const sel = window.getSelection?.();
-			if (sel && sel.rangeCount > 0) {
-				const r = sel.getRangeAt(0);
-				if (this.editor?.range?.within(this.editor.root, r)) {
-					this.editor.selection?.syncFromNative(this.editor.root, this.session);
-				}
+			if (!sel || sel.rangeCount === 0) return;
+			if (sel.isCollapsed && (!allowCollapsed || this._suppressCollapsedNative)) return;
+			const r = sel.getRangeAt(0);
+			if (this.editor?.range?.within(this.editor.root, r)) {
+				this._syncingNative = true;
+				this.editor.selection?.syncFromNative(this.editor.root, this.session);
 			}
-		} catch (_) {}
+		} catch (_) {
+		} finally {
+			this._syncingNative = false;
+		}
 	}
 
 	// Method: onKeyDown
 	// Handles key presses translating arrows, deletes, letters to cursor calls.
 	onKeyDown(event) {
-		if (this.editor?.handleKeyEvent(event, this.session)) return;
-
-		// Ensure structural selection/caret matches any native selection (e.g. mouse select then type/delete)
-		// so that range replace (override) works.
-		try {
-			const sel = window.getSelection?.();
-			if (sel && sel.rangeCount > 0) {
-				const r = sel.getRangeAt(0);
-				if (this.editor?.range?.within(this.editor.root, r)) {
-					this.editor.selection?.syncFromNative(this.editor.root, this.session);
-				}
+		// Sync before keymap actions (Ctrl+A, Enter, …) so programmatic/native carets win.
+		// Do not overwrite an existing structural range (format ops remap it carefully).
+		const kind = this.cursor?.selectionKind;
+		if (kind !== "range" && kind !== "node") {
+			this._syncNativeSelection({ allowCollapsed: true });
+		}
+		if (this.editor?.handleKeyEvent(event, this.session)) {
+			// Keymap handlers (arrows, deleteSmart, …) move the structural caret;
+			// re-assert native so the next insert does not re-import a stale range.
+			this._syncingNative = true;
+			try {
+				this.editor.selection?.syncToNative(this.session);
+			} finally {
+				this._syncingNative = false;
 			}
-		} catch (_) {}
+			return;
+		}
 
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
 
@@ -989,17 +1013,33 @@ class EditorTextInput {
 	}
 
 	// Method: onMouseUp
-	// After a mouse gesture, sync native selection back to structural so range replace works.
+	// After a drag gesture, keep structural selection (already updated in mousemove).
+	// Simple clicks: re-assert structural placement so Chromium's center-of-glyph caret
+	// cannot override mousedown. Range selections (drag or double-click word) are kept.
 	onMouseUp(_event) {
-		try {
-			const sel = window.getSelection?.();
-			if (sel && sel.rangeCount > 0) {
-				const r = sel.getRangeAt(0);
-				if (this.editor?.range?.within(this.editor.root, r)) {
-					this.editor.selection?.syncFromNative(this.editor.root, this.session);
-				}
+		const didDrag =
+			this._dragAnchor != null &&
+			this._dragFocus != null &&
+			this._dragFocus !== this._dragAnchor;
+		const active = this.editor?.activeSession?.(this.session);
+		if (active?.cursor?.selectionKind === "range") {
+			// Drag or multi-click word/block selection — keep it and align native.
+			this._syncingNative = true;
+			try {
+				this.editor.selection?.syncToNative(active);
+			} finally {
+				this._syncingNative = false;
 			}
-		} catch (_) {}
+		} else if (didDrag) {
+			this._syncNativeSelection({ allowCollapsed: false });
+		} else if (active) {
+			// Prefer a non-collapsed native selection (browser multi-click) when present.
+			this._syncNativeSelection({ allowCollapsed: false });
+			if (active.cursor?.selectionKind !== "range") {
+				this.editor.selection?.syncToNative(active);
+			}
+		}
+		this._suppressCollapsedNative = false;
 		this._dragAnchor = null;
 		this._dragFocus = null;
 	}
@@ -1114,11 +1154,54 @@ class EditorTextInput {
 			return;
 		}
 
+		const active = this.editor.activeSession(this.session);
+
+		// Double-click selects the word; triple+ selects the current block. Do not
+		// collapse to a caret first — that was wiping browser multi-click selection.
+		if (event.detail >= 2 && focus != null && active?.cursor) {
+			active.cursor._desiredX = null;
+			active.cursor.moveTo(focus, { skipBoundaryCollapse: true });
+			if (event.detail === 2) {
+				const word = this._wordRangeAt(active.cursor.offset);
+				if (word) {
+					this.editor.selection.select(word.start, word.end, this.session);
+					this._syncingNative = true;
+					try {
+						this.editor.selection.syncToNative(active);
+					} finally {
+						this._syncingNative = false;
+					}
+					this._suppressCollapsedNative = false;
+					this._dragAnchor = null;
+					this._dragFocus = null;
+					return;
+				}
+			} else {
+				const block =
+					this.editor.blockFor?.(active.cursor.anchor) ??
+					this.editor.blockFor?.(targetElement) ??
+					root;
+				const range = this.editor.structuralRangeFor?.(block);
+				if (range && range.end > range.start) {
+					this.editor.selection.select(range.start, range.end, this.session);
+					this._syncingNative = true;
+					try {
+						this.editor.selection.syncToNative(active);
+					} finally {
+						this._syncingNative = false;
+					}
+					this._suppressCollapsedNative = false;
+					this._dragAnchor = null;
+					this._dragFocus = null;
+					return;
+				}
+			}
+		}
+
 		// Normal click: place caret (this will be the drag anchor if user starts dragging)
 		// Reuse the resolved offset above. Resolving it again through setCaret() can
 		// refresh the text cache and, at a paragraph edge, may choose an outer
 		// boundary instead of the text endpoint used to start a drag.
-		const active = this.editor.activeSession(this.session);
 		let placed = false;
 		if (focus != null && active?.cursor) {
 			active.cursor._desiredX = null;
@@ -1134,7 +1217,35 @@ class EditorTextInput {
 				this.session,
 			);
 		}
+		// Suppress collapsed native imports until mouseup re-syncs structural→native.
+		// Otherwise selectionchange/keydown pick up Chromium's post-click caret.
+		this._suppressCollapsedNative = true;
 		this._dragAnchor = placed && active?.cursor ? active.cursor.offset : null;
+	}
+
+	// Method: _wordRangeAt
+	// Returns structural {start,end} covering the word at logical `offset`, or null.
+	_wordRangeAt(offset) {
+		const text = this.editor?.text;
+		if (!text || offset == null) return null;
+		text.ensureIndex(offset);
+		const point = text.pointAt(offset);
+		if (!point || point.node?.nodeType !== Node.TEXT_NODE) return null;
+		const data = point.node.data;
+		let start = point.offset;
+		let end = point.offset;
+		// If caret sits at a boundary after a word char, prefer the word to the left.
+		if (start > 0 && start === end && !/\w/.test(data[start] ?? "") && /\w/.test(data[start - 1] ?? "")) {
+			start -= 1;
+			end = start + 1;
+		}
+		while (start > 0 && /\w/.test(data[start - 1])) start -= 1;
+		while (end < data.length && /\w/.test(data[end])) end += 1;
+		if (start === end) return null;
+		const startIndex = text.indexOfPoint({ node: point.node, offset: start });
+		const endIndex = text.indexOfPoint({ node: point.node, offset: end });
+		if (startIndex < 0 || endIndex < startIndex) return null;
+		return { start: startIndex, end: endIndex };
 	}
 }
 
@@ -1276,16 +1387,37 @@ class Editor {
 	// Converts an element's text contents to the editor's logical selection range.
 	structuralRangeFor(node) {
 		if (!node?.isConnected) return null;
-		// Do not refresh the lazy position window here. Ctrl+A grows a DOM scope one
-		// level at a time; rebuilding from the document start can remap the active
-		// numeric cursor offset into an unrelated early block.
-		const startPoint = this.text.pointAtOffsetWithin(node, 0, "forward");
-		let lastText = null;
-		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-		while (walker.nextNode()) lastText = walker.currentNode;
-		const endPoint = lastText
-			? { node: lastText, offset: lastText.data.length }
-			: { node, offset: node.childNodes.length };
+		// Prefer content text nodes. Formatting-only whitespace between blocks is not
+		// always present in the position index, so a raw TreeWalker end can miss.
+		const acceptContentText = {
+			acceptNode: (n) => {
+				if (!n?.data || !n.data.replace(/\u200b/g, "").trim()) {
+					return NodeFilter.FILTER_REJECT;
+				}
+				if (this.text.isSkipped?.(n.parentElement) || this.text.isSkipped?.(n)) {
+					return NodeFilter.FILTER_REJECT;
+				}
+				return NodeFilter.FILTER_ACCEPT;
+			},
+		};
+		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, acceptContentText);
+		let first = null;
+		let last = null;
+		while (walker.nextNode()) {
+			if (!first) first = walker.currentNode;
+			last = walker.currentNode;
+		}
+		const startPoint = first
+			? { node: first, offset: 0 }
+			: this.text.pointAtOffsetWithin(node, 0, "forward");
+		const endPoint = last
+			? { node: last, offset: last.data.length }
+			: this.text.pointAtOffsetWithin(
+					node,
+					Math.max(0, this.text.offsetWithin(node, { node, offset: node.childNodes.length })),
+					"backward",
+				);
+		// indexOfPoint expands the lazy window as needed for far nodes.
 		const start = startPoint ? this.text.indexOfPoint(startPoint) : -1;
 		const end = endPoint ? this.text.indexOfPoint(endPoint) : -1;
 		return start >= 0 && end >= start ? { start, end } : null;
@@ -1335,13 +1467,19 @@ class Editor {
 			currentIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, scopes.length - 1);
 		}
 
-		const target = scopes[currentIdx];
-		const range = this.structuralRangeFor(target);
-		if (!range) return false;
-		this.selection.select(range.start, range.end, active);
-		active.cursor._structuralScopeNode = target;
-		active.cursor._structuralScopePath = scopes;
-		return this.selection.syncToNative(active);
+		// Walk outward until a resolvable text range is found (root may include
+		// only formatting whitespace at the edges that is not indexable).
+		for (let i = currentIdx; mode === "expand" ? i < scopes.length : i >= 0; mode === "expand" ? (i += 1) : (i -= 1)) {
+			const target = scopes[i];
+			const range = this.structuralRangeFor(target);
+			if (!range || range.end <= range.start) continue;
+			this.selection.select(range.start, range.end, active);
+			active.cursor._structuralScopeNode = target;
+			active.cursor._structuralScopePath = scopes;
+			return this.selection.syncToNative(active);
+		}
+		// Still handled: swallow browser Ctrl+A even if we cannot grow further.
+		return active.cursor.selectionKind === "range";
 	}
 
 	// Method: structuralBlocks

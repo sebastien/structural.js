@@ -233,6 +233,35 @@ test("editing: type moves caret and text appears", async () => {
 	expect(state.offset).toBeGreaterThan(1);
 });
 
+test("editing: double-click selects the word under the cursor", async () => {
+	const browser = await chromium.launch();
+	const page = await loadHarness(browser, "<p>hello world there</p>");
+	const pt = await page.evaluate(() => window.__test.pointForText("world", 1));
+	if (!pt) throw new Error("pointForText failed for world");
+	await page.mouse.dblclick(pt.x, pt.y);
+	await page.waitForTimeout(20);
+	const state = await page.evaluate(() => {
+		const cur = window.__editor.input.cursor;
+		const range = cur.selection?.normalizedRange?.() ?? null;
+		const domText = (() => {
+			const r = cur.selection?.toDomRange?.();
+			return r ? r.toString() : "";
+		})();
+		const nativeText = window.getSelection()?.toString() ?? "";
+		return {
+			selectionKind: cur.selectionKind,
+			range,
+			domText,
+			nativeText,
+		};
+	});
+	await page.close();
+	await browser.close();
+
+	expect(state.selectionKind).toBe("range");
+	expect(state.domText || state.nativeText).toBe("world");
+});
+
 test("editing: backspace then type lands in correct place", async () => {
 	const browser = await chromium.launch();
 	const page = await loadHarness(browser, "<p>hello</p>");

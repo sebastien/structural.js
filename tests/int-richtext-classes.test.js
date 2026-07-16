@@ -375,12 +375,26 @@ test("richtext: backspace at block start merges with previous block", async () =
 test("richtext: tab, shift-tab, and delete operate on blocks", async () => {
 	const browser = await chromium.launch();
 	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	page.setDefaultTimeout(15_000);
 
 	const point = await pointForText(page, "#editor", "Use the heading buttons", 1);
 	await page.mouse.click(point.x, point.y);
 	await page.click('button[data-tag="ul"]');
-	const endPoint = await pointForText(page, "#editor", "structured content", "structured content".length);
-	await page.mouse.click(endPoint.x, endPoint.y);
+	// Place caret at the true end of the list item (including trailing period).
+	await page.evaluate(() => {
+		const li = document.querySelector("#editor ul > li") || document.querySelector("#editor p");
+		const walker = document.createTreeWalker(li, NodeFilter.SHOW_TEXT);
+		let last = null;
+		while (walker.nextNode()) last = walker.currentNode;
+		if (!last) return;
+		const range = document.createRange();
+		range.setStart(last, last.data.length);
+		range.collapse(true);
+		const selection = window.getSelection();
+		selection.removeAllRanges();
+		selection.addRange(range);
+		document.dispatchEvent(new Event("selectionchange"));
+	});
 	await page.keyboard.press("Enter");
 
 	await page.waitForFunction(() => document.querySelectorAll("#editor ul > li").length === 2);
@@ -432,6 +446,7 @@ test("richtext: tab, shift-tab, and delete operate on blocks", async () => {
 test("richtext: enter on empty blocks exits their container", async () => {
 	const browser = await chromium.launch();
 	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	page.setDefaultTimeout(15_000);
 
 	let point = await pointForText(page, "blockquote p", "remove.", "remove.".length);
 	await page.mouse.click(point.x, point.y);
@@ -466,8 +481,21 @@ test("richtext: enter on empty blocks exits their container", async () => {
 	point = await pointForText(page, "#editor", "Use the heading buttons", 1);
 	await page.mouse.click(point.x, point.y);
 	await page.click('button[data-tag="ul"]');
-	const endPoint = await pointForText(page, "#editor", "structured content", "structured content".length);
-	await page.mouse.click(endPoint.x, endPoint.y);
+	// True end of the list item so Enter creates an empty trailing item.
+	await page.evaluate(() => {
+		const li = document.querySelector("#editor ul > li") || document.querySelector("#editor p");
+		const walker = document.createTreeWalker(li, NodeFilter.SHOW_TEXT);
+		let last = null;
+		while (walker.nextNode()) last = walker.currentNode;
+		if (!last) return;
+		const range = document.createRange();
+		range.setStart(last, last.data.length);
+		range.collapse(true);
+		const selection = window.getSelection();
+		selection.removeAllRanges();
+		selection.addRange(range);
+		document.dispatchEvent(new Event("selectionchange"));
+	});
 	await page.keyboard.press("Enter");
 	await page.waitForFunction(() => document.querySelectorAll("#editor ul > li").length === 2);
 	await page.keyboard.press("Enter");

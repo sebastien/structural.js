@@ -76,8 +76,11 @@ class SelectionOverlay {
 			config = { node: config };
 		}
 		this._config = config || {};
-		this.mode = (this._config.mode === "native") ? "native" : "virtual";
-		this.node = (this.mode === "virtual" ? (this._config.node ?? null) : null);
+		// Virtual mode needs an overlay host. Without one, fall back to native so
+		// browser selection remains usable (range replace, clipboard, tests).
+		const wantVirtual = this._config.mode !== "native";
+		this.node = wantVirtual ? (this._config.node ?? null) : null;
+		this.mode = wantVirtual && this.node ? "virtual" : "native";
 		this._container = this._config.container ?? null;
 		// Mount alongside the editor (shared offset/scroll parent), not under body.
 		// Highlight rects are positioned relative to this host.
@@ -120,9 +123,10 @@ class SelectionOverlay {
 	}
 
 	// Method: clear
-	// Clears both native and virtual selections.
+	// Clears the virtual selection overlay. Native selection is left alone so
+	// caret moves (moveTo → clear → setVirtual) do not wipe a just-synced
+	// browser caret; callers that must drop native ranges call _clearNative().
 	clear() {
-		this._clearNative();
 		this._clearVirtual();
 		return { visible: false, mode: null };
 	}
@@ -142,8 +146,9 @@ class SelectionOverlay {
 
 	// Method: _applyVirtual
 	// Renders virtual selection highlights over client rects of the given `range`.
+	// Does not clear the native selection: callers (syncToNative / structural select)
+	// keep a native range for clipboard, getSelection(), and caret import.
 	_applyVirtual(range) {
-		this._clearNative();
 		if (!this.node) {
 			return { visible: false, mode: "virtual" };
 		}
@@ -757,9 +762,10 @@ class EditorSelectionController {
 
 	// Method: syncToNative
 	// Syncs the active structural caret or range to the browser selection.
+	// Always writes a native range so clipboard, getSelection(), and tests stay
+	// consistent even when a virtual caret/selection overlay is also active.
 	syncToNative(session = null) {
 		const active = this.editor.activeSession(session);
-		if (active.nativeSelection === "none") return true;
 		try {
 			const selection = window.getSelection();
 			selection?.removeAllRanges();
@@ -781,6 +787,46 @@ class EditorSelectionController {
 		}
 	}
 
+	// Method: _indexFromRangeBoundary
+	// Resolves a structural index for a DOM Range boundary, including element
+	// offsets used by Range.selectNode() (parent + child index).
+	_indexFromRangeBoundary(container, offset, edge = "start") {
+		if (!container) return -1;
+		if (container.nodeType === Node.TEXT_NODE) {
+			return this.editor.text.indexOfPoint({ node: container, offset });
+		}
+		if (container.nodeType !== Node.ELEMENT_NODE) return -1;
+		const child =
+			edge === "end"
+				? container.childNodes[Math.max(0, offset - 1)]
+				: container.childNodes[offset];
+		if (child?.nodeType === Node.TEXT_NODE) {
+			return this.editor.text.indexOfPoint({
+				node: child,
+				offset: edge === "end" ? child.data.length : 0,
+			});
+		}
+		if (child?.nodeType === Node.ELEMENT_NODE) {
+			const range = this.editor.structuralRangeFor?.(child);
+			if (range) return edge === "end" ? range.end : range.start;
+			const walker = document.createTreeWalker(child, NodeFilter.SHOW_TEXT);
+			let text = null;
+			let first = null;
+			while (walker.nextNode()) {
+				if (!first) first = walker.currentNode;
+				text = walker.currentNode;
+			}
+			const node = edge === "end" ? text : first;
+			if (node) {
+				return this.editor.text.indexOfPoint({
+					node,
+					offset: edge === "end" ? node.data.length : 0,
+				});
+			}
+		}
+		return this.editor.text.indexOfPoint({ node: container, offset });
+	}
+
 	// Method: syncFromNative
 	// Maps the browser selection back into the active structural cursor state.
 	syncFromNative(root = this.editor.root, session = null) {
@@ -788,19 +834,27 @@ class EditorSelectionController {
 		if (!selection?.rangeCount) return false;
 		const range = selection.getRangeAt(0);
 		if (!this.editor.range.within(root, range)) return false;
-		const start = this.editor.text.indexOfPoint({
+		let start = this.editor.text.indexOfPoint({
 			node: range.startContainer,
 			offset: range.startOffset,
 		});
-		const end = this.editor.text.indexOfPoint({
+		let end = this.editor.text.indexOfPoint({
 			node: range.endContainer,
 			offset: range.endOffset,
 		});
+		if (start < 0) {
+			start = this._indexFromRangeBoundary(range.startContainer, range.startOffset, "start");
+		}
+		if (end < 0) {
+			end = this._indexFromRangeBoundary(range.endContainer, range.endOffset, "end");
+		}
 		if (start < 0 || end < 0) return false;
 
 		const active = this.editor.activeSession(session);
 		if (range.collapsed || start === end) {
-			active.cursor.moveTo(end);
+			// Preserve the exact text index from the native caret. Boundary collapse can
+			// push a text-end index onto the following element-boundary and break typing.
+			active.cursor.moveTo(end, { skipBoundaryCollapse: true });
 		} else {
 			active.cursor.select(start, end);
 		}

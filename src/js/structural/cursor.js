@@ -561,7 +561,7 @@ class Cursor {
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index, { skipBoundaryCollapse: true });
-				try { const ns = window.getSelection?.(); if (ns?.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
+				this._syncStructuralToNative();
 			}
 			return;
 		}
@@ -577,6 +577,7 @@ class Cursor {
 		const next = this.text.insertAtIndex(this.offset, text);
 		this._desiredX = null;
 		this.moveTo(next.index, { skipBoundaryCollapse: true });
+		this._syncStructuralToNative();
 	}
 
 	// Method: backspace
@@ -588,7 +589,7 @@ class Cursor {
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
-				try { const ns = window.getSelection?.(); if (ns?.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
+				this._syncStructuralToNative();
 			}
 			return;
 		}
@@ -606,11 +607,7 @@ class Cursor {
 		// Force native selection to our new structural position. This prevents stale
 		// native ranges (from click or prior sync) from causing syncFromNative to jump
 		// the cursor after the DOM mutation + rebuild.
-		try {
-			const sel = this.editor?.selection;
-			const active = this.editor ? this.editor.activeSession() : null;
-			if (sel && typeof sel.syncToNative === 'function') sel.syncToNative(active);
-		} catch (_) {}
+		this._syncStructuralToNative();
 	}
 
 	// Method: delete
@@ -622,7 +619,7 @@ class Cursor {
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
-				try { const ns = window.getSelection?.(); if (ns?.removeAllRanges) ns.removeAllRanges(); } catch (_) {}
+				this._syncStructuralToNative();
 			}
 			return;
 		}
@@ -638,10 +635,25 @@ class Cursor {
 			skipFormattingWhitespace: true,
 		});
 		// Force native selection to our new structural position (see backspace).
+		this._syncStructuralToNative();
+	}
+
+	// Method: _syncStructuralToNative
+	// Pushes structural caret/range to the browser selection without re-entering
+	// selectionchange → syncFromNative (guarded via input._syncingNative).
+	_syncStructuralToNative() {
 		try {
-			const sel = this.editor?.selection;
-			const active = this.editor ? this.editor.activeSession() : null;
-			if (sel && typeof sel.syncToNative === 'function') sel.syncToNative(active);
+			const ed = this.editor;
+			const input = ed?.input;
+			const sel = ed?.selection;
+			const active = ed ? ed.activeSession() : null;
+			if (!sel || typeof sel.syncToNative !== "function") return;
+			if (input) input._syncingNative = true;
+			try {
+				sel.syncToNative(active);
+			} finally {
+				if (input) input._syncingNative = false;
+			}
 		} catch (_) {}
 	}
 
@@ -885,13 +897,20 @@ class Cursor {
 	}
 
 	// Method: _ensureSelectionFromNativeIfPresent
-	// If the browser currently has a selection (range or caret) inside the editor root,
-	// sync it into our structural cursor/selection. This ensures that user mouse selections
-	// (and any out-of-band native selection) are respected for range replace/delete/typing.
+	// If the browser currently has a selection inside the editor root, sync it into
+	// structural state so range replace/delete/typing works. Skipped when we already
+	// hold a structural range (e.g. after toggleInline) so a stale native range cannot
+	// overwrite a remapped selection. Collapsed carets respect the input suppress flag.
 	_ensureSelectionFromNativeIfPresent() {
 		try {
+			if (this.selectionKind === "range" || this.selectionKind === "node") return;
 			const ed = this.editor;
 			if (!ed?.root || !ed.range || !ed.selection) return;
+			const input = ed.input;
+			if (typeof input?._syncNativeSelection === "function") {
+				input._syncNativeSelection({ allowCollapsed: true });
+				return;
+			}
 			const ns = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null;
 			if (!ns?.rangeCount) return;
 			const nr = ns.getRangeAt(0);

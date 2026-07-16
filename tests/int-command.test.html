@@ -76,12 +76,15 @@
           const shifted = basicEditor.input.cursor.selection.normalizedRange();
           const selectAll = defaultPreventedFor({ key: "a", ctrlKey: true });
           const all = basicEditor.input.cursor.selection.normalizedRange();
+          // Ctrl+A selects structural text scope (last text index), not the trailing
+          // element-boundary slot at positions().length - 1.
+          const whole = basicEditor.structuralRangeFor(basicEditor.root);
           const collapse = defaultPreventedFor({ key: "a", ctrlKey: true, shiftKey: true });
           return {
             shiftRight,
             shifted: { start: shifted.start, end: shifted.end },
             selectAll,
-            selectedWholeEditor: all.start === 0 && all.end === basicEditor.text.positions().length - 1,
+            selectedWholeEditor: !!whole && all.start === whole.start && all.end === whole.end,
             collapse,
             selectionKind: basicEditor.input.cursor.selectionKind,
           };
