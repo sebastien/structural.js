@@ -127,6 +127,30 @@ class TextAdapter {
 		return boundaries.length - 1;
 	}
 
+	_graphemeBoundaryIndex(node, offset) {
+		if (!node || node.nodeType !== Node.TEXT_NODE) return -1;
+		const boundaries = this._graphemeBoundaries(node.data, node);
+		let low = 0;
+		let high = boundaries.length - 1;
+		while (low <= high) {
+			const middle = (low + high) >> 1;
+			const value = boundaries[middle];
+			if (value === offset) return middle;
+			if (value < offset) low = middle + 1;
+			else high = middle - 1;
+		}
+		return -1;
+	}
+
+	_graphemeDistance(node, fromOffset, toOffset) {
+		if (!node || node.nodeType !== Node.TEXT_NODE || fromOffset === toOffset) {
+			return 0;
+		}
+		const from = this._graphemeBoundaryIndex(node, fromOffset);
+		const to = this._graphemeBoundaryIndex(node, toOffset);
+		return from >= 0 && to >= 0 ? Math.abs(to - from) : 0;
+	}
+
 	// Method: attach
 	// Attaches a MutationObserver to monitor changes to the `root` element.
 	attach() {
@@ -256,7 +280,7 @@ class TextAdapter {
 	_collectPositionSlotsFor(blockRoot, baseIndex = 0) {
 		const slots = [];
 		const seen = new Set();
-		const push = (point, focusNode) => {
+		const push = (point, focusNode, graphemeIndex = null) => {
 			if (!point?.node) return;
 			const key = `${nodeKey(point.node)}:${point.offset}`;
 			if (seen.has(key)) return;
@@ -264,11 +288,11 @@ class TextAdapter {
 			const resolvedFocusNode = focusNode ?? point.node;
 			const kind = point.node.nodeType === Node.TEXT_NODE ? "text-point" : "element-boundary";
 			const boundary = this._boundaryAtPoint(point);
-			const char = this._charAroundPoint(point, boundary);
-			slots.push({ point, focusNode: resolvedFocusNode, kind, boundary, char });
+			const char = this._charAroundPoint(point, boundary, graphemeIndex);
+			slots.push({ point, focusNode: resolvedFocusNode, kind, boundary, char, graphemeIndex });
 		};
 		for (const p of this.iwalk(blockRoot, { mode: "positions" })) {
-			push(p.point, p.focusNode);
+			push(p.point, p.focusNode, p.graphemeIndex);
 		}
 		return slots.map((slot, i) => ({ ...slot, index: baseIndex + i }));
 	}
@@ -285,13 +309,14 @@ class TextAdapter {
 			if (seen.has(key)) continue;
 			seen.add(key);
 			const boundary = this._boundaryAtPoint(pt);
-			const char = this._charAroundPoint(pt, boundary);
+			const char = this._charAroundPoint(pt, boundary, p.graphemeIndex);
 			slots.push({
 				point: pt,
 				focusNode: p.focusNode || textNode.parentNode || textNode,
 				kind: "text-point",
 				boundary,
 				char,
+				graphemeIndex: p.graphemeIndex,
 				index: baseIndex + slots.length,
 			});
 		}
@@ -317,13 +342,16 @@ class TextAdapter {
 		let running = this._textLengthBefore(this._blockOrder[0] || this.root);
 		this._prefixTextOffsets[0] = running;
 		for (let i = 1; i < n; i++) {
-			const p0 = this._positions[i - 1].point;
-			const p1 = this._positions[i].point;
+			const previous = this._positions[i - 1];
+			const current = this._positions[i];
+			const p0 = previous.point;
+			const p1 = current.point;
 			let delta = 0;
 			if (p0 && p1 && p0.node === p1.node && p0.node && p0.node.nodeType === Node.TEXT_NODE) {
-				const s = Math.min(p0.offset, p1.offset);
-				const e = Math.max(p0.offset, p1.offset);
-				delta = this._graphemeCount(p0.node.data.slice(s, e));
+				delta =
+					Number.isInteger(previous.graphemeIndex) && Number.isInteger(current.graphemeIndex)
+						? Math.abs(current.graphemeIndex - previous.graphemeIndex)
+						: this._graphemeDistance(p0.node, p0.offset, p1.offset);
 			}
 			running += delta;
 			this._prefixTextOffsets[i] = running;
@@ -340,13 +368,16 @@ class TextAdapter {
 				: this._textLengthBefore(this._blockOrder[0] || this.root);
 		for (let i = startIndex; i < n; i++) {
 			if (i > startIndex) {
-				const p0 = this._positions[i - 1].point;
-				const p1 = this._positions[i].point;
+				const previous = this._positions[i - 1];
+				const current = this._positions[i];
+				const p0 = previous.point;
+				const p1 = current.point;
 				let delta = 0;
 				if (p0 && p1 && p0.node === p1.node && p0.node?.nodeType === Node.TEXT_NODE) {
-					const s = Math.min(p0.offset, p1.offset);
-					const e = Math.max(p0.offset, p1.offset);
-					delta = this._graphemeCount(p0.node.data.slice(s, e));
+					delta =
+						Number.isInteger(previous.graphemeIndex) && Number.isInteger(current.graphemeIndex)
+							? Math.abs(current.graphemeIndex - previous.graphemeIndex)
+							: this._graphemeDistance(p0.node, p0.offset, p1.offset);
 				}
 				running += delta;
 			}
@@ -1539,7 +1570,7 @@ class TextAdapter {
 	_buildPositions(root) {
 		const slots = [];
 		const seen = new Set();
-		const push = (point, focusNode) => {
+		const push = (point, focusNode, graphemeIndex = null) => {
 			if (!point?.node) {
 				return;
 			}
@@ -1551,17 +1582,18 @@ class TextAdapter {
 			const resolvedFocusNode = focusNode ?? point.node;
 			const kind = point.node?.nodeType === Node.TEXT_NODE ? "text-point" : "element-boundary";
 			const boundary = this._boundaryAtPoint(point);
-			const char = this._charAroundPoint(point, boundary);
+			const char = this._charAroundPoint(point, boundary, graphemeIndex);
 			slots.push({
 				point,
 				focusNode: resolvedFocusNode,
 				kind,
 				boundary,
 				char,
+				graphemeIndex,
 			});
 		};
 		for (const p of this.iwalk(root, { mode: "positions" })) {
-			push(p.point, p.focusNode);
+			push(p.point, p.focusNode, p.graphemeIndex);
 		}
 		return slots.map((slot, index) => ({ ...slot, index }));
 	}
@@ -1597,11 +1629,13 @@ class TextAdapter {
 
 	// Method: _charAroundPoint
 	// Extracts characters immediately preceding and succeeding the given text `point`.
-	_charAroundPoint(point, boundary) {
+	_charAroundPoint(point, boundary, graphemeIndex = null) {
 		const { node, offset } = point;
 		if (node?.nodeType === Node.TEXT_NODE) {
-			const boundaries = this._graphemeBoundaries(node.data);
-			const index = boundaries.indexOf(offset);
+			const boundaries = this._graphemeBoundaries(node.data, node);
+			const index = Number.isInteger(graphemeIndex)
+				? graphemeIndex
+				: this._graphemeBoundaryIndex(node, offset);
 			return {
 				before: index > 0 ? node.data.slice(boundaries[index - 1], boundaries[index]) : null,
 				after:
@@ -1641,10 +1675,12 @@ class TextAdapter {
 		const walk = function* (current, parent, childIndex) {
 			if (mode === "positions") {
 				if (current.nodeType === Node.TEXT_NODE) {
-					for (const i of this._graphemeBoundaries(current.data, current)) {
+					const boundaries = this._graphemeBoundaries(current.data, current);
+					for (let graphemeIndex = 0; graphemeIndex < boundaries.length; graphemeIndex += 1) {
 						yield {
-							point: { node: current, offset: i },
+							point: { node: current, offset: boundaries[graphemeIndex] },
 							focusNode: current.parentNode ?? parent,
+							graphemeIndex,
 						};
 					}
 					return;

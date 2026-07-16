@@ -1666,6 +1666,7 @@ const REPORTED_LOAN_PARAGRAPH =
 const LONG_SINGLE_PARAGRAPH =
 	"Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content." +
 	REPORTED_LOAN_PARAGRAPH.repeat(10);
+const FRAME_BUDGET_MS = 1000 / 60;
 
 test("performance: long single paragraph keeps keyboard editing interactions responsive", async () => {
 	await runWithFresh(async (page) => {
@@ -1774,9 +1775,9 @@ test("performance: long single paragraph keeps keyboard editing interactions res
 
 		expect(result.paragraphLength).toBeGreaterThanOrEqual(3000);
 		for (const operation of result.operations) {
-			if (operation.p95 > 100) {
+			if (operation.p95 > FRAME_BUDGET_MS) {
 				throw new Error(
-					`${operation.name} p95=${operation.p95}ms exceeds 100ms; diagnostics=${JSON.stringify(result)}`,
+					`${operation.name} p95=${operation.p95}ms exceeds the ${FRAME_BUDGET_MS.toFixed(2)}ms 60 FPS frame budget; diagnostics=${JSON.stringify(result)}`,
 				);
 			}
 		}
