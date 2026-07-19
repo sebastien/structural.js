@@ -1482,7 +1482,16 @@ class TextAdapter {
 			}
 			const available = this._graphemeCount(node.data) - delta;
 			if (available <= 0) {
-				currentOffset += 1;
+				const nextOffset = currentOffset + 1;
+				const next = this.positionAt(nextOffset);
+				if (
+					!next ||
+					(next.node === node && next.delta === delta) ||
+					nextOffset === currentOffset
+				) {
+					break;
+				}
+				currentOffset = nextOffset;
 				continue;
 			}
 			const count = Math.min(available, remaining);

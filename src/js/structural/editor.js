@@ -33,12 +33,166 @@ function editorKeymap(overrides = {}) {
 		"Mod+Shift+ArrowRight": { type: "moveStructural", args: { direction: "right", extend: true } },
 		"Mod+Shift+ArrowUp": { type: "moveStructural", args: { direction: "up", extend: true } },
 		"Mod+Shift+ArrowDown": { type: "moveStructural", args: { direction: "down", extend: true } },
+		"Mod+Z": { type: "undo" },
+		"Mod+Shift+Z": { type: "redo" },
+		"Mod+Y": { type: "redo" },
 		Tab: { type: "moveTraversal", args: { direction: "forward" } },
 		"Shift+Tab": { type: "moveTraversal", args: { direction: "backward" } },
 		Backspace: { type: "deleteBackward" },
 		Delete: { type: "deleteForward" },
 		...overrides,
 	};
+}
+
+// Commands that only move selection — never push history.
+const HISTORY_SKIP = new Set([
+	"moveCursor",
+	"selectAll",
+	"selectStructuralScope",
+	"moveStructural",
+	"moveTraversal",
+	"collapseSelection",
+	"undo",
+	"redo",
+	"copy",
+]);
+
+// Class: EditorHistory
+// Snapshot-based undo/redo stack (html + selection). Typing/deletes coalesce.
+class EditorHistory {
+	constructor(editor, options = {}) {
+		this.editor = editor;
+		this.limit = options.limit ?? 100;
+		this.coalesceMs = options.coalesceMs ?? 800;
+		this.undoStack = [];
+		this.redoStack = [];
+		this._restoring = false;
+		this._nested = false;
+		this._lastKind = null;
+		this._lastAt = 0;
+	}
+
+	// Method: snapshot
+	// Captures document HTML and caret/range selection.
+	snapshot() {
+		const session = this.editor.localSession;
+		const cursor = session?.cursor;
+		const sel = cursor?.selection;
+		let selection;
+		if (cursor?.selectionKind === "range" && sel?.isActive) {
+			const n = sel.normalizedRange?.() ?? null;
+			selection = {
+				kind: "range",
+				start: n?.start ?? sel.anchorOffset ?? 0,
+				end: n?.end ?? sel.focusOffset ?? 0,
+			};
+		} else {
+			selection = { kind: "caret", offset: cursor?.offset ?? 0 };
+		}
+		return { html: this.editor.root.innerHTML, selection };
+	}
+
+	// Method: restore
+	// Replaces root contents and repositions the caret/selection.
+	restore(entry) {
+		if (!entry || !this.editor?.root) return false;
+		this._restoring = true;
+		try {
+			this.editor.root.innerHTML = entry.html;
+			this.editor.text.refresh();
+			const session = this.editor.localSession;
+			const s = entry.selection;
+			if (s?.kind === "range" && typeof s.start === "number" && typeof s.end === "number") {
+				this.editor.selection.select(
+					this.editor.text.clampIndex(s.start),
+					this.editor.text.clampIndex(s.end),
+					session,
+				);
+			} else {
+				session.cursor.moveTo(this.editor.text.clampIndex(s?.offset ?? 0));
+			}
+			this.editor.selection?.syncToNative?.(session);
+			session.classes?.update?.();
+			return true;
+		} finally {
+			this._restoring = false;
+		}
+	}
+
+	// Method: record
+	// Pushes a before-change snapshot. Same-kind input/delete within coalesceMs merge.
+	// Nested records (e.g. deleteSmart → cursor.backspace) are ignored.
+	record(kind = "edit") {
+		if (this._restoring || this._nested || !this.editor?.root?.isConnected) return this;
+		const now = performance.now();
+		const coalesce =
+			kind === this._lastKind &&
+			(kind === "input" || kind === "delete") &&
+			now - this._lastAt < this.coalesceMs &&
+			this.undoStack.length > 0;
+		if (coalesce) {
+			this._lastAt = now;
+			return this;
+		}
+		this.undoStack.push(this.snapshot());
+		while (this.undoStack.length > this.limit) this.undoStack.shift();
+		this.redoStack.length = 0;
+		this._lastKind = kind;
+		this._lastAt = now;
+		return this;
+	}
+
+	// Method: run
+	// Runs `fn` while suppressing nested history records (one undo unit).
+	run(kind, fn) {
+		this.record(kind);
+		this._nested = true;
+		try {
+			return fn();
+		} finally {
+			this._nested = false;
+		}
+	}
+
+	// Method: clear
+	// Drops all undo/redo entries (e.g. after external setContent).
+	clear() {
+		this.undoStack.length = 0;
+		this.redoStack.length = 0;
+		this._lastKind = null;
+		this._lastAt = 0;
+		return this;
+	}
+
+	// Method: undo
+	// Restores the previous snapshot.
+	undo() {
+		if (!this.undoStack.length) return false;
+		const current = this.snapshot();
+		const prev = this.undoStack.pop();
+		this.redoStack.push(current);
+		this._lastKind = null;
+		return this.restore(prev);
+	}
+
+	// Method: redo
+	// Re-applies a previously undone snapshot.
+	redo() {
+		if (!this.redoStack.length) return false;
+		const current = this.snapshot();
+		const next = this.redoStack.pop();
+		this.undoStack.push(current);
+		this._lastKind = null;
+		return this.restore(next);
+	}
+
+	get canUndo() {
+		return this.undoStack.length > 0;
+	}
+
+	get canRedo() {
+		return this.redoStack.length > 0;
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -831,10 +985,16 @@ class EditorTextInput {
 		this._onSelectionChange = this.onSelectionChange.bind(this);
 		this._dragAnchor = null;
 		this._dragFocus = null;
+		// True from an in-root mousedown until the matching mouseup (incl. drag-out).
+		this._mouseOwned = false;
+		// True after the user last interacted with this editor (survives mouseup).
+		// Used so paste/copy still target us when focus stays on body (virtual caret).
+		this._editorActive = false;
 		// While true, ignore collapsed browser carets (click placement is often off-by-one
 		// vs our point resolution). Cleared after mouseup re-asserts structural→native.
 		this._suppressCollapsedNative = false;
 		this._syncingNative = false;
+		this._nativeSyncEpoch = 0;
 		let c = options.caret;
 		if (c === undefined) c = options.cursor?.caret;
 		if (typeof c === "string") c = { mode: c };
@@ -890,6 +1050,8 @@ class EditorTextInput {
 		this.editor = null;
 		this._dragAnchor = null;
 		this._dragFocus = null;
+		this._mouseOwned = false;
+		this._editorActive = false;
 		return this;
 	}
 
@@ -900,11 +1062,41 @@ class EditorTextInput {
 		// swallowed before they perform browser-default actions.
 	}
 
+	// Method: _guardNativeSync
+	// Runs `fn` while selectionchange→syncFromNative is suppressed. Chromium fires
+	// selectionchange asynchronously after setBaseAndExtent/addRange, so the guard
+	// stays up until the next macrotask (not only for the sync call stack).
+	_guardNativeSync(fn) {
+		this._syncingNative = true;
+		const epoch = ++this._nativeSyncEpoch;
+		try {
+			return fn?.();
+		} finally {
+			const release = () => {
+				if (this._nativeSyncEpoch === epoch) this._syncingNative = false;
+			};
+			if (typeof queueMicrotask === "function") {
+				queueMicrotask(() => {
+					if (typeof setTimeout === "function") setTimeout(release, 0);
+					else release();
+				});
+			} else if (typeof setTimeout === "function") {
+				setTimeout(release, 0);
+			} else {
+				release();
+			}
+		}
+	}
+
 	// Method: onSelectionChange
 	// Syncs browser selection into the structural cursor. Collapsed carets are skipped
 	// while a click is in progress (_suppressCollapsedNative) or in virtual-only mode.
 	onSelectionChange() {
 		if (this._dragAnchor != null || this._syncingNative) return;
+		if (this.cursor?.selectionKind === "range" || this.cursor?.selectionKind === "node") {
+			const sel = typeof window !== "undefined" ? window.getSelection?.() : null;
+			if (!sel?.rangeCount || sel.isCollapsed) return;
+		}
 		this._syncNativeSelection({ allowCollapsed: true });
 	}
 
@@ -930,9 +1122,36 @@ class EditorTextInput {
 		}
 	}
 
+	// Method: _isForeignEditable
+	// True when `el` is a native editable control outside this editor root.
+	// Document-level key listeners must not steal keys from foreign inputs/textareas.
+	_isForeignEditable(el) {
+		const root = this.editor?.root;
+		if (!el || !root || el === root || root.contains(el)) return false;
+		const tag = el.tagName;
+		if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+		return !!el.isContentEditable;
+	}
+
+	// Method: _eventInRoot
+	// True when the event target is the editor root or a descendant.
+	_eventInRoot(event) {
+		const root = this.editor?.root;
+		if (!root?.isConnected || !event) return false;
+		const t =
+			event.target?.nodeType === Node.ELEMENT_NODE ? event.target : event.target?.parentElement;
+		return !!t && (t === root || root.contains(t));
+	}
+
 	// Method: onKeyDown
 	// Handles key presses translating arrows, deletes, letters to cursor calls.
 	onKeyDown(event) {
+		const root = this.editor?.root;
+		if (!root?.isConnected) return;
+		// Ignore keys meant for other form controls (chat fields, search, …).
+		if (this._isForeignEditable(event.target) || this._isForeignEditable(document.activeElement)) {
+			return;
+		}
 		// Sync before keymap actions (Ctrl+A, Enter, …) so programmatic/native carets win.
 		// Do not overwrite an existing structural range (format ops remap it carefully).
 		const kind = this.cursor?.selectionKind;
@@ -942,12 +1161,9 @@ class EditorTextInput {
 		if (this.editor?.handleKeyEvent(event, this.session)) {
 			// Keymap handlers (arrows, deleteSmart, …) move the structural caret;
 			// re-assert native so the next insert does not re-import a stale range.
-			this._syncingNative = true;
-			try {
+			this._guardNativeSync(() => {
 				this.editor.selection?.syncToNative(this.session);
-			} finally {
-				this._syncingNative = false;
-			}
+			});
 			return;
 		}
 
@@ -1017,6 +1233,13 @@ class EditorTextInput {
 	// Simple clicks: re-assert structural placement so Chromium's center-of-glyph caret
 	// cannot override mousedown. Range selections (drag or double-click word) are kept.
 	onMouseUp(_event) {
+		// Ignore mouseups that did not start inside this editor (chat, toolbar, …).
+		if (!this._mouseOwned && this._dragAnchor == null) {
+			this._suppressCollapsedNative = false;
+			this._dragFocus = null;
+			return;
+		}
+		this._mouseOwned = false;
 		const didDrag =
 			this._dragAnchor != null &&
 			this._dragFocus != null &&
@@ -1024,12 +1247,9 @@ class EditorTextInput {
 		const active = this.editor?.activeSession?.(this.session);
 		if (active?.cursor?.selectionKind === "range") {
 			// Drag or multi-click word/block selection — keep it and align native.
-			this._syncingNative = true;
-			try {
+			this._guardNativeSync(() => {
 				this.editor.selection?.syncToNative(active);
-			} finally {
-				this._syncingNative = false;
-			}
+			});
 		} else if (didDrag) {
 			this._syncNativeSelection({ allowCollapsed: false });
 		} else if (active) {
@@ -1084,6 +1304,26 @@ class EditorTextInput {
 	// Evaluates pointer coordinate clicks to accurately place caret or select blocks.
 	// Also initiates drag selection tracking (and shift-click extend).
 	onMouseDown(event) {
+		// Document-level listener: only own clicks that hit this editor's root tree.
+		if (!this._eventInRoot(event)) {
+			this._mouseOwned = false;
+			this._editorActive = false;
+			this._dragAnchor = null;
+			this._dragFocus = null;
+			return;
+		}
+		this._mouseOwned = true;
+		this._editorActive = true;
+		// Focus the root so clipboard paste/copy target this editor (virtual caret hosts
+		// are often not contenteditable, so click alone may leave focus on body).
+		const root = this.editor?.root;
+		if (root && typeof root.focus === "function" && document.activeElement !== root) {
+			try {
+				root.focus({ preventScroll: true });
+			} catch (_) {
+				root.focus?.();
+			}
+		}
 		const targetElement =
 			event.target?.nodeType === Node.ELEMENT_NODE ? event.target : event.target?.parentElement;
 		const atom = targetElement?.closest(".atom, .atomic");
@@ -1129,7 +1369,6 @@ class EditorTextInput {
 			return;
 		}
 
-		const root = this.editor.root;
 		const focus =
 			this.editor.selection && typeof this.editor.selection.resolveOffsetFromPoint === "function"
 				? this.editor.selection.resolveOffsetFromPoint(
@@ -1165,12 +1404,9 @@ class EditorTextInput {
 				const word = this._wordRangeAt(active.cursor.offset);
 				if (word) {
 					this.editor.selection.select(word.start, word.end, this.session);
-					this._syncingNative = true;
-					try {
+					this._guardNativeSync(() => {
 						this.editor.selection.syncToNative(active);
-					} finally {
-						this._syncingNative = false;
-					}
+					});
 					this._suppressCollapsedNative = false;
 					this._dragAnchor = null;
 					this._dragFocus = null;
@@ -1184,12 +1420,9 @@ class EditorTextInput {
 				const range = this.editor.structuralRangeFor?.(block);
 				if (range && range.end > range.start) {
 					this.editor.selection.select(range.start, range.end, this.session);
-					this._syncingNative = true;
-					try {
+					this._guardNativeSync(() => {
 						this.editor.selection.syncToNative(active);
-					} finally {
-						this._syncingNative = false;
-					}
+					});
 					this._suppressCollapsedNative = false;
 					this._dragAnchor = null;
 					this._dragFocus = null;
@@ -1265,7 +1498,7 @@ class Editor {
 		// Custom maps override individual defaults without disabling unrelated editor keys.
 		this.keymap = editorKeymap(options.keymap ?? {});
 		this.actions = new Map();
-		this.history = [];
+		this.history = new EditorHistory(this, options.history);
 		this.sessions = new Map();
 		this.plugins = [];
 		this._active = false;
@@ -1308,10 +1541,12 @@ class Editor {
 				const extend = command.args.extend === true;
 				switch (command.args.direction) {
 					case "left":
-						cursor.left(extend);
+						if (command.args.word) cursor.wordLeft(extend);
+						else cursor.left(extend);
 						break;
 					case "right":
-						cursor.right(extend);
+						if (command.args.word) cursor.wordRight(extend);
+						else cursor.right(extend);
 						break;
 					case "up":
 						cursor.up(extend);
@@ -1346,6 +1581,8 @@ class Editor {
 				session.cursor.delete();
 				return true;
 			},
+			undo: () => this.undo(),
+			redo: () => this.redo(),
 		});
 		this.installPlugins(options.plugins ?? []);
 		this.classes = this.localSession.classes;
@@ -1469,14 +1706,17 @@ class Editor {
 
 		// Walk outward until a resolvable text range is found (root may include
 		// only formatting whitespace at the edges that is not indexable).
-		for (let i = currentIdx; mode === "expand" ? i < scopes.length : i >= 0; mode === "expand" ? (i += 1) : (i -= 1)) {
+		let i = currentIdx;
+		for (; mode === "expand" ? i < scopes.length : i >= 0; ) {
 			const target = scopes[i];
 			const range = this.structuralRangeFor(target);
-			if (!range || range.end <= range.start) continue;
-			this.selection.select(range.start, range.end, active);
-			active.cursor._structuralScopeNode = target;
-			active.cursor._structuralScopePath = scopes;
-			return this.selection.syncToNative(active);
+			if (range && range.end > range.start) {
+				this.selection.select(range.start, range.end, active);
+				active.cursor._structuralScopeNode = target;
+				active.cursor._structuralScopePath = scopes;
+				return this.selection.syncToNative(active);
+			}
+			i += mode === "expand" ? 1 : -1;
 		}
 		// Still handled: swallow browser Ctrl+A even if we cannot grow further.
 		return active.cursor.selectionKind === "range";
@@ -1707,6 +1947,25 @@ class Editor {
 		return this.dispatch(spec, options).handled;
 	}
 
+	// Method: undo
+	// Restores the previous document snapshot.
+	undo() {
+		return this.history.undo();
+	}
+
+	// Method: redo
+	// Re-applies a previously undone snapshot.
+	redo() {
+		return this.history.redo();
+	}
+
+	// Method: noteEdit
+	// Records a before-change history snapshot (used by cursor text ops).
+	noteEdit(kind = "edit") {
+		this.history.record(kind);
+		return this;
+	}
+
 	// Method: dispatch
 	// Direct execution engine routing commands to registered actions and recording history.
 	dispatch(value, options = {}) {
@@ -1719,6 +1978,23 @@ class Editor {
 		if (!command?.type) return new EditorTransaction(command, { result: false });
 		const fn = this.actions.get(command.type);
 		if (!fn) return new EditorTransaction(command, { result: false });
+		// Text ops record inside Cursor; deleteSmart records via history.run;
+		// undo/redo must not snapshot themselves.
+		const skipRecord =
+			HISTORY_SKIP.has(command.type) ||
+			options.history === false ||
+			command.type === "deleteBackward" ||
+			command.type === "deleteForward" ||
+			command.type === "deleteSmart" ||
+			command.type === "cut" ||
+			command.type === "paste";
+		if (!skipRecord) {
+			const kind =
+				command.type === "splitBlock" || command.type === "insertLineBreak"
+					? "input"
+					: command.type;
+			this.history.record(kind);
+		}
 		const selectionBefore = session.snapshotSelection();
 		const result = fn(command, { editor: this, session, event: options.event });
 		const transaction =
@@ -1729,7 +2005,6 @@ class Editor {
 						selectionBefore,
 						selectionAfter: session.snapshotSelection(),
 					});
-		if (transaction.handled) this.history.push(transaction);
 		return transaction;
 	}
 
@@ -1748,15 +2023,15 @@ class Editor {
 
 	// Method: handleKeyEvent
 	// Evaluates keyboard combinations against configured hotkeys.
+	// Matched bindings always swallow the event so browser chords (Ctrl+B bookmark,
+	// Ctrl+I info panel, …) cannot fire even when the action is a no-op.
 	handleKeyEvent(event, session = null) {
 		const spec = this.keymap?.[this.keyCombo(event)] ?? this.keymap?.[event.key];
 		if (!spec) return false;
-		const handled = this.action(spec, { event, session });
-		if (handled) {
-			event.preventDefault();
-			event.stopPropagation();
-		}
-		return handled;
+		this.action(spec, { event, session });
+		event.preventDefault();
+		event.stopPropagation();
+		return true;
 	}
 
 	// Method: normalize
@@ -1771,6 +2046,36 @@ class Editor {
 			}) ?? new EditorTransaction(new EditorCommand("normalize"), { result: false })
 		);
 	}
+
+	/* Replaces or commits editor content and resolves after paint. */
+	setContent(content = undefined, options = {}) {
+		const active = this.activeSession(options.session);
+		const range = active.cursor.selection.normalizedRange();
+		const selection = options.selection ?? {
+			start: range.start ?? active.cursor.offset ?? 0,
+			end: range.end ?? active.cursor.offset ?? 0,
+		};
+		// External content replace resets history; internal refresh keeps it.
+		if (content !== undefined && content !== this.root && options.history !== true) {
+			this.history.clear();
+		}
+		if (content !== undefined && content !== this.root) this.root.replaceChildren(content);
+		this.lastNormalization = this.normalize(this.root, { session: active });
+		this.text.refresh();
+		if (selection.node?.isConnected) {
+			if (selection.position) this.selection._setEdgeCaret(selection.node, selection.position, active);
+			else this.selection.setCaret(selection.node, selection.offset ?? 0, active);
+		} else if (typeof selection.start === "number" && typeof selection.end === "number") {
+			this.selection.select(this.text.clampIndex(selection.start), this.text.clampIndex(selection.end), active);
+		} else {
+			this.selection._setEdgeCaret(this.root, "start", active);
+		}
+		active.classes?.update();
+		return new Promise((resolve) => {
+			const frame = globalThis.requestAnimationFrame ?? ((callback) => queueMicrotask(callback));
+			frame(() => resolve(this.lastNormalization));
+		});
+	}
 }
 
 export {
@@ -1779,6 +2084,7 @@ export {
 	EditorClassController,
 	EditorCommand,
 	EditorCursor,
+	EditorHistory,
 	EditorNormalizer,
 	EditorRangeController,
 	EditorSchema,

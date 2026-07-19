@@ -44,8 +44,9 @@
         keymap: richTextKeymap(),
       });
       const basicEditor = new Editor(document.getElementById("basic-editor"));
+      // Falsy action still must swallow Mod+B (browser bookmark chord).
       editor.configureActions({
-        toggleInline: () => true,
+        toggleInline: () => false,
       });
 
       function defaultPreventedFor(init) {

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "/src/js/structural/editor.js",
+        "structural/richtext": "/src/js/structural/richtext.js",
+        "structural/cursor": "/src/js/structural/cursor.js",
+        "structural/text": "/src/js/structural/text.js",
+        "structural/selection": "/src/js/structural/selection.js",
+        "structural/range": "/src/js/structural/range.js",
+        "structural/modification": "/src/js/structural/modification.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="editor" tabindex="0"><p>hello world</p></div>
+    <textarea id="foreign">chat</textarea>
+    <script type="module">
+      import { Editor } from "structural/editor";
+      import { richTextKeymap, richTextSchema, RichText } from "structural/richtext";
+
+      const root = document.getElementById("editor");
+      const foreign = document.getElementById("foreign");
+      const editor = new Editor(root, {
+        schema: richTextSchema(),
+        keymap: richTextKeymap(),
+        plugins: [RichText],
+        history: { coalesceMs: 0 },
+      });
+
+      // Select "hello"
+      editor.input.cursor.select(0, 5);
+      const copied = editor.richText.copySelection();
+      const afterCopy = root.textContent;
+
+      const cutOk = editor.richText.cutSelection();
+      const afterCut = root.textContent;
+
+      editor.undo();
+      const afterUndoCut = root.textContent;
+
+      // Paste plain text at end (collapse any restored range first).
+      editor.input.cursor.selection?.clear?.();
+      editor.input.cursor.moveTo(root.textContent.length);
+      const pasteOk = editor.richText.pasteText("!");
+      const afterPaste = root.textContent;
+
+      // Foreign textarea: clipboard ops must not touch the editor
+      foreign.focus();
+      foreign.select();
+      const beforeForeign = root.textContent;
+      const ownsForeign = editor.richText.ownsClipboard({ target: foreign });
+      const foreignCopy = editor.richText.copySelection({
+        target: foreign,
+        preventDefault() {},
+        stopPropagation() {},
+        clipboardData: {
+          data: {},
+          setData(type, value) {
+            this.data[type] = value;
+          },
+          getData(type) {
+            return this.data[type] ?? "";
+          },
+        },
+      });
+      const afterForeign = root.textContent;
+
+      // Key chords for copy/cut are bound; paste is document-event only.
+      function prevented(init) {
+        const event = new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        });
+        document.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+      root.focus();
+      editor.input._editorActive = true;
+      editor.input.cursor.select(0, 1);
+
+      // Simulate a paste event with clipboardData (Ctrl+V path uses document paste).
+      editor.input.cursor.selection?.clear?.();
+      editor.input.cursor.moveTo(root.textContent.length);
+      const beforeEventPaste = root.textContent;
+      const pastePayload = {
+        bubbles: true,
+        cancelable: true,
+        target: root,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+        stopPropagation() {},
+        clipboardData: {
+          getData(type) {
+            return type === "text/plain" || type === "text" ? "PASTE" : "";
+          },
+        },
+      };
+      const eventPasteOk = editor.richText.pasteText(null, null, pastePayload);
+      const afterEventPaste = root.textContent;
+
+      window.__result = {
+        copied,
+        afterCopy,
+        cutOk,
+        afterCut,
+        afterUndoCut,
+        pasteOk,
+        afterPaste,
+        foreignCopy,
+        ownsForeign,
+        beforeForeign,
+        afterForeign,
+        beforeEventPaste,
+        afterEventPaste,
+        eventPasteOk,
+        pasteEventPrevented: pastePayload.defaultPrevented,
+        modC: prevented({ key: "c", ctrlKey: true }),
+        modX: prevented({ key: "x", ctrlKey: true }),
+      };
+    </script>
+  </body>
+</html>

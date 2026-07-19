@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "/src/js/structural/editor.js",
+        "structural/richtext": "/src/js/structural/richtext.js",
+        "structural/cursor": "/src/js/structural/cursor.js",
+        "structural/text": "/src/js/structural/text.js",
+        "structural/selection": "/src/js/structural/selection.js",
+        "structural/range": "/src/js/structural/range.js",
+        "structural/modification": "/src/js/structural/modification.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="editor"><p>hello</p></div>
+    <script type="module">
+      import { Editor } from "structural/editor";
+      import { richTextKeymap, richTextSchema, RichText } from "structural/richtext";
+
+      const root = document.getElementById("editor");
+      const editor = new Editor(root, {
+        schema: richTextSchema(),
+        keymap: richTextKeymap(),
+        plugins: [RichText],
+        // Disable coalesce so each op is its own undo step in tests.
+        history: { coalesceMs: 0 },
+      });
+      editor.input.cursor.moveTo(5);
+
+      const baseline = root.textContent;
+      editor.input.cursor.insertText("!");
+      const afterInsert = root.textContent;
+      const canUndoAfterInsert = editor.history.canUndo;
+
+      editor.undo();
+      const afterUndo = root.textContent;
+      const canRedoAfterUndo = editor.history.canRedo;
+
+      editor.redo();
+      const afterRedo = root.textContent;
+
+      // Second insert then undo should restore "hello!"
+      editor.input.cursor.moveTo(root.textContent.length);
+      editor.input.cursor.insertText("x");
+      editor.undo();
+      const afterSecondUndo = root.textContent;
+
+      // Mod+Z is bound and preventDefaulted
+      const undoEvent = new KeyboardEvent("keydown", {
+        key: "z",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(undoEvent);
+      const modZPrevented = undoEvent.defaultPrevented;
+      const afterModZ = root.textContent;
+
+      window.__result = {
+        baseline,
+        afterInsert,
+        canUndoAfterInsert,
+        afterUndo,
+        canRedoAfterUndo,
+        afterRedo,
+        afterSecondUndo,
+        modZPrevented,
+        afterModZ,
+      };
+    </script>
+  </body>
+</html>

@@ -4,6 +4,6 @@
     "playwright": "^1.50"
   },
   "scripts": {
-    "test": "bun test tests/"
+    "test": "bun test --parallel=1 --max-concurrency=1 --timeout=20000 tests/"
   }
 }

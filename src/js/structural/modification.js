@@ -119,9 +119,9 @@ class Modification {
 	// Method: toggleInline
 	// Toggles the inline style `tag` on the selected text or current word.
 	toggleInline(tag) {
-		if (!this.allowsInline(tag)) return;
+		if (!this.allowsInline(tag)) return false;
 		let range = this.rangeFromCursor();
-		if (!range || range.collapsed) return;
+		if (!range || range.collapsed) return false;
 
 		this._savePoint();
 
@@ -140,7 +140,7 @@ class Modification {
 				for (const parent of parents) this.coalesceText(parent);
 				this.text.refresh();
 				range = this._rangeFromSave();
-				if (!range || range.collapsed) return;
+				if (!range || range.collapsed) return true;
 			}
 			const created = this.wrapRange(range, tag);
 			this._savedPoint = this._endPoint(created);
@@ -153,6 +153,7 @@ class Modification {
 		try {
 			this.editor.selection?.syncToNative(this.session ?? this.editor.localSession);
 		} catch (_) {}
+		return true;
 	}
 
 	// Method: _overlappingTags
@@ -175,7 +176,11 @@ class Modification {
 
 		const tags = [];
 		let node;
-		while ((node = walker.nextNode())) tags.push(node);
+		while (true) {
+			node = walker.nextNode();
+			if (!node) break;
+			tags.push(node);
+		}
 		return tags.reverse();
 	}
 
@@ -218,14 +223,14 @@ class Modification {
 			: null;
 		const block = this.findBlock(this.cursor.anchor);
 		const target = block === this.editor.root && remembered ? remembered : block;
-		if (target === this.editor.root) return;
+		if (target === this.editor.root) return false;
 		const currentTag = target.tagName.toLowerCase();
 		const isActive = tag === 'blockquote'
 			? !!target.closest('blockquote')
 			: tag === 'ul' || tag === 'ol'
 				? !!target.closest(tag)
 				: currentTag === tag;
-		if (!isActive && !this.allowsBlock(tag)) return;
+		if (!isActive && !this.allowsBlock(tag)) return false;
 		this._savePoint();
 
 		if (tag === 'ul' || tag === 'ol') {
@@ -237,6 +242,7 @@ class Modification {
 		}
 
 		this._restoreCursor();
+		return true;
 	}
 
 	// ----------------------------------------------------------------------------

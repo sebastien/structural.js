@@ -1,25 +1,14 @@
 import { test, expect } from "bun:test";
-import { chromium } from "playwright";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import {
+	closePage,
+	installBrowserLifecycle,
+	loadPath,
+} from "./playwright-harness.js";
 
-const root = join(import.meta.dirname, "..");
+installBrowserLifecycle();
 
-async function loadPage(browser, pagePath) {
-	const page = await browser.newPage();
-	await page.route("**/*", route => {
-		const url = new URL(route.request().url());
-		const fp = join(root, url.pathname);
-		if (existsSync(fp)) {
-			const ext = fp.split(".").pop();
-			const mime = ext === "js" ? "application/javascript" : ext === "html" ? "text/html" : "text/plain";
-			route.fulfill({ body: readFileSync(fp, "utf-8"), contentType: mime });
-		} else {
-			route.continue();
-		}
-	});
-	await page.goto(`http://localhost${pagePath}`);
-	return page;
+async function loadPage(_browser, pagePath) {
+	return loadPath(pagePath);
 }
 
 async function pointForText(page, selector, text, offset) {
@@ -90,8 +79,7 @@ async function setCaretInText(page, selector, text, offset) {
 }
 
 test("richtext: block and inline focus and selection classes", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 
 	const point = await pointForText(page, "blockquote p", "great", 1);
 	await page.mouse.click(point.x, point.y);
@@ -200,8 +188,8 @@ test("richtext: block and inline focus and selection classes", async () => {
 		};
 	});
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(blockState.paragraph).toContain("focus");
 	expect(blockState.paragraph).toContain("selected");
@@ -222,8 +210,7 @@ test("richtext: block and inline focus and selection classes", async () => {
 });
 
 test("richtext: enter and shift-enter keep block structure", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 
 	let point = await pointForText(page, "#editor", "promote paragraphs", "promote".length);
 	await page.mouse.click(point.x, point.y);
@@ -305,8 +292,8 @@ test("richtext: enter and shift-enter keep block structure", async () => {
 		};
 	});
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(splitState.first).toBe("Use the heading buttons to promote");
 	expect(splitState.second).toBe("paragraphs into heading levels. Create bullet lists for structured content.");
@@ -320,8 +307,7 @@ test("richtext: enter and shift-enter keep block structure", async () => {
 });
 
 test("richtext: backspace at block start merges with previous block", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 
 	await page.evaluate(() => {
 		const heading = document.querySelector("#editor h1");
@@ -364,8 +350,8 @@ test("richtext: backspace at block start merges with previous block", async () =
 		};
 	});
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(state.headingText).toBe("Rich Text Editor");
 	expect(state.nextTag).toBe("P");
@@ -373,8 +359,7 @@ test("richtext: backspace at block start merges with previous block", async () =
 });
 
 test("richtext: tab, shift-tab, and delete operate on blocks", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 	page.setDefaultTimeout(15_000);
 
 	const point = await pointForText(page, "#editor", "Use the heading buttons", 1);
@@ -433,8 +418,8 @@ test("richtext: tab, shift-tab, and delete operate on blocks", async () => {
 		};
 	});
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(state.items).toEqual([
 		"Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.",
@@ -444,8 +429,7 @@ test("richtext: tab, shift-tab, and delete operate on blocks", async () => {
 });
 
 test("richtext: enter on empty blocks exits their container", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 	page.setDefaultTimeout(15_000);
 
 	let point = await pointForText(page, "blockquote p", "remove.", "remove.".length);
@@ -524,8 +508,8 @@ test("richtext: enter on empty blocks exits their container", async () => {
 		};
 	});
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(state.quoteParagraphs).toBe(1);
 	expect(state.nextTag).toBe("P");
@@ -538,8 +522,7 @@ test("richtext: enter on empty blocks exits their container", async () => {
 });
 
 test("richtext: spaces move the caret and repeated spaces collapse outside preformatted content", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 
 	let point = await pointForText(page, "#editor h1", "Rich Text Editor", "Rich Text Editor".length);
 	await page.mouse.click(point.x, point.y);
@@ -563,8 +546,8 @@ test("richtext: spaces move the caret and repeated spaces collapse outside prefo
 	await page.keyboard.press("Space");
 	const preservedCode = await page.evaluate(() => document.querySelector("#editor p code")?.textContent ?? null);
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(afterSpace.left).toBeGreaterThan(beforeSpace);
 	expect(afterSpace.text).toBe("Rich Text Editor ");
@@ -574,8 +557,7 @@ test("richtext: spaces move the caret and repeated spaces collapse outside prefo
 });
 
 test("richtext: ctrl-a expands selection and shift-ctrl-a contracts it", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 
 	await setCaretInText(page, "#editor", "Select some text", 2);
 	await page.keyboard.press("Control+A");
@@ -595,8 +577,8 @@ test("richtext: ctrl-a expands selection and shift-ctrl-a contracts it", async (
 		};
 	});
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(firstSelection).toBe("Select some text and toggle bold, italic, or monospace inline styles. You can also click a word to format it without selecting.");
 	expect(secondSelection.length).toBeGreaterThan(firstSelection.length);
@@ -607,8 +589,7 @@ test("richtext: ctrl-a expands selection and shift-ctrl-a contracts it", async (
 });
 
 test("richtext: copy and paste use the current selection", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser, "/examples/app-richtext.example.html");
+	const page = await loadPage(null, "/examples/app-richtext.example.html");
 
 	await setCaretInText(page, "#editor", "Select some text", 2);
 	await page.keyboard.press("Control+A");
@@ -621,8 +602,8 @@ test("richtext: copy and paste use the current selection", async () => {
 	await dispatchClipboardEvent(page, "paste", copiedText);
 	const pastedHeading = await page.evaluate(() => document.querySelector("#editor h1")?.textContent ?? null);
 
-	await page.close();
-	await browser.close();
+	await closePage(page);
+
 
 	expect(copiedText.length).toBeGreaterThan(0);
 	expect(pastedHeading).toBe(`Rich Text Editor${copiedText}`);

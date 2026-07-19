@@ -1,34 +1,10 @@
-import { test, expect } from "bun:test";
-import { chromium } from "playwright";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { expect, test } from "bun:test";
+import { installBrowserLifecycle, loadResult } from "./playwright-harness.js";
 
-const root = join(import.meta.dirname, "..");
-
-async function loadPage(browser) {
-	const page = await browser.newPage();
-	await page.route("**/*", route => {
-		const url = new URL(route.request().url());
-		const fp = join(root, url.pathname);
-		if (existsSync(fp)) {
-			const ext = fp.split(".").pop();
-			const mime = ext === "js" ? "application/javascript" : ext === "html" ? "text/html" : "text/plain";
-			route.fulfill({ body: readFileSync(fp, "utf-8"), contentType: mime });
-		} else {
-			route.continue();
-		}
-	});
-	await page.goto("http://localhost/tests/int-overlay-position.test.html");
-	await page.waitForFunction(() => window.__result !== undefined);
-	return page;
-}
+installBrowserLifecycle();
 
 test("bare createElement overlays are absolute and align with text metrics", async () => {
-	const browser = await chromium.launch();
-	const page = await loadPage(browser);
-	const result = await page.evaluate(() => window.__result);
-	await page.close();
-	await browser.close();
+	const result = await loadResult("/tests/int-overlay-position.test.html");
 	if (result.error) throw new Error(result.error);
 
 	expect(result.caretPosition).toBe("absolute");
@@ -39,5 +15,5 @@ test("bare createElement overlays are absolute and align with text metrics", asy
 	expect(result.selectionAlign).toBe(true);
 	expect(result.caretAfterType).toBe(true);
 	expect(result.longCaretAbs).toBe(true);
-	expect(result.longMoveMs).toBeLessThan(50); // should be fast, not O(N)
+	expect(result.longMoveMs).toBeLessThan(50);
 });

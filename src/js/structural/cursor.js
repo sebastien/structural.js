@@ -306,14 +306,21 @@ class Caret {
 	// Displays the visual caret at specified `x` and `y` coordinates with configurable `height`.
 	_showAt(x, y, height) {
 		if (this.node) {
-			const snap = value => Math.round(value);
-			this.node.style.left = `${snap(x)}px`;
-			this.node.style.top = `${snap(y)}px`;
+			// Floor X so the bar sits on the insertion edge (round biases right).
+			this.node.style.left = `${Math.floor(x)}px`;
+			this.node.style.top = `${Math.round(y)}px`;
 			if (height !== undefined) {
-				this.node.style.height = `${Math.max(1, snap(height))}px`;
+				this.node.style.height = `${Math.max(1, Math.round(height))}px`;
 			}
 			this.node.style.visibility = "visible";
 			this._applyState(this.focused ? "focus" : "default");
+			// Restart blink so the caret stays solid while the user is typing/moving.
+			if (this.node.classList?.contains("caret-blink")) {
+				this.node.classList.remove("caret-blink");
+				// Force style flush before re-adding the animation class.
+				void this.node.offsetWidth;
+				this.node.classList.add("caret-blink");
+			}
 		}
 	}
 
@@ -557,15 +564,16 @@ class Cursor {
 	insertText(text) {
 		this._ensureSelectionFromNativeIfPresent();
 		if (this.selectionKind === "range") {
+			this.editor?.noteEdit?.("input");
 			const next = this.selection.replaceWithText(text);
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index, { skipBoundaryCollapse: true });
-				this._syncStructuralToNative();
 			}
 			return;
 		}
 		if (this.selectionKind === "node") {
+			this.editor?.noteEdit?.("input");
 			this.replaceSelectedNode(text);
 			return;
 		}
@@ -574,10 +582,10 @@ class Cursor {
 		if (!this.text.acceptsText(position)) {
 			return;
 		}
+		this.editor?.noteEdit?.("input");
 		const next = this.text.insertAtIndex(this.offset, text);
 		this._desiredX = null;
 		this.moveTo(next.index, { skipBoundaryCollapse: true });
-		this._syncStructuralToNative();
 	}
 
 	// Method: backspace
@@ -585,29 +593,27 @@ class Cursor {
 	backspace() {
 		this._ensureSelectionFromNativeIfPresent();
 		if (this.selectionKind === "range") {
+			this.editor?.noteEdit?.("delete");
 			const next = this.selection.replaceWithText("");
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
-				this._syncStructuralToNative();
 			}
 			return;
 		}
 		if (this.selectionKind === "node") {
+			this.editor?.noteEdit?.("delete");
 			this.removeSelectedNode();
 			return;
 		}
 		this.text.ensureIndex(this.offset);
+		this.editor?.noteEdit?.("delete");
 		const next = this.text.deleteBackwardAtIndex(this.offset);
 		this._desiredX = null;
 		this.moveTo(next.index, {
 			skipBoundaryCollapse: true,
 			skipFormattingWhitespace: true,
 		});
-		// Force native selection to our new structural position. This prevents stale
-		// native ranges (from click or prior sync) from causing syncFromNative to jump
-		// the cursor after the DOM mutation + rebuild.
-		this._syncStructuralToNative();
 	}
 
 	// Method: delete
@@ -615,32 +621,32 @@ class Cursor {
 	delete() {
 		this._ensureSelectionFromNativeIfPresent();
 		if (this.selectionKind === "range") {
+			this.editor?.noteEdit?.("delete");
 			const next = this.selection.replaceWithText("");
 			if (next) {
 				this._desiredX = null;
 				this.moveTo(next.index);
-				this._syncStructuralToNative();
 			}
 			return;
 		}
 		if (this.selectionKind === "node") {
+			this.editor?.noteEdit?.("delete");
 			this.removeSelectedNode();
 			return;
 		}
 		this.text.ensureIndex(this.offset);
+		this.editor?.noteEdit?.("delete");
 		const next = this.text.deleteForwardAtIndex(this.offset);
 		this._desiredX = null;
 		this.moveTo(next.index, {
 			skipBoundaryCollapse: true,
 			skipFormattingWhitespace: true,
 		});
-		// Force native selection to our new structural position (see backspace).
-		this._syncStructuralToNative();
 	}
 
 	// Method: _syncStructuralToNative
 	// Pushes structural caret/range to the browser selection without re-entering
-	// selectionchange → syncFromNative (guarded via input._syncingNative).
+	// selectionchange → syncFromNative (guarded via input._guardNativeSync / _syncingNative).
 	_syncStructuralToNative() {
 		try {
 			const ed = this.editor;
@@ -648,12 +654,9 @@ class Cursor {
 			const sel = ed?.selection;
 			const active = ed ? ed.activeSession() : null;
 			if (!sel || typeof sel.syncToNative !== "function") return;
-			if (input) input._syncingNative = true;
-			try {
-				sel.syncToNative(active);
-			} finally {
-				if (input) input._syncingNative = false;
-			}
+			const run = () => sel.syncToNative(active);
+			if (typeof input?._guardNativeSync === "function") input._guardNativeSync(run);
+			else run();
 		} catch (_) {}
 	}
 
@@ -1229,6 +1232,7 @@ class Cursor {
 			const caret = this.caret.setVirtual(move.position, {
 				editable: caretEditable,
 			});
+			this._syncStructuralToNative();
 			const current = {
 				...this._snapshot(),
 				requestedOffset: move.requested,
@@ -1250,6 +1254,7 @@ class Cursor {
 		this.selectionKind = "range";
 		this.caret.setVirtual(null);
 		const render = this.selection.apply();
+		this._syncStructuralToNative();
 		const current = {
 			...this._snapshot(),
 			requestedOffset: move.requested,
@@ -1304,6 +1309,7 @@ class Cursor {
 							: 0;
 			this.caret.setVirtual(null);
 			const render = this.selection.apply();
+			this._syncStructuralToNative();
 			this._emitMove(previous, {
 				...this._snapshot(),
 				requestedOffset: focusOffset,
@@ -1605,6 +1611,60 @@ class Cursor {
 		this.moveTo(this._advanceHorizontalOffset(current, direction));
 	}
 
+	// Method: _wordTarget
+	// Finds the next word start using the structural position index.
+	_wordTarget(offset, direction) {
+		let current = this.text.clampIndex(offset);
+		const crossed = (next) => {
+			const from = this.text.pointAt(Math.min(current, next));
+			const to = this.text.pointAt(Math.max(current, next));
+			if (!from || !to) return "";
+			const range = document.createRange();
+			range.setStart(from.node, from.offset);
+			range.setEnd(to.node, to.offset);
+			return range.toString();
+		};
+		const advance = () => this._advanceHorizontalOffset(current, direction);
+		const isWord = (value) => /[\p{L}\p{N}_]/u.test(value);
+		let next = advance();
+		const skip = (matches) => {
+			while (next !== current && matches(crossed(next))) {
+				current = next;
+				next = advance();
+			}
+		};
+		if (direction > 0) {
+			skip(isWord);
+			skip((value) => !isWord(value));
+		} else {
+			skip((value) => !isWord(value));
+			skip(isWord);
+		}
+		return current;
+	}
+
+	// Method: _moveWord
+	// Moves by words and preserves the selection anchor when extending.
+	_moveWord(direction, extend = false) {
+		this._desiredX = null;
+		if (extend) {
+			const anchor = this.selection.isActive ? this.selection.anchorOffset : this.offset;
+			const focus = this.selection.isActive ? this.selection.focusOffset : this.offset;
+			const move = this._resolveMoveOffset(this._wordTarget(focus, direction));
+			if (move) this._setRangeSelection(anchor, move.clamped, move);
+			return;
+		}
+		if (this.selectionKind === "range") {
+			this._collapseRangeSelection(direction);
+			return;
+		}
+		if (this.selectionKind === "node") {
+			this._moveFromSelectedNode(direction);
+			return;
+		}
+		this.moveTo(this._wordTarget(this.offset, direction));
+	}
+
 	// Method: _moveVertical
 	// Internal controller for vertical cursor movement.
 	_moveVertical(direction, extend = false) {
@@ -1659,6 +1719,7 @@ class Cursor {
 			this.anchor = this.editor.root;
 			this.delta = 0;
 			this.caret.setVirtual(null);
+			this._syncStructuralToNative();
 			this._emitMove(previous, {
 				...this._snapshot(),
 				requestedOffset: this.offset,
@@ -1675,6 +1736,7 @@ class Cursor {
 		const caret = this.caret.setVirtual(move.position, {
 			editable: this.text.acceptsText(move.position),
 		});
+		this._syncStructuralToNative();
 		const current = {
 			...this._snapshot(),
 			requestedOffset: move.requested,
@@ -1711,10 +1773,22 @@ class Cursor {
 		this._moveHorizontal(-1, extend);
 	}
 
+	// Method: wordLeft
+	// Moves to the start of the current or previous word.
+	wordLeft(extend = false) {
+		this._moveWord(-1, extend);
+	}
+
 	// Method: right
 	// Moves the cursor to the right, optionally extending selection.
 	right(extend = false) {
 		this._moveHorizontal(1, extend);
+	}
+
+	// Method: wordRight
+	// Moves to the start of the next word.
+	wordRight(extend = false) {
+		this._moveWord(1, extend);
 	}
 
 	// Method: up

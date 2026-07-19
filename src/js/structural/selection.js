@@ -49,6 +49,8 @@ function clientToHostLocal(clientX, clientY, host) {
 
 // Converts viewport client coordinates to left/top for an absolutely positioned
 // element (caret) relative to its offset parent.
+// Absolute containing block is the padding edge; getBoundingClientRect is the
+// border box — subtract clientLeft/Top (border) so padded/bordered hosts align.
 function clientToOffsetParent(clientX, clientY, node) {
 	const parent = node?.offsetParent;
 	if (!parent) {
@@ -56,8 +58,8 @@ function clientToOffsetParent(clientX, clientY, node) {
 	}
 	const origin = parent.getBoundingClientRect();
 	return {
-		x: clientX - origin.left + parent.scrollLeft,
-		y: clientY - origin.top + parent.scrollTop,
+		x: clientX - origin.left - parent.clientLeft + parent.scrollLeft,
+		y: clientY - origin.top - parent.clientTop + parent.scrollTop,
 	};
 }
 
@@ -768,19 +770,52 @@ class EditorSelectionController {
 		const active = this.editor.activeSession(session);
 		try {
 			const selection = window.getSelection();
-			selection?.removeAllRanges();
+			if (!selection) return false;
 			if (active.cursor.selectionKind === "range") {
 				const range = active.cursor.selection.toDomRange();
 				if (!range) return false;
-				selection?.addRange(range);
+				if (
+					selection.rangeCount === 1 &&
+					!selection.isCollapsed &&
+					selection.anchorNode === range.startContainer &&
+					selection.anchorOffset === range.startOffset &&
+					selection.focusNode === range.endContainer &&
+					selection.focusOffset === range.endOffset
+				) {
+					return true;
+				}
+				if (typeof selection.setBaseAndExtent === "function") {
+					selection.setBaseAndExtent(
+						range.startContainer,
+						range.startOffset,
+						range.endContainer,
+						range.endOffset,
+					);
+				} else {
+					selection.removeAllRanges();
+					selection.addRange(range);
+				}
 				return true;
 			}
 			const point = this.editor.text.pointAt(active.cursor.offset ?? 0);
 			if (!point?.node?.isConnected) return false;
-			const range = document.createRange();
-			range.setStart(point.node, point.offset);
-			range.collapse(true);
-			selection?.addRange(range);
+			if (
+				selection.rangeCount === 1 &&
+				selection.isCollapsed &&
+				selection.anchorNode === point.node &&
+				selection.anchorOffset === point.offset
+			) {
+				return true;
+			}
+			if (typeof selection.setBaseAndExtent === "function") {
+				selection.setBaseAndExtent(point.node, point.offset, point.node, point.offset);
+			} else {
+				const range = document.createRange();
+				range.setStart(point.node, point.offset);
+				range.collapse(true);
+				selection.removeAllRanges();
+				selection.addRange(range);
+			}
 			return true;
 		} catch (_e) {
 			return false;
@@ -854,8 +889,30 @@ class EditorSelectionController {
 		if (range.collapsed || start === end) {
 			// Preserve the exact text index from the native caret. Boundary collapse can
 			// push a text-end index onto the following element-boundary and break typing.
+			if (
+				active.cursor.selectionKind === "caret" &&
+				active.cursor.offset === end &&
+				!active.cursor.selection?.isActive
+			) {
+				this._syncSessionBlock(active);
+				return true;
+			}
 			active.cursor.moveTo(end, { skipBoundaryCollapse: true });
 		} else {
+			const lo = Math.min(start, end);
+			const hi = Math.max(start, end);
+			const cur = active.cursor.selection?.isActive
+				? active.cursor.selection.normalizedRange()
+				: null;
+			if (
+				active.cursor.selectionKind === "range" &&
+				cur &&
+				cur.start === lo &&
+				cur.end === hi
+			) {
+				this._syncSessionBlock(active);
+				return true;
+			}
 			active.cursor.select(start, end);
 		}
 		this._syncSessionBlock(active);

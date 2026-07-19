@@ -61,6 +61,21 @@ function richTextKeymap(overrides = {}) {
 		"Mod+1": { type: "toggleBlock", args: { tag: "h1" } },
 		"Mod+2": { type: "toggleBlock", args: { tag: "h2" } },
 		"Mod+3": { type: "toggleBlock", args: { tag: "h3" } },
+		"Mod+ArrowLeft": { type: "moveCursor", args: { direction: "left", word: true } },
+		"Mod+ArrowRight": { type: "moveCursor", args: { direction: "right", word: true } },
+		"Mod+Shift+ArrowLeft": {
+			type: "moveCursor",
+			args: { direction: "left", word: true, extend: true },
+		},
+		"Mod+Shift+ArrowRight": {
+			type: "moveCursor",
+			args: { direction: "right", word: true, extend: true },
+		},
+		"Mod+C": { type: "copy" },
+		"Mod+X": { type: "cut" },
+		// Paste is handled only via the document `paste` event (has clipboardData).
+		// Binding Mod+V on keydown would preventDefault and force async clipboard.readText,
+		// which is often denied — so paste would silently no-op.
 		Enter: { type: "splitBlock" },
 		"Shift+Enter": { type: "insertLineBreak" },
 		Tab: { type: "indent" },
@@ -100,13 +115,17 @@ class RichText {
 		this.editor = null;
 		this.boundMethods = new Map();
 		this._onCopy = this.onCopy.bind(this);
+		this._onCut = this.onCut.bind(this);
 		this._onPaste = this.onPaste.bind(this);
+		// Timestamp of the last keymap clipboard chord so document events do not double-apply.
+		this._clipboardChordAt = 0;
 	}
 
 	attach(editor) {
 		this.editor = editor;
 		editor.richText = this;
 		document.addEventListener("copy", this._onCopy);
+		document.addEventListener("cut", this._onCut);
 		document.addEventListener("paste", this._onPaste);
 		this.attachEditorMethods([
 			"blockSelector",
@@ -125,7 +144,6 @@ class RichText {
 			"isEmptyBlock",
 			"removePlaceholderInCurrentBlock",
 			"shouldInsertText",
-			"syncAfterMutation",
 			"currentEditableBlock",
 			"isFullySelectedBlock",
 			"fullySelectedBlocks",
@@ -149,9 +167,32 @@ class RichText {
 			beforeTextInput: (_command, context) => this.removePlaceholderInCurrentBlock(context.session),
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
 			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
-			deleteSmart: (_command, context) => this.deleteSelectedBlocks(context.session) || this.deleteEmptyBlock(context.session) || this.mergeBlockBackward(context.session, context.event),
+			deleteSmart: (_command, context) =>
+				this.editor.history.run("delete", () => {
+					if (
+						this.deleteSelectedBlocks(context.session) ||
+						this.deleteEmptyBlock(context.session) ||
+						this.mergeBlockBackward(context.session, context.event)
+					) {
+						return true;
+					}
+					// Character-level delete when no block merge/empty-block path matched.
+					if (context.event?.key === "Delete") context.session.cursor.delete();
+					else context.session.cursor.backspace();
+					return true;
+				}),
 			indent: (_command, context) => this.indentCurrentListItem(context.session),
 			dedent: (_command, context) => this.dedentCurrentListItem(context.session),
+			// Copy/cut key chords. Paste is document `paste` only (see richTextKeymap).
+			// Mark chord here so the matching document copy/cut event is not double-applied.
+			copy: () => {
+				this._markClipboardChord();
+				return this.copySelection();
+			},
+			cut: () => {
+				this._markClipboardChord();
+				return this.cutSelection();
+			},
 		});
 		return this;
 	}
@@ -159,6 +200,7 @@ class RichText {
 	detach() {
 		if (!this.editor) return this;
 		document.removeEventListener("copy", this._onCopy);
+		document.removeEventListener("cut", this._onCut);
 		document.removeEventListener("paste", this._onPaste);
 		for (const [name, method] of this.boundMethods) {
 			if (this.editor[name] === method) delete this.editor[name];
@@ -295,25 +337,6 @@ class RichText {
 		}
 		if (removed) this.editor.text.refresh();
 		return removed;
-	}
-
-	syncAfterMutation(move, session = null) {
-		const active = this.editor.activeSession(session);
-		this.editor.lastNormalization = this.editor.normalize(this.editor.root, { session: active });
-		this.editor.text.refresh();
-		let placed = false;
-		if (move?.type === "end" && move.block?.isConnected) {
-			placed = this.moveCursorToBlockEnd(move.block, active);
-		} else if (move?.block?.isConnected) {
-			placed = this.moveCursorToBlockStart(move.block, active);
-		}
-		if (!placed) {
-			const fallback = this.firstBlockIn(this.editor.root);
-			if (fallback) placed = this.moveCursorToBlockStart(fallback, active);
-		}
-		active.currentBlock = this.blockFor(active.cursor.anchor) ?? (move?.block?.isConnected ? move.block : null);
-		if (active === this.editor.localSession) this.editor._currentBlock = active.currentBlock;
-		active.classes?.update();
 	}
 
 	currentEditableBlock(session = null) {
@@ -516,7 +539,7 @@ class RichText {
 		const afterBlock = blocks.map(block => this.firstBlockIn(block.nextElementSibling)).find(Boolean);
 		const beforeBlock = [...blocks].reverse().map(block => this.lastBlockIn(block.previousElementSibling)).find(Boolean);
 		for (const block of blocks) this.removeBlock(block);
-		this.syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: "end" } : null, session);
+		this.editor.setContent(undefined, { session, selection: afterBlock ? { node: afterBlock, position: "start" } : beforeBlock ? { node: beforeBlock, position: "end" } : undefined });
 		return true;
 	}
 
@@ -532,7 +555,7 @@ class RichText {
 		const afterBlock = this.firstBlockIn(block.nextElementSibling);
 		const beforeBlock = this.lastBlockIn(block.previousElementSibling);
 		this.removeBlock(block);
-		this.syncAfterMutation(afterBlock ? { block: afterBlock } : beforeBlock ? { block: beforeBlock, type: "end" } : null, session);
+		this.editor.setContent(undefined, { session, selection: afterBlock ? { node: afterBlock, position: "start" } : beforeBlock ? { node: beforeBlock, position: "end" } : undefined });
 		return true;
 	}
 
@@ -569,13 +592,7 @@ class RichText {
 			}
 		}
 		block.remove();
-		const active = this.editor.activeSession(session);
-		this.editor.lastNormalization = this.editor.normalize(this.editor.root, { session: active });
-		this.editor.text.refresh();
-		this.editor.selection.setCaret(markerNode, markerOffset, active);
-		active.currentBlock = previous;
-		if (active === this.editor.localSession) this.editor._currentBlock = previous;
-		active.classes?.update();
+		this.editor.setContent(undefined, { session, selection: { node: markerNode, offset: markerOffset } });
 		return true;
 	}
 
@@ -587,14 +604,14 @@ class RichText {
 			const next = this.editor.schema.tag(block) === defaultTag ? block : this.replaceBlock(block, defaultTag);
 			next.replaceChildren();
 			this.ensureEditableContent(next, true);
-			this.syncAfterMutation({ block: next }, session);
+			this.editor.setContent(undefined, { session, selection: { node: next, position: "start" } });
 			return true;
 		}
 		const outerParent = container.parentElement ?? this.editor.root;
 		const nextBlock = this.createBlock(this.editor.schema.defaultChild(outerParent === this.editor.root ? ":root" : outerParent));
 		container.parentNode.insertBefore(nextBlock, container.nextSibling);
 		block.remove();
-		this.syncAfterMutation({ block: nextBlock }, session);
+		this.editor.setContent(undefined, { session, selection: { node: nextBlock, position: "start" } });
 		return true;
 	}
 
@@ -610,7 +627,7 @@ class RichText {
 		this.ensureEditableContent(block, true);
 		this.ensureEditableContent(nextBlock, true);
 		block.parentNode.insertBefore(nextBlock, block.nextSibling);
-		this.syncAfterMutation({ block: nextBlock }, session);
+		this.editor.setContent(undefined, { session, selection: { node: nextBlock, position: "start" } });
 		return true;
 	}
 
@@ -636,7 +653,7 @@ class RichText {
 		this.ensureEditableContent(item, true);
 		this.ensureEditableContent(nextItem, true);
 		item.parentNode.insertBefore(nextItem, item.nextSibling);
-		this.syncAfterMutation({ block: nextItem }, session);
+		this.editor.setContent(undefined, { session, selection: { node: nextItem, position: "start" } });
 		return true;
 	}
 
@@ -650,9 +667,7 @@ class RichText {
 		const tail = document.createTextNode("");
 		range.insertNode(tail);
 		range.insertNode(br);
-		this.syncAfterMutation(null, session);
-		this.editor.selection.setCaret(tail, 0, session);
-		this.editor.activeSession(session).classes?.update();
+		this.editor.setContent(undefined, { session, selection: { node: tail, offset: 0 } });
 		return true;
 	}
 
@@ -678,7 +693,7 @@ class RichText {
 			previous.appendChild(nested);
 		}
 		nested.appendChild(item);
-		this.syncAfterMutation({ block: item }, session);
+		this.editor.setContent(undefined, { session, selection: { node: item, position: "start" } });
 		return true;
 	}
 
@@ -688,7 +703,7 @@ class RichText {
 		if (parentItem) {
 			parentItem.parentElement.insertBefore(item, parentItem.nextSibling);
 			if (!list.querySelector(":scope > li")) list.remove();
-			this.syncAfterMutation({ block: item }, session);
+			this.editor.setContent(undefined, { session, selection: { node: item, position: "start" } });
 			return true;
 		}
 		if (!list) return false;
@@ -698,7 +713,7 @@ class RichText {
 		list.parentNode.insertBefore(paragraph, list.nextSibling);
 		item.remove();
 		if (!list.querySelector(":scope > li")) list.remove();
-		this.syncAfterMutation({ block: paragraph }, session);
+		this.editor.setContent(undefined, { session, selection: { node: paragraph, position: "start" } });
 		return true;
 	}
 
@@ -720,25 +735,181 @@ class RichText {
 		return item ? this.dedentListItem(item, session) : false;
 	}
 
+	// Method: ownsClipboard
+	// True when clipboard events should target this editor (not a foreign input).
+	ownsClipboard(event = null) {
+		if (!this.editor?.root?.isConnected) return false;
+		const input = this.editor.input;
+		const target = event?.target;
+		const active = document.activeElement;
+		// Never steal from a foreign control the user is in / targeting.
+		if (input?._isForeignEditable?.(target)) return false;
+		if (input?._isForeignEditable?.(active)) return false;
+		const root = this.editor.root;
+		const inRoot = (el) => !!el && (el === root || root.contains(el));
+		if (inRoot(target) || inRoot(active)) return true;
+		const session = this.editor.activeSession();
+		if (session?.cursor?.selectionKind === "range") return true;
+		// Virtual caret: click places the caret without always keeping focus on root.
+		// `_editorActive` stays true after mouseup until the user clicks elsewhere.
+		if (input?._editorActive || input?._mouseOwned) return true;
+		const focusLoose =
+			!active ||
+			active === document.body ||
+			active === document.documentElement ||
+			active === document;
+		if (focusLoose && session?.cursor && typeof session.cursor.offset === "number") {
+			return true;
+		}
+		return false;
+	}
+
+	// Method: selectedPlainText
+	// Plain text for the current structural (or native) selection.
+	selectedPlainText(session = null) {
+		const range = this.editor.range.selected(this.editor.root, session);
+		return range ? range.toString() : "";
+	}
+
+	// Method: writeClipboard
+	// Writes plain text to the system clipboard (event payload or Clipboard API).
+	writeClipboard(text, event = null) {
+		if (text == null) return false;
+		if (event?.clipboardData) {
+			event.clipboardData.setData("text/plain", text);
+			return true;
+		}
+		if (globalThis.navigator?.clipboard?.writeText) {
+			globalThis.navigator.clipboard.writeText(text).catch(() => {});
+			return true;
+		}
+		// Legacy fallback for non-secure contexts.
+		try {
+			const ta = document.createElement("textarea");
+			ta.value = text;
+			ta.setAttribute("readonly", "");
+			ta.style.cssText = "position:fixed;left:-9999px;top:0";
+			document.body.appendChild(ta);
+			ta.select();
+			const ok = document.execCommand("copy");
+			ta.remove();
+			return ok;
+		} catch (_) {
+			return false;
+		}
+	}
+
+	// Method: readClipboard
+	// Reads plain text from a paste event or the Clipboard API (async → Promise).
+	readClipboard(event = null) {
+		const fromEvent = event?.clipboardData?.getData?.("text/plain");
+		if (fromEvent != null && fromEvent !== "") return Promise.resolve(fromEvent);
+		if (globalThis.navigator?.clipboard?.readText) {
+			return globalThis.navigator.clipboard.readText().catch(() => "");
+		}
+		return Promise.resolve("");
+	}
+
+	// Method: _markClipboardChord
+	// Notes a keymap-driven clipboard op so the matching document event is ignored.
+	_markClipboardChord() {
+		this._clipboardChordAt = performance.now();
+	}
+
+	// Method: _fromClipboardChord
+	// True when a document cut/copy/paste event is the echo of a just-handled keymap chord.
+	_fromClipboardChord() {
+		return performance.now() - this._clipboardChordAt < 100;
+	}
+
+	// Method: copySelection
+	// Copies the current selection to the clipboard.
+	copySelection(event = null) {
+		if (event && this._fromClipboardChord()) {
+			event.preventDefault();
+			return true;
+		}
+		if (event && !this.ownsClipboard(event)) return false;
+		if (!event && !this.ownsClipboard()) return false;
+		const text = this.selectedPlainText();
+		if (!text) return false;
+		const ok = this.writeClipboard(text, event);
+		if (ok && event) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
+		return ok;
+	}
+
+	// Method: cutSelection
+	// Copies the selection then deletes it (one history unit).
+	cutSelection(event = null) {
+		if (event && this._fromClipboardChord()) {
+			event.preventDefault();
+			return true;
+		}
+		if (event && !this.ownsClipboard(event)) return false;
+		if (!event && !this.ownsClipboard()) return false;
+		const session = this.editor.activeSession();
+		const text = this.selectedPlainText(session);
+		if (!text) return false;
+		const ok = this.writeClipboard(text, event);
+		if (!ok) return false;
+		if (event) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
+		this.editor.history.run("cut", () => {
+			// Range delete via backspace/replace; no-op if selection already collapsed.
+			if (session.cursor.selectionKind === "range" || session.cursor.selectionKind === "node") {
+				session.cursor.backspace();
+			}
+			session.classes?.update();
+		});
+		return true;
+	}
+
+	// Method: pasteText
+	// Inserts clipboard plain text at the caret/selection.
+	// Prefer the `paste` event's clipboardData — do not rely on async clipboard.readText.
+	pasteText(text = null, session = null, event = null) {
+		if (event && !this.ownsClipboard(event)) return false;
+		if (!event && !this.ownsClipboard()) return false;
+		const active = this.editor.activeSession(session);
+		const apply = (raw) => {
+			const value = String(raw ?? "").replace(/\r\n?/g, "\n");
+			if (!value) return false;
+			if (event) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
+			this.removePlaceholderInCurrentBlock(active);
+			active.cursor.insertText(value);
+			active.classes?.update();
+			return true;
+		};
+		if (text != null) return apply(text);
+		if (event?.clipboardData) {
+			// text/plain first; fall back to text if browsers only expose that.
+			const plain =
+				event.clipboardData.getData("text/plain") ||
+				event.clipboardData.getData("text") ||
+				"";
+			return apply(plain);
+		}
+		return false;
+	}
+
 	onCopy(event) {
-		if (!this.editor?.root?.isConnected) return;
-		const range = this.editor.range.selected(this.editor.root);
-		if (!range) return;
-		event.preventDefault();
-		event.clipboardData?.setData("text/plain", range.toString());
+		this.copySelection(event);
+	}
+
+	onCut(event) {
+		this.cutSelection(event);
 	}
 
 	onPaste(event) {
-		if (!this.editor?.root?.isConnected) return;
-		const range = this.editor.range.current(this.editor.root);
-		if (!range) return;
-		const text = event.clipboardData?.getData("text/plain") ?? "";
-		if (!text) return;
-		event.preventDefault();
-		const session = this.editor.activeSession();
-		this.removePlaceholderInCurrentBlock(session);
-		session.cursor.insertText(text.replace(/\r\n?/g, "\n"));
-		session.classes?.update();
+		this.pasteText(null, null, event);
 	}
 }
 

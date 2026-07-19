@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "/src/js/structural/editor.js",
+        "structural/richtext": "/src/js/structural/richtext.js",
+        "structural/cursor": "/src/js/structural/cursor.js",
+        "structural/text": "/src/js/structural/text.js",
+        "structural/selection": "/src/js/structural/selection.js",
+        "structural/range": "/src/js/structural/range.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="editor">hello world</div>
+    <textarea id="foreign">chat message</textarea>
+    <input id="foreign-input" type="text" />
+    <script type="module">
+      import { Editor } from "structural/editor";
+      import { richTextKeymap, richTextSchema } from "structural/richtext";
+
+      const root = document.getElementById("editor");
+      const foreign = document.getElementById("foreign");
+      const foreignInput = document.getElementById("foreign-input");
+      const editor = new Editor(root, {
+        schema: richTextSchema(),
+        keymap: richTextKeymap(),
+      });
+      editor.input.cursor.moveTo(5);
+
+      function dispatchKey(target, init) {
+        const event = new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        });
+        target.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      function dispatchMouse(target, type, init = {}) {
+        const event = new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: 0,
+          clientY: 0,
+          ...init,
+        });
+        target.dispatchEvent(event);
+        return event;
+      }
+
+      const baseline = root.textContent;
+      const baselineKind = editor.input.cursor.selectionKind;
+      const baselineOffset = editor.input.cursor.offset;
+
+      foreign.focus();
+      const foreignPrintable = dispatchKey(foreign, { key: "x" });
+      const foreignBackspace = dispatchKey(foreign, { key: "Backspace" });
+      const foreignEnter = dispatchKey(foreign, { key: "Enter" });
+      const afterForeign = root.textContent;
+      const foreignOffset = editor.input.cursor.offset;
+
+      foreignInput.focus();
+      const foreignInputPrintable = dispatchKey(foreignInput, { key: "y" });
+      const afterForeignInput = root.textContent;
+
+      // Double-click on foreign textarea must not steal selection into the editor.
+      foreign.focus();
+      foreign.select();
+      const foreignSelBefore = { start: foreign.selectionStart, end: foreign.selectionEnd };
+      dispatchMouse(foreign, "mousedown", { detail: 2, button: 0 });
+      dispatchMouse(foreign, "mouseup", { detail: 2, button: 0 });
+      const afterForeignClick = {
+        text: root.textContent,
+        selectionKind: editor.input.cursor.selectionKind,
+        offset: editor.input.cursor.offset,
+        foreignSel: { start: foreign.selectionStart, end: foreign.selectionEnd },
+      };
+
+      // Document-dispatched keys (no foreign target) still edit — preserves existing tests.
+      // Run before in-root multi-click so native word-selection does not re-import.
+      document.activeElement?.blur?.();
+      window.getSelection()?.removeAllRanges();
+      root.focus?.();
+      editor.input.cursor.selection?.clear?.();
+      editor.input.cursor.moveTo(5);
+      const editorPrintable = dispatchKey(document, { key: "z" });
+      const afterEditor = root.textContent;
+
+      // Control: double-click inside editor still selects a word.
+      editor.input.cursor.moveTo(1);
+      dispatchMouse(root, "mousedown", { detail: 2, button: 0, clientX: 8, clientY: 8 });
+      dispatchMouse(root, "mouseup", { detail: 2, button: 0, clientX: 8, clientY: 8 });
+      const afterEditorClick = {
+        selectionKind: editor.input.cursor.selectionKind,
+        range: editor.input.cursor.selection?.normalizedRange?.() ?? null,
+      };
+
+      window.__result = {
+        baseline,
+        baselineKind,
+        baselineOffset,
+        foreignPrintable,
+        foreignBackspace,
+        foreignEnter,
+        afterForeign,
+        foreignOffset,
+        foreignInputPrintable,
+        afterForeignInput,
+        foreignSelBefore,
+        afterForeignClick,
+        afterEditorClick,
+        editorPrintable,
+        afterEditor,
+      };
+    </script>
+  </body>
+</html>
