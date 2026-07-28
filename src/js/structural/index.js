@@ -32,3 +32,15 @@ export {
 } from "./richtext.js";
 
 export { default as richtext } from "./richtext.js";
+
+export {
+	BlockMenus,
+	BlockSchema,
+	Blocks,
+	defaultBlockInput,
+	blockEl,
+	blockKeymap,
+	blockSchema,
+} from "./blocks.js";
+
+export { default as blocks } from "./blocks.js";

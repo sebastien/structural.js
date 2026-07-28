@@ -19,6 +19,7 @@ Key features are:
 - **Editable fragments**: You can specify how any DOM element is editable or selectable.
 - **Virtual Caret & Selection**: Visual selection overlays and caret positioning without breaking native editing.
 - **Rich Text Helpers**: Built-in schema, keymap, class, and mutation helpers for common editing flows.
+- **Structural Blocks**: Declarative slot/block schema, contextual input rules, and unit transforms for expression-like editors.
 - **Framework Agnostic**: Zero runtime dependencies; works with plain DOM or any framework that can host a content tree.
 
 The public entrypoint for bundlers is [`src/js/structural/index.js`](src/js/structural/index.js). In the browser, the examples import the source modules directly through an import map.
@@ -120,6 +121,8 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - `richTextKeymap(overrides?)`: Default rich text keymap helper.
 - `richTextClasses(options?)`: Default rich text class helper.
 - `richTextNormalizer(schema?, options?)`: Default rich text normalizer helper.
+- `blockSchema(def)` / `blockKeymap(overrides?)` / `Blocks` / `BlockMenus` / `defaultBlockInput()`: Structural block editors (slots, holes, operators, unit scope).
+- `Editor.contextAt()` / `Editor.addInputRules()` / `Editor.handleInputEvent()`: Contextual input matching for domain key bindings.
 - `EditorRangeController`: DOM range controller for subtree snapshots and restoration.
 - `EditorSelectionController`: Native/structural selection synchronization controller.
 - `TextAdapter(rootNode, options?)`: Linear mapping agent indexing the DOM tree into caret positions.
@@ -138,6 +141,7 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - [`src/js/structural/cursor.js`](src/js/structural/cursor.js): `Caret` and `Cursor`.
 - [`src/js/structural/selection.js`](src/js/structural/selection.js): `EditorSelectionController`, `SelectionOverlay`, and `TextSelection`.
 - [`src/js/structural/modification.js`](src/js/structural/modification.js): `Modification`.
+- [`src/js/structural/blocks.js`](src/js/structural/blocks.js): `BlockSchema`, `Blocks`, `BlockMenus`, block keymap/input helpers.
 
 ### Notable examples
 
@@ -147,3 +151,4 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - [`examples/app-annotation.example.html`](examples/app-annotation.example.html): DOM-backed feedback and annotations alongside primary text.
 - [`examples/app-template.example.html`](examples/app-template.example.html): Structured email template editing with conditional blocks and placeholders.
 - [`examples/app-emailtemplate.example.html`](examples/app-emailtemplate.example.html): Full email template editor example with toolbar, selection, and caret rendering.
+- [`examples/app-expr.example.html`](examples/app-expr.example.html): Nested arithmetic expression editor with slot chooser, variable autocomplete, and live evaluation.

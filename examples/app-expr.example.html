@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expression Editor — Structural.js</title>
+    <style>
+      :root {
+        --bg: #f4f6f8;
+        --panel: #ffffff;
+        --border: #d8dee6;
+        --fg: #1a2332;
+        --muted: #6b7785;
+        --accent: #0e639c;
+        --accent-soft: rgba(14, 99, 156, 0.12);
+        --error: #c62828;
+        --error-soft: rgba(198, 40, 40, 0.12);
+        --ok: #2e7d32;
+        --hole: #9aa5b1;
+        --op: #5c6bc0;
+        --num: #00695c;
+        --var: #6a1b9a;
+        --shadow: 0 8px 24px rgba(26, 35, 50, 0.12);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: system-ui, -apple-system, sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+      }
+
+      header.page-header {
+        padding: 20px 28px 8px;
+      }
+
+      header.page-header h1 {
+        margin: 0 0 6px;
+        font-size: 1.35rem;
+        font-weight: 650;
+      }
+
+      header.page-header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        max-width: 62ch;
+        line-height: 1.45;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 280px;
+        gap: 16px;
+        padding: 16px 28px 28px;
+        align-items: start;
+      }
+
+      @media (max-width: 800px) {
+        .layout { grid-template-columns: 1fr; }
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(26, 35, 50, 0.04);
+        overflow: hidden;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        background: #fafbfc;
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: 0.8rem;
+        font-weight: 650;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .result {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9rem;
+        color: var(--ok);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .result.error {
+        color: var(--error);
+      }
+
+      .editor-shell {
+        position: relative;
+        min-height: 220px;
+        padding: 28px 24px;
+        overflow: auto;
+      }
+
+      #editor {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 1.25rem;
+        line-height: 1.9;
+        outline: none;
+        white-space: nowrap;
+      }
+
+      #editor .focus {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+
+      #editor .selected {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 6px;
+        background: var(--accent-soft);
+      }
+
+      .block,
+      .slot {
+        display: inline-flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        vertical-align: middle;
+      }
+
+      .block {
+        gap: 0.2em;
+        padding: 0.1em 0.2em;
+        border-radius: 8px;
+      }
+
+      .block:hover {
+        background: rgba(14, 99, 156, 0.04);
+      }
+
+      .block.nested {
+        padding: 0.1em 0.35em;
+        background: rgba(92, 107, 192, 0.06);
+        border: 1px solid rgba(92, 107, 192, 0.14);
+      }
+
+      .slot {
+        min-width: 0.75em;
+        min-height: 1.2em;
+        border-radius: 6px;
+      }
+
+      .slot.empty {
+        min-width: 1.6em;
+        justify-content: center;
+      }
+
+      .op, .paren {
+        color: var(--op);
+        font-weight: 600;
+        user-select: none;
+        padding: 0 0.15em;
+      }
+
+      .op.atom {
+        cursor: pointer;
+        border-radius: 4px;
+        min-width: 1.1em;
+        text-align: center;
+      }
+
+      .op.atom:hover {
+        background: rgba(92, 107, 192, 0.14);
+      }
+
+      .leaf {
+        display: inline-block;
+        padding: 0.05em 0.35em;
+        border-radius: 6px;
+        min-width: 0.6em;
+        min-height: 1.15em;
+      }
+
+      .leaf.num {
+        color: var(--num);
+        background: rgba(0, 105, 92, 0.08);
+      }
+
+      .leaf.var {
+        color: var(--var);
+        background: rgba(106, 27, 154, 0.08);
+      }
+
+      .leaf.error {
+        color: var(--error);
+        background: var(--error-soft);
+        box-shadow: inset 0 -2px 0 var(--error);
+      }
+
+      .hole {
+        color: var(--hole);
+        background: repeating-linear-gradient(
+          -45deg,
+          #eef1f4,
+          #eef1f4 4px,
+          #e4e9ef 4px,
+          #e4e9ef 8px
+        );
+        border: 1px dashed #b7c0cb;
+        border-radius: 6px;
+        padding: 0.05em 0.45em;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .vars-list {
+        list-style: none;
+        margin: 0;
+        padding: 8px;
+      }
+
+      .vars-list li {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92rem;
+        cursor: default;
+      }
+
+      .vars-list li:hover {
+        background: var(--accent-soft);
+      }
+
+      .vars-list .name {
+        color: var(--var);
+        font-weight: 600;
+      }
+
+      .vars-list .value {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .hint {
+        padding: 0 16px 14px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+
+      #selection {
+        position: absolute;
+        left: 0;
+        top: 0;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 10;
+      }
+
+      #caret {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 1lh;
+        width: 2px;
+        background: var(--accent);
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 11;
+      }
+
+      .menu {
+        position: fixed;
+        z-index: 1000;
+        min-width: 180px;
+        max-height: 240px;
+        overflow: auto;
+        padding: 6px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: var(--shadow);
+        display: none;
+      }
+
+      .menu.open { display: block; }
+
+      .menu button {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        padding: 8px 10px;
+        border-radius: 7px;
+        font: inherit;
+        font-size: 0.92rem;
+        color: var(--fg);
+        cursor: pointer;
+      }
+
+      .menu button:hover,
+      .menu button.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .menu button .kbd {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.78rem;
+      }
+
+      .menu .sep {
+        height: 1px;
+        margin: 4px 6px;
+        background: var(--border);
+      }
+
+      .menu .section {
+        padding: 6px 10px 2px;
+        font-size: 0.72rem;
+        font-weight: 650;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "structural/editor": "../src/js/structural/editor.js",
+        "structural/cursor": "../src/js/structural/cursor.js",
+        "structural/text": "../src/js/structural/text.js",
+        "structural/selection": "../src/js/structural/selection.js",
+        "structural/range": "../src/js/structural/range.js",
+        "structural/blocks": "../src/js/structural/blocks.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Expression Editor</h1>
+      <p>
+        Structural blocks for arithmetic expressions.
+        <strong>Mod+A</strong> selects the current unit and expands outward;
+        <strong>Mod+Shift+A</strong> contracts.
+        Enter an empty slot to open the chooser — <strong>Enter</strong> confirms,
+        <strong>Esc</strong> closes, <strong>Del</strong> clears the selected unit.
+        Select an operator to change it. Type <strong>+ − * /</strong> at the end of a
+        unit to extend after, or at the start (or <strong>Shift</strong>+op) to extend before.
+      </p>
+    </header>
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Expression</h2>
+          <div id="result" class="result">—</div>
+        </div>
+        <div class="editor-shell">
+          <div id="editor" tabindex="0"></div>
+          <div id="selection" aria-hidden="true"></div>
+          <div id="caret" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <h2>Variables</h2>
+        </div>
+        <ul class="vars-list" id="vars-list"></ul>
+        <p class="hint">Click a variable while editing a variable leaf to insert its name.</p>
+      </aside>
+    </div>
+
+    <div id="chooser" class="menu" role="listbox" aria-label="Fill slot"></div>
+    <div id="autocomplete" class="menu" role="listbox" aria-label="Variables"></div>
+    <div id="op-menu" class="menu" role="listbox" aria-label="Operator"></div>
+
+    <script type="module">
+      import { Editor } from "structural/editor";
+      import {
+        Blocks,
+        BlockMenus,
+        blockSchema,
+        blockKeymap,
+        blockEl as el,
+        defaultBlockInput,
+      } from "structural/blocks";
+
+      // ---------------------------------------------------------------------------
+      // Domain
+      // ---------------------------------------------------------------------------
+
+      const VARIABLES = {
+        x: 3,
+        y: 1.5,
+        width: 100,
+        height: 110,
+        pi: Math.PI,
+      };
+
+      const OP_LABEL = {
+        "+": "+",
+        "-": "−",
+        "*": "×",
+        "/": "÷",
+        neg: "−",
+      };
+
+      // ---------------------------------------------------------------------------
+      // DOM factories (schema.create)
+      // ---------------------------------------------------------------------------
+
+      function makeEmptySlot() {
+        const slot = el("span", "slot container empty", { "data-kind": "empty" });
+        slot.append(el("span", "hole atom", { text: "⬚" }));
+        return slot;
+      }
+
+      function makeLeaf(kind, text = "") {
+        const leaf = el("span", `leaf ${kind}`);
+        leaf.appendChild(document.createTextNode(text));
+        if (kind === "var") leaf.dataset.name = text;
+        return leaf;
+      }
+
+      function makeNumberSlot(value = "0") {
+        const v = value === "." ? "0." : String(value);
+        const slot = el("span", "slot container", { "data-kind": "number" });
+        const leaf = makeLeaf("num", v);
+        slot.append(leaf);
+        validateNumberLeaf(leaf);
+        return slot;
+      }
+
+      function makeVarSlot(name = "") {
+        const slot = el("span", "slot container", { "data-kind": "var" });
+        const leaf = makeLeaf("var", name);
+        slot.append(leaf);
+        validateVarLeaf(leaf);
+        return slot;
+      }
+
+      function makeOp(op) {
+        return el("span", "op atom", {
+          "data-op": op,
+          text: OP_LABEL[op] ?? op,
+        });
+      }
+
+      function makeBinaryBlock(op, left = null, right = null) {
+        const block = el("span", "block container", { "data-op": op });
+        block.append(left ?? makeEmptySlot());
+        block.append(makeOp(op));
+        block.append(right ?? makeEmptySlot());
+        return block;
+      }
+
+      function makeUnaryBlock(op = "neg", operand = null) {
+        const block = el("span", "block container", { "data-op": op });
+        block.append(makeOp(op));
+        block.append(operand ?? makeEmptySlot());
+        return block;
+      }
+
+      function wrapNested(block) {
+        block.classList.add("nested");
+        const slot = el("span", "slot container", { "data-kind": "expr" });
+        slot.append(
+          el("span", "paren skipped", { text: "(" }),
+          block,
+          el("span", "paren skipped", { text: ")" }),
+        );
+        return slot;
+      }
+
+      // ---------------------------------------------------------------------------
+      // Validation & evaluation (app domain)
+      // ---------------------------------------------------------------------------
+
+      function validateNumberLeaf(leaf) {
+        const text = (leaf.textContent ?? "").trim();
+        const ok = text === "" || /^-?(?:\d+\.?\d*|\.\d+)$/.test(text);
+        leaf.classList.toggle("error", !ok || text === "");
+        return ok && text !== "";
+      }
+
+      function validateVarLeaf(leaf) {
+        const text = (leaf.textContent ?? "").trim();
+        leaf.dataset.name = text;
+        const ok = Object.prototype.hasOwnProperty.call(VARIABLES, text);
+        leaf.classList.toggle("error", !ok);
+        return ok;
+      }
+
+      function validateAll(root) {
+        for (const leaf of root.querySelectorAll(".leaf.num")) validateNumberLeaf(leaf);
+        for (const leaf of root.querySelectorAll(".leaf.var")) validateVarLeaf(leaf);
+      }
+
+      function evalNode(node) {
+        if (!node) return { ok: false, error: "empty" };
+
+        if (node.classList?.contains("slot")) {
+          const kind = node.dataset.kind;
+          if (kind === "empty") return { ok: false, error: "empty slot" };
+          if (kind === "number") {
+            const leaf = node.querySelector(".leaf.num");
+            const text = (leaf?.textContent ?? "").trim();
+            if (!validateNumberLeaf(leaf)) return { ok: false, error: "invalid number" };
+            return { ok: true, value: Number(text) };
+          }
+          if (kind === "var") {
+            const leaf = node.querySelector(".leaf.var");
+            const name = (leaf?.textContent ?? "").trim();
+            if (!validateVarLeaf(leaf)) return { ok: false, error: `unknown variable “${name}”` };
+            return { ok: true, value: VARIABLES[name] };
+          }
+          if (kind === "expr") {
+            return evalNode(node.querySelector(":scope > .block"));
+          }
+          const inner = node.querySelector(":scope > .block");
+          if (inner) return evalNode(inner);
+          return { ok: false, error: "empty slot" };
+        }
+
+        if (node.classList?.contains("block")) {
+          const op = node.dataset.op;
+          const slots = [...node.children].filter((c) => c.classList?.contains("slot"));
+          if (op === "neg") {
+            const a = evalNode(slots[0]);
+            if (!a.ok) return a;
+            return { ok: true, value: -a.value };
+          }
+          const left = evalNode(slots[0]);
+          const right = evalNode(slots[1]);
+          if (!left.ok) return left;
+          if (!right.ok) return right;
+          switch (op) {
+            case "+": return { ok: true, value: left.value + right.value };
+            case "-": return { ok: true, value: left.value - right.value };
+            case "*": return { ok: true, value: left.value * right.value };
+            case "/":
+              if (right.value === 0) return { ok: false, error: "division by zero" };
+              return { ok: true, value: left.value / right.value };
+            default:
+              return { ok: false, error: `unknown op ${op}` };
+          }
+        }
+
+        return { ok: false, error: "invalid node" };
+      }
+
+      function formatValue(value) {
+        if (!Number.isFinite(value)) return String(value);
+        if (Number.isInteger(value)) return String(value);
+        return value.toPrecision(10).replace(/\.?0+$/, "");
+      }
+
+      // ---------------------------------------------------------------------------
+      // Schema + editor
+      // ---------------------------------------------------------------------------
+
+      const schema = blockSchema({
+        units: [".hole", ".op", ".leaf", ".slot", ".block"],
+        shapes: {
+          "+": { kind: "binary", label: "+", keys: ["+"], kbd: "+", menuLabel: "Add" },
+          "-": { kind: "binary", label: "−", keys: ["-", "−"], kbd: "−", menuLabel: "Subtract" },
+          "*": { kind: "binary", label: "×", keys: ["*"], kbd: "×", menuLabel: "Multiply" },
+          "/": { kind: "binary", label: "÷", keys: ["/", "÷"], kbd: "÷", menuLabel: "Divide" },
+          neg: { kind: "unary", label: "−", keys: ["n", "N"], kbd: "n", menuLabel: "Negate −A" },
+        },
+        ops: {
+          "+": "+",
+          "-": "-",
+          "−": "-",
+          "*": "*",
+          "/": "/",
+          "÷": "/",
+          n: "neg",
+          N: "neg",
+        },
+        choices: [
+          { id: "number", label: "Number", kbd: "0-9", section: "Leaves" },
+          { id: "var", label: "Variable", kbd: "a-z", section: "Leaves" },
+          { id: "+", label: "A + B", kbd: "+", section: "Blocks" },
+          { id: "-", label: "A − B", kbd: "-", section: "Blocks" },
+          { id: "*", label: "A × B", kbd: "*", section: "Blocks" },
+          { id: "/", label: "A ÷ B", kbd: "/", section: "Blocks" },
+          { id: "neg", label: "−A", kbd: "n", section: "Blocks", shortcut: "n" },
+        ],
+        nest: wrapNested,
+        create: {
+          empty: makeEmptySlot,
+          number: makeNumberSlot,
+          var: makeVarSlot,
+          binary: makeBinaryBlock,
+          unary: makeUnaryBlock,
+          nest: wrapNested,
+          "+": () => wrapNested(makeBinaryBlock("+")),
+          "-": () => wrapNested(makeBinaryBlock("-")),
+          "*": () => wrapNested(makeBinaryBlock("*")),
+          "/": () => wrapNested(makeBinaryBlock("/")),
+          neg: () => wrapNested(makeUnaryBlock("neg")),
+        },
+      });
+
+      const editorRoot = document.getElementById("editor");
+      const resultEl = document.getElementById("result");
+      const varsList = document.getElementById("vars-list");
+
+      // Sample: (width + 10) * height
+      editorRoot.append(
+        schema.make(
+          "binary",
+          "*",
+          schema.make(
+            "nest",
+            schema.make("binary", "+", schema.make("var", "width"), schema.make("number", "10")),
+          ),
+          schema.make("var", "height"),
+        ),
+      );
+
+      for (const [name, value] of Object.entries(VARIABLES)) {
+        const li = document.createElement("li");
+        li.dataset.name = name;
+        li.innerHTML = `<span class="name">${name}</span><span class="value">${formatValue(value)}</span>`;
+        varsList.append(li);
+      }
+
+      function updateResult() {
+        validateAll(editorRoot);
+        const out = evalNode(editorRoot.firstElementChild);
+        if (out.ok) {
+          resultEl.textContent = formatValue(out.value);
+          resultEl.classList.remove("error");
+        } else {
+          resultEl.textContent = out.error ?? "—";
+          resultEl.classList.add("error");
+        }
+      }
+
+      function inLeaf(node) {
+        const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        return !!el?.closest?.(".leaf");
+      }
+
+      const editor = new Editor(editorRoot, {
+        keymap: blockKeymap(),
+        text: {
+          acceptsText(position) {
+            return inLeaf(position?.point?.node);
+          },
+        },
+        caret: {
+          mode: "virtual",
+          node: document.getElementById("caret"),
+          focused: true,
+        },
+        selection: {
+          mode: "virtual",
+          node: document.getElementById("selection"),
+        },
+        plugins: [
+          new Blocks({
+            schema,
+            input: defaultBlockInput(),
+            onChange: updateResult,
+          }),
+          new BlockMenus({
+            chooser: { el: document.getElementById("chooser") },
+            operator: {
+              el: document.getElementById("op-menu"),
+              items(block) {
+                const ops = [
+                  { id: "+", label: "Add", kbd: "+" },
+                  { id: "-", label: "Subtract", kbd: "−" },
+                  { id: "*", label: "Multiply", kbd: "×" },
+                  { id: "/", label: "Divide", kbd: "÷" },
+                  { id: "neg", label: "Negate −A", kbd: "n" },
+                ];
+                if (block?.dataset.op === "neg") {
+                  return [{ id: "neg", label: "Negate −A", kbd: "n" }, ...ops.slice(0, 4)];
+                }
+                return ops;
+              },
+            },
+            complete: {
+              el: document.getElementById("autocomplete"),
+              source(prefix) {
+                const p = (prefix ?? "").trim().toLowerCase();
+                const names = Object.keys(VARIABLES);
+                if (!p) return names;
+                return names.filter((n) => n.toLowerCase().startsWith(p));
+              },
+              detail: (name) => formatValue(VARIABLES[name]),
+            },
+          }),
+        ],
+      });
+
+      varsList.addEventListener("mousedown", (event) => {
+        const li = event.target.closest("li[data-name]");
+        if (!li) return;
+        event.preventDefault();
+        const name = li.dataset.name;
+        const blocks = editor.blocks;
+        const cursor = editor.input.cursor;
+        const leaf =
+          blocks.closestLeaf(cursor.anchor) ??
+          (cursor.selectedNode?.classList?.contains("leaf")
+            ? cursor.selectedNode
+            : cursor.selectedNode?.querySelector?.(".leaf"));
+        if (leaf?.classList.contains("var")) {
+          blocks.applyCompletion({ leaf, value: name });
+          return;
+        }
+        const slot =
+          blocks.closestSlot(cursor.selectedNode) ?? blocks.closestSlot(cursor.anchor);
+        if (slot?.classList.contains("empty")) {
+          blocks.fill({ slot, as: "var", init: name });
+        }
+      });
+
+      updateResult();
+      queueMicrotask(() => {
+        const first = editorRoot.querySelector(".leaf");
+        editor.blocks.placeCaretIn(first ?? editorRoot.firstElementChild, false);
+        editorRoot.focus();
+      });
+    </script>
+  </body>
+</html>

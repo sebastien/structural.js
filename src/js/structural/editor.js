@@ -52,10 +52,97 @@ const HISTORY_SKIP = new Set([
 	"moveStructural",
 	"moveTraversal",
 	"collapseSelection",
+	"collapseStructural",
 	"undo",
 	"redo",
 	"copy",
 ]);
+
+// Function: matchInputRuleWhen
+// Evaluates a rule's `when` predicate or declarative context matcher.
+function matchInputRuleWhen(when, ctx, event) {
+	if (when == null) return true;
+	if (typeof when === "function") return !!when(ctx, event);
+	if (typeof when !== "object") return !!when;
+	for (const [key, expected] of Object.entries(when)) {
+		if (expected === undefined) continue;
+		if (key === "not") {
+			if (matchInputRuleWhen(expected, ctx, event)) return false;
+			continue;
+		}
+		if (key === "or") {
+			const list = Array.isArray(expected) ? expected : [expected];
+			if (!list.some((item) => matchInputRuleWhen(item, ctx, event))) return false;
+			continue;
+		}
+		if (key === "and") {
+			const list = Array.isArray(expected) ? expected : [expected];
+			if (!list.every((item) => matchInputRuleWhen(item, ctx, event))) return false;
+			continue;
+		}
+		const actual = ctx?.[key];
+		if (typeof expected === "boolean") {
+			if (!!actual !== expected) return false;
+			continue;
+		}
+		if (expected === null) {
+			if (actual != null) return false;
+			continue;
+		}
+		if (typeof expected === "string") {
+			if (actual === expected) continue;
+			// Allow matching DOM token lists / data attributes via context helpers.
+			if (actual?.classList?.contains?.(expected)) continue;
+			if (actual != null && String(actual) === expected) continue;
+			return false;
+		}
+		if (typeof expected === "function") {
+			if (!expected(actual, ctx, event)) return false;
+			continue;
+		}
+		if (expected instanceof RegExp) {
+			if (!expected.test(String(actual ?? ""))) return false;
+			continue;
+		}
+		if (actual !== expected) return false;
+	}
+	return true;
+}
+
+// Function: matchInputRuleKey
+// Matches event.key against rule.key (string|string[]) and/or rule.match (RegExp).
+function matchInputRuleKey(rule, event) {
+	if (!event) return false;
+	const key = event.key;
+	const hasMod = !!(event.ctrlKey || event.metaKey);
+	if (rule.mod != null) {
+		if (hasMod !== !!rule.mod) return false;
+	} else if (hasMod && rule.allowMod !== true && (rule.key != null || rule.match != null)) {
+		// Character/key rules ignore ctrl/meta chords (those belong in the keymap).
+		return false;
+	}
+	if (rule.alt != null && !!event.altKey !== !!rule.alt) return false;
+	if (rule.shift != null && !!event.shiftKey !== !!rule.shift) return false;
+
+	let keyOk = true;
+	if (rule.key != null) {
+		const keys = Array.isArray(rule.key) ? rule.key : [rule.key];
+		keyOk = keys.some((k) => {
+			if (k === "Space") return key === " ";
+			return k === key || (typeof k === "string" && k.toLowerCase() === key.toLowerCase());
+		});
+	}
+	let matchOk = true;
+	if (rule.match != null) {
+		const re = rule.match instanceof RegExp ? rule.match : new RegExp(rule.match);
+		matchOk = re.test(key);
+	}
+	// If neither key nor match specified, key always matches (when-only rule).
+	if (rule.key == null && rule.match == null) return true;
+	if (rule.key != null && rule.match != null) return keyOk || matchOk;
+	if (rule.key != null) return keyOk;
+	return matchOk;
+}
 
 // Class: EditorHistory
 // Snapshot-based undo/redo stack (html + selection). Typing/deletes coalesce.
@@ -1158,6 +1245,15 @@ class EditorTextInput {
 		if (kind !== "range" && kind !== "node") {
 			this._syncNativeSelection({ allowCollapsed: true });
 		}
+		// Contextual input rules run before the keymap so domain handlers (blocks, menus)
+		// can claim keys like Enter/ArrowDown without fighting global bindings.
+		if (this.editor?.handleInputEvent?.(event, this.session)) {
+			this._guardNativeSync(() => {
+				this.editor.selection?.syncToNative(this.session);
+			});
+			return;
+		}
+
 		if (this.editor?.handleKeyEvent(event, this.session)) {
 			// Keymap handlers (arrows, deleteSmart, …) move the structural caret;
 			// re-assert native so the next insert does not re-import a stale range.
@@ -1498,11 +1594,16 @@ class Editor {
 		// Custom maps override individual defaults without disabling unrelated editor keys.
 		this.keymap = editorKeymap(options.keymap ?? {});
 		this.actions = new Map();
+		// Contextual input rules matched after keymap misses (see handleInputEvent).
+		this.inputRules = [];
+		if (Array.isArray(options.inputRules)) this.addInputRules(options.inputRules);
 		this.history = new EditorHistory(this, options.history);
 		this.sessions = new Map();
 		this.plugins = [];
 		this._active = false;
 		this._currentBlock = null;
+		// Optional app/plugin hook: (session) => partial context merged into contextAt().
+		this._contextAt = typeof options.contextAt === "function" ? options.contextAt : null;
 		this.text = new TextAdapter(node, options.text).attach();
 		this.text._schema = this.schema;
 		const topC = options.caret !== undefined ? options.caret : options.cursor?.caret;
@@ -1900,6 +2001,105 @@ class Editor {
 	configureActions(actions = {}) {
 		for (const [name, action] of Object.entries(actions)) this.actions.set(name, action);
 		return this;
+	}
+
+	// Method: addInputRules
+	// Appends (or prepends) contextual input rules matched by handleInputEvent.
+	addInputRules(rules = [], options = {}) {
+		if (!Array.isArray(rules) || !rules.length) return this;
+		if (options.prepend) this.inputRules.unshift(...rules);
+		else this.inputRules.push(...rules);
+		return this;
+	}
+
+	// Method: contextAt
+	// Builds a cursor/selection context object. Plugins may enrich via enrichContext().
+	contextAt(session = null) {
+		const active = this.activeSession(session);
+		const cursor = active.cursor;
+		const anchor = cursor.anchor;
+		const selected = cursor.selectionKind === "node" ? cursor.selectedNode : null;
+		const point = this.text.pointAt(cursor.offset ?? 0);
+		const ctx = {
+			session: active,
+			cursor,
+			offset: cursor.offset ?? 0,
+			selectionKind: cursor.selectionKind,
+			selected,
+			anchor,
+			point,
+			root: this.root,
+		};
+		if (typeof this._contextAt === "function") {
+			Object.assign(ctx, this._contextAt.call(this, active, ctx) ?? {});
+		}
+		for (const plugin of this.plugins) {
+			plugin.enrichContext?.(ctx, active);
+		}
+		return ctx;
+	}
+
+	// Method: matchInputRule
+	// Returns the first input rule matching event + context, or null.
+	matchInputRule(event, context = null) {
+		if (!event || !this.inputRules?.length) return null;
+		const ctx = context ?? this.contextAt();
+		for (const rule of this.inputRules) {
+			if (!rule || rule.enabled === false) continue;
+			if (!matchInputRuleWhen(rule.when, ctx, event)) continue;
+			if (!matchInputRuleKey(rule, event)) continue;
+			return rule;
+		}
+		return null;
+	}
+
+	// Method: handleInputEvent
+	// Runs matching input rules in order. Returns true when a rule claims the event.
+	// A handler may return false to decline and let the next matching rule try.
+	handleInputEvent(event, session = null) {
+		if (!event || !this.inputRules?.length) return false;
+		const active = this.activeSession(session);
+		const ctx = this.contextAt(active);
+		for (const rule of this.inputRules) {
+			if (!rule || rule.enabled === false) continue;
+			if (!matchInputRuleWhen(rule.when, ctx, event)) continue;
+			if (!matchInputRuleKey(rule, event)) continue;
+
+			const args = {
+				...(typeof rule.args === "function" ? rule.args(ctx, event) : (rule.args ?? {})),
+			};
+			if (args.key === undefined) args.key = event.key;
+			if (args.event === undefined) args.event = event;
+			if (args.context === undefined) args.context = ctx;
+
+			let result;
+			if (typeof rule.do === "function") {
+				result = rule.do(args, { editor: this, session: active, event, context: ctx, rule });
+			} else if (typeof rule.do === "string") {
+				result = this.action(
+					{ type: rule.do, args: { ...args, ...(rule.actionArgs ?? {}) } },
+					{ event, session: active },
+				);
+			} else if (rule.do && typeof rule.do === "object") {
+				const spec = rule.do.type
+					? {
+							...rule.do,
+							args: {
+								...(rule.do.args ?? {}),
+								...args,
+							},
+						}
+					: rule.do;
+				result = this.action(spec, { event, session: active });
+			} else {
+				continue;
+			}
+			if (result === false) continue;
+			event.preventDefault();
+			event.stopPropagation();
+			return true;
+		}
+		return false;
 	}
 
 	// Method: installPlugins
