@@ -1594,7 +1594,7 @@ class Editor {
 		// Custom maps override individual defaults without disabling unrelated editor keys.
 		this.keymap = editorKeymap(options.keymap ?? {});
 		this.actions = new Map();
-		// Contextual input rules matched after keymap misses (see handleInputEvent).
+		// Contextual input rules matched before the keymap (see handleInputEvent / onKeyDown).
 		this.inputRules = [];
 		if (Array.isArray(options.inputRules)) this.addInputRules(options.inputRules);
 		this.history = new EditorHistory(this, options.history);
@@ -1604,6 +1604,8 @@ class Editor {
 		this._currentBlock = null;
 		// Optional app/plugin hook: (session) => partial context merged into contextAt().
 		this._contextAt = typeof options.contextAt === "function" ? options.contextAt : null;
+		// Optional scope provider (e.g. Blocks): { scopeNodes, applyScopeSelection, collapseScopeSelection }.
+		this.scopeProvider = options.scopeProvider ?? null;
 		this.text = new TextAdapter(node, options.text).attach();
 		this.text._schema = this.schema;
 		const topC = options.caret !== undefined ? options.caret : options.cursor?.caret;
@@ -1721,6 +1723,47 @@ class Editor {
 		return scopes;
 	}
 
+	// Method: scopeNodes
+	// Ladder for selectStructuralScope. Delegates to scopeProvider when set.
+	scopeNodes(session = null) {
+		const active = this.activeSession(session);
+		const provider = this.scopeProvider;
+		if (provider && typeof provider.scopeNodes === "function") {
+			const nodes = provider.scopeNodes(active);
+			if (Array.isArray(nodes)) return nodes;
+		}
+		return this.structuralScopeNodes(active);
+	}
+
+	// Method: applyScopeSelection
+	// Selects a scope ladder node. Default: text range. Provider may node-select.
+	applyScopeSelection(node, session = null, options = {}) {
+		const active = this.activeSession(session);
+		const provider = this.scopeProvider;
+		if (provider && typeof provider.applyScopeSelection === "function") {
+			const result = provider.applyScopeSelection(node, active, options);
+			if (result !== undefined) return result;
+		}
+		const range = this.structuralRangeFor(node);
+		if (!range || range.end <= range.start) return false;
+		this.selection.select(range.start, range.end, active);
+		return this.selection.syncToNative(active);
+	}
+
+	// Method: collapseScopeSelection
+	// Exits the scope ladder to a caret (or provider-specific inner focus).
+	collapseScopeSelection(session = null) {
+		const active = this.activeSession(session);
+		const provider = this.scopeProvider;
+		if (provider && typeof provider.collapseScopeSelection === "function") {
+			const result = provider.collapseScopeSelection(active);
+			if (result !== undefined) return result;
+		}
+		const cursor = active.cursor;
+		cursor.moveTo(cursor.selection?.focusOffset ?? cursor.offset ?? 0);
+		return this.selection.syncToNative(active);
+	}
+
 	// Method: structuralRangeFor
 	// Converts an element's text contents to the editor's logical selection range.
 	structuralRangeFor(node) {
@@ -1779,48 +1822,52 @@ class Editor {
 	}
 
 	// Method: selectStructuralScope
-	// Selects the current block (innermost scope containing caret). If the
-	// current block is already exactly selected, expands (or contracts) to
-	// the adjacent scope. This matches the requested Ctrl-A behavior:
-	// "only select the current block and expand up if the current block is selected".
+	// Expands/contracts along scopeNodes(). First expand selects the innermost
+	// scope; further expands walk outward. Contract steps in, then collapses.
+	// scopeProvider (e.g. Blocks) supplies the ladder and selection style.
 	selectStructuralScope(mode = "expand", session = null) {
 		const active = this.activeSession(session);
-		const storedScopes = active.cursor._structuralScopePath?.filter((node) => node.isConnected);
-		const scopes = storedScopes?.length ? storedScopes : this.structuralScopeNodes(active);
-		if (!scopes.length) return false;
-		let currentIdx = scopes.indexOf(active.cursor._structuralScopeNode);
+		const cursor = active.cursor;
+		const fresh = this.scopeNodes(active);
+		if (!fresh.length) return false;
+
+		const stored = cursor._structuralScopePath?.filter((node) => node?.isConnected);
+		const path =
+			stored?.length && stored.some((n) => fresh.includes(n)) ? stored : fresh;
+
+		let currentIdx = path.indexOf(cursor._structuralScopeNode);
+		if (currentIdx < 0 && cursor.selectedNode) {
+			currentIdx = path.indexOf(cursor.selectedNode);
+		}
 
 		if (mode === "contract") {
 			if (currentIdx <= 0) {
-				// Contract from the innermost scope to a caret at the current focus.
-				active.cursor.moveTo(
-					active.cursor.selection.focusOffset ?? active.cursor.offset ?? 0,
-				);
-				return this.selection.syncToNative(active);
+				cursor._structuralScopeNode = null;
+				cursor._structuralScopePath = null;
+				return this.collapseScopeSelection(active);
 			}
 			currentIdx -= 1;
 		} else {
-			// First Ctrl+A selects the innermost block; subsequent presses move to
-			// its enclosing DOM scopes without relying on rebuilt numeric offsets.
-			currentIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, scopes.length - 1);
+			// First press: innermost (0). Later presses: step outward.
+			currentIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, path.length - 1);
 		}
 
-		// Walk outward until a resolvable text range is found (root may include
-		// only formatting whitespace at the edges that is not indexable).
-		let i = currentIdx;
-		for (; mode === "expand" ? i < scopes.length : i >= 0; ) {
-			const target = scopes[i];
-			const range = this.structuralRangeFor(target);
-			if (range && range.end > range.start) {
-				this.selection.select(range.start, range.end, active);
-				active.cursor._structuralScopeNode = target;
-				active.cursor._structuralScopePath = scopes;
-				return this.selection.syncToNative(active);
+		// Walk until apply succeeds (range unresolvable / node detached).
+		for (
+			let i = currentIdx;
+			mode === "expand" ? i < path.length : i >= 0;
+			i += mode === "expand" ? 1 : -1
+		) {
+			const target = path[i];
+			if (!target?.isConnected) continue;
+			if (this.applyScopeSelection(target, active, { mode }) !== false) {
+				cursor._structuralScopeNode = target;
+				cursor._structuralScopePath = path;
+				return true;
 			}
-			i += mode === "expand" ? 1 : -1;
 		}
 		// Still handled: swallow browser Ctrl+A even if we cannot grow further.
-		return active.cursor.selectionKind === "range";
+		return cursor.selectionKind === "range" || cursor.selectionKind === "node";
 	}
 
 	// Method: structuralBlocks

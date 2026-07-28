@@ -12,6 +12,25 @@ import { editorKeymap } from "./editor.js";
 // Helpers
 // ----------------------------------------------------------------------------
 
+const DEFAULT_ROLE_CLASSES = {
+	hole: "hole",
+	op: "op",
+	leaf: "leaf",
+	slot: "slot",
+	block: "block",
+};
+
+const DEFAULT_TOKENS = {
+	empty: "empty",
+	nested: "nested",
+	selected: "selected",
+	focus: "focus",
+	atom: "atom",
+	container: "container",
+};
+
+const BUILTIN_UNIT_ROLES = ["hole", "op", "leaf", "slot", "block"];
+
 function el(tag, className, attrs = {}) {
 	const node = document.createElement(tag);
 	if (className) node.className = className;
@@ -29,13 +48,156 @@ function asElement(node) {
 }
 
 function closestMatch(node, predicate, root) {
-	let el = asElement(node);
-	while (el && el !== root && root?.contains?.(el) !== false) {
-		if (predicate(el)) return el;
-		el = el.parentElement;
+	let cur = asElement(node);
+	while (cur && cur !== root && root?.contains?.(cur) !== false) {
+		if (predicate(cur)) return cur;
+		cur = cur.parentElement;
 	}
-	if (el && predicate(el)) return el;
+	if (cur && predicate(cur)) return cur;
 	return null;
+}
+
+function positionMenu(menu, anchor) {
+	if (!menu || !anchor) return;
+	const rect = anchor.getBoundingClientRect();
+	const pad = 6;
+	menu.style.left = `${Math.min(rect.left, window.innerWidth - 200)}px`;
+	menu.style.top = `${rect.bottom + pad}px`;
+	menu.classList.add("open");
+	const mrect = menu.getBoundingClientRect();
+	if (mrect.bottom > window.innerHeight - 8) {
+		menu.style.top = `${Math.max(8, rect.top - mrect.height - pad)}px`;
+	}
+}
+
+// Function: listMenuKeyRules
+// Arrow/confirm/escape/(optional catch-all) rules for an open ListMenu.
+function listMenuKeyRules(isOpen, menu, options = {}) {
+	const confirmKeys = options.confirmKeys ?? ["Enter"];
+	const rules = [
+		{
+			when: isOpen,
+			key: "ArrowDown",
+			do: () => {
+				menu.move(1);
+				return true;
+			},
+		},
+		{
+			when: isOpen,
+			key: "ArrowUp",
+			do: () => {
+				menu.move(-1);
+				return true;
+			},
+		},
+		{
+			when: isOpen,
+			key: confirmKeys,
+			do: () => menu.confirm() !== false,
+		},
+		{
+			when: isOpen,
+			key: "Escape",
+			do: () => {
+				if (typeof options.onEscape === "function") options.onEscape();
+				else menu.hide();
+				return true;
+			},
+		},
+	];
+	if (options.catchAll) {
+		rules.push({
+			when: isOpen,
+			match: /.*/,
+			do: (args) => menu.shortcut(args.key) === true,
+		});
+	}
+	return rules;
+}
+
+// Class: ListMenu
+// Shared floating list chrome (index, render, move, confirm, shortcut).
+class ListMenu {
+	constructor(options = {}) {
+		this.el = options.el ?? null;
+		this.getItems = typeof options.getItems === "function" ? options.getItems : () => [];
+		this.renderItem =
+			typeof options.renderItem === "function"
+				? options.renderItem
+				: (item) => {
+						const btn = el("button", "", { type: "button" });
+						btn.innerHTML = `<span>${item.label ?? item.id ?? item}</span>${
+							item.kbd != null ? `<span class="kbd">${item.kbd}</span>` : ""
+						}`;
+						return btn;
+					};
+		this.onPick = typeof options.onPick === "function" ? options.onPick : null;
+		this.onShortcut = typeof options.onShortcut === "function" ? options.onShortcut : null;
+		this.index = 0;
+		this._items = [];
+	}
+
+	get isOpen() {
+		return !!this.el?.classList.contains("open");
+	}
+
+	show(anchor, options = {}) {
+		if (!this.el || !anchor?.isConnected) return false;
+		this._items = this.getItems() ?? [];
+		const max = Math.max(0, this._items.length - 1);
+		this.index = Math.max(0, Math.min(options.index ?? 0, max));
+		this.redraw();
+		positionMenu(this.el, anchor);
+		return true;
+	}
+
+	hide() {
+		this.el?.classList.remove("open");
+		this._items = [];
+		return this;
+	}
+
+	move(delta) {
+		if (!this._items.length) return this;
+		this.index = (this.index + delta + this._items.length) % this._items.length;
+		this.redraw();
+		this.el?.querySelector("button.active")?.scrollIntoView({ block: "nearest" });
+		return this;
+	}
+
+	confirm() {
+		const item = this._items[this.index];
+		if (item == null) return false;
+		return this.onPick?.(item, this.index) !== false;
+	}
+
+	shortcut(key) {
+		return this.onShortcut?.(key, this._items) === true;
+	}
+
+	redraw() {
+		const menu = this.el;
+		if (!menu) return;
+		menu.innerHTML = "";
+		let lastSection = null;
+		this._items.forEach((item, i) => {
+			if (item?.section && item.section !== lastSection) {
+				lastSection = item.section;
+				menu.append(el("div", "section", { text: item.section }));
+			}
+			const node = this.renderItem(item, i, i === this.index);
+			if (i === this.index) node.classList.add("active");
+			else node.classList.remove("active");
+			node.addEventListener("mousedown", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.index = i;
+				this.onPick?.(item, i);
+			});
+			menu.append(node);
+		});
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -44,16 +206,48 @@ function closestMatch(node, predicate, root) {
 
 // Class: BlockSchema
 // Role-oriented schema for slot/block/leaf documents. Create fns stay app-owned.
+// Role ids (hole/op/leaf/slot/block) are stable; CSS class names are configurable
+// via `classes` / `roles[name].className` and state tokens via `classes` tokens.
 class BlockSchema {
 	constructor(def = {}) {
 		this.def = def;
-		this.units = def.units ?? [".hole", ".op", ".leaf", ".slot", ".block"];
-		this.roles = def.roles ?? {};
 		this.create = def.create ?? {};
 		this.shapes = def.shapes ?? {};
 		this.nest = typeof def.nest === "function" ? def.nest : null;
 		this.ops = def.ops ?? null;
 		this.choices = def.choices ?? null;
+
+		const classOverrides = def.classes ?? {};
+		this._tokens = { ...DEFAULT_TOKENS };
+		this._roleClass = { ...DEFAULT_ROLE_CLASSES };
+		for (const [key, value] of Object.entries(classOverrides)) {
+			if (value == null || value === "") continue;
+			if (key in DEFAULT_TOKENS && !(key in DEFAULT_ROLE_CLASSES)) this._tokens[key] = value;
+			else if (key in DEFAULT_ROLE_CLASSES) this._roleClass[key] = value;
+			else if (key in DEFAULT_TOKENS) this._tokens[key] = value;
+			else this._roleClass[key] = value;
+		}
+
+		this.roles = { ...(def.roles ?? {}) };
+		for (const name of BUILTIN_UNIT_ROLES) {
+			const base = {
+				className: this._roleClass[name] ?? name,
+				type: "unit",
+				atom: name === "hole" || name === "op",
+				container: name === "slot" || name === "block",
+			};
+			this.roles[name] = { ...base, ...(this.roles[name] ?? {}) };
+			if (this.roles[name].className) this._roleClass[name] = this.roles[name].className;
+		}
+		for (const [name, rule] of Object.entries(this.roles)) {
+			if (rule?.className) this._roleClass[name] = rule.className;
+		}
+
+		this.units =
+			def.units ??
+			Object.keys(this.roles)
+				.filter((name) => (this.roles[name]?.type ?? "unit") === "unit")
+				.map((name) => this.selector(name));
 	}
 
 	// Method: make
@@ -95,19 +289,81 @@ class BlockSchema {
 		return null;
 	}
 
+	// Method: className
+	// CSS class for a role id or token name.
+	className(roleOrToken) {
+		if (roleOrToken == null) return "";
+		return this._roleClass[roleOrToken] ?? this._tokens[roleOrToken] ?? roleOrToken;
+	}
+
+	// Method: token
+	// CSS class for a state token (empty/nested/selected/…).
+	token(name) {
+		return this._tokens[name] ?? name;
+	}
+
+	// Method: classes
+	// Joins role/token class names into a single className string.
+	classes(...parts) {
+		return parts
+			.flat()
+			.filter(Boolean)
+			.map((p) => this.className(p))
+			.join(" ");
+	}
+
+	// Method: selector
+	// CSS selector for one role, optionally compounded with tokens/roles.
+	selector(role, ...extras) {
+		const bits = [role, ...extras].filter(Boolean).map((p) => {
+			const cls = this.className(p);
+			return cls.startsWith(".") ? cls : `.${cls}`;
+		});
+		return bits.join("");
+	}
+
+	// Method: hasToken
+	// True when node carries the named state token class.
+	hasToken(node, name) {
+		const eln = asElement(node);
+		const cls = this.token(name);
+		return !!eln?.classList?.contains(cls);
+	}
+
+	// Method: hasRole
+	// True when node resolves to the given role id.
+	hasRole(node, role) {
+		return this.roleOf(node) === role;
+	}
+
+	// Method: isEmptySlot
+	// True when node is a slot marked empty.
+	isEmptySlot(node) {
+		return this.hasRole(node, "slot") && this.hasToken(node, "empty");
+	}
+
+	// Method: closest
+	// Nearest ancestor (inclusive) with the given role, bounded by root.
+	closest(node, role, root) {
+		return closestMatch(node, (n) => this.hasRole(n, role), root);
+	}
+
 	// Method: roleOf
 	// Resolves the structural role name for a DOM node.
 	roleOf(node) {
-		const el = asElement(node);
-		if (!el?.classList) return null;
-		if (el.classList.contains("hole")) return "hole";
-		if (el.classList.contains("op")) return "op";
-		if (el.classList.contains("leaf")) return "leaf";
-		if (el.classList.contains("slot")) return "slot";
-		if (el.classList.contains("block")) return "block";
+		const eln = asElement(node);
+		if (!eln?.classList) return null;
 		for (const [name, rule] of Object.entries(this.roles)) {
-			if (typeof rule?.match === "function" && rule.match(el)) return name;
-			if (typeof rule?.selector === "string" && el.matches?.(rule.selector)) return name;
+			if (typeof rule?.match === "function" && rule.match(eln)) return name;
+			if (typeof rule?.selector === "string" && eln.matches?.(rule.selector)) return name;
+		}
+		for (const name of BUILTIN_UNIT_ROLES) {
+			const cls = this._roleClass[name];
+			if (cls && eln.classList.contains(cls)) return name;
+		}
+		for (const [name, cls] of Object.entries(this._roleClass)) {
+			if (BUILTIN_UNIT_ROLES.includes(name)) continue;
+			if (cls && eln.classList.contains(cls)) return name;
 		}
 		return null;
 	}
@@ -115,20 +371,22 @@ class BlockSchema {
 	// Method: isUnit
 	// True when node participates in the structural scope ladder.
 	isUnit(node) {
-		const el = asElement(node);
-		if (!el) return false;
-		const role = this.roleOf(el);
-		if (role && this.roles[role]?.type === "unit") return true;
-		if (role === "hole" || role === "op" || role === "leaf" || role === "slot" || role === "block") {
-			return true;
+		const eln = asElement(node);
+		if (!eln) return false;
+		const role = this.roleOf(eln);
+		if (!role) {
+			return this.units.some((sel) => {
+				try {
+					return eln.matches?.(sel);
+				} catch {
+					return eln.classList?.contains?.(String(sel).replace(/^\./, ""));
+				}
+			});
 		}
-		return this.units.some((sel) => {
-			try {
-				return el.matches?.(sel);
-			} catch {
-				return el.classList?.contains?.(sel.replace(/^\./, ""));
-			}
-		});
+		const rule = this.roles[role];
+		if (rule?.type === "unit") return true;
+		if (rule?.type && rule.type !== "unit") return false;
+		return BUILTIN_UNIT_ROLES.includes(role);
 	}
 
 	// Method: unitSelector
@@ -170,15 +428,16 @@ class Blocks {
 		this.onChange = typeof options.onChange === "function" ? options.onChange : null;
 		this.editor = null;
 		this._onCursorMove = this.onCursorMove.bind(this);
-		this._selectedClass = options.selectedClass ?? "selected";
+		this._selectedClass = options.selectedClass ?? this.schema.token("selected");
 	}
 
 	// Method: attach
-	// Installs actions, input rules, and cursor styling on the editor.
+	// Installs actions, input rules, scope provider, and cursor styling.
 	attach(editor) {
 		this.editor = editor;
 		editor.blocks = this;
 		editor.blockSchema = this.schema;
+		editor.scopeProvider = this;
 
 		editor.configureActions({
 			blockFill: (command, ctx) => this.fill(command.args, ctx),
@@ -187,8 +446,6 @@ class Blocks {
 			blockChangeOp: (command, ctx) => this.changeOp(command.args, ctx),
 			blockSelectUnit: (command, ctx) => this.selectUnit(command.args?.node ?? command.args?.unit, ctx),
 			blockApplyCompletion: (command, ctx) => this.applyCompletion(command.args, ctx),
-			selectStructuralScope: (command, ctx) =>
-				this.selectStructuralScope(command.args?.mode === "contract" ? "contract" : "expand", ctx),
 			collapseStructural: (_command, ctx) => this.collapseStructural(ctx),
 			deleteBackward: (_command, ctx) => this.handleDelete(-1, ctx),
 			deleteForward: (_command, ctx) => this.handleDelete(1, ctx),
@@ -205,10 +462,41 @@ class Blocks {
 	detach() {
 		if (!this.editor) return this;
 		this.editor.root.removeEventListener("CursorMove", this._onCursorMove);
+		if (this.editor.scopeProvider === this) this.editor.scopeProvider = null;
 		if (this.editor.blocks === this) delete this.editor.blocks;
 		if (this.editor.blockSchema === this.schema) delete this.editor.blockSchema;
 		this.editor = null;
 		return this;
+	}
+
+	// Method: scopeNodes
+	// Scope-provider hook: unit ladder for Editor.selectStructuralScope.
+	scopeNodes(session = null) {
+		return this.unitScopeNodes(session);
+	}
+
+	// Method: applyScopeSelection
+	// Scope-provider hook: node-select a unit on the ladder.
+	applyScopeSelection(node, session = null) {
+		const ok = this.selectUnit(node, { session });
+		if (ok) this.editor?.plugin("block-menus")?.hideAll?.({ keepChooser: false });
+		return ok;
+	}
+
+	// Method: collapseScopeSelection
+	// Scope-provider hook: exit outermost unit into an inner caret/hole.
+	collapseScopeSelection(session = null) {
+		const editor = this.editor;
+		const env = { session: session ?? editor.localSession };
+		const cursor = env.session.cursor;
+		const focus =
+			cursor.selectedNode?.querySelector?.(this.schema.selector("leaf")) ||
+			this.closestLeaf(cursor.anchor) ||
+			cursor.selectedNode;
+		if (focus) this.placeCaretIn(focus, false, env);
+		else cursor.moveTo(cursor.offset ?? 0);
+		this.clearSelectedClass();
+		return true;
 	}
 
 	// Method: enrichContext
@@ -223,6 +511,7 @@ class Blocks {
 	buildContext(session, base = {}) {
 		const editor = this.editor;
 		const root = editor.root;
+		const schema = this.schema;
 		const cursor = session?.cursor ?? editor.input.cursor;
 		const selected =
 			cursor.selectionKind === "node" && cursor.selectedNode?.isConnected
@@ -231,26 +520,26 @@ class Blocks {
 		const anchor = cursor.anchor;
 		const origin = selected ?? anchor;
 
-		const hole = closestMatch(origin, (n) => n.classList?.contains("hole"), root);
-		const op = closestMatch(origin, (n) => n.classList?.contains("op"), root);
-		const leaf = closestMatch(origin, (n) => n.classList?.contains("leaf"), root);
-		const slot = closestMatch(origin, (n) => n.classList?.contains("slot"), root);
-		const block = closestMatch(origin, (n) => n.classList?.contains("block"), root);
+		const hole = schema.closest(origin, "hole", root);
+		const op = schema.closest(origin, "op", root);
+		const leaf = schema.closest(origin, "leaf", root);
+		const slot = schema.closest(origin, "slot", root);
+		const block = schema.closest(origin, "block", root);
 
-		const slotEmpty = !!(slot && slot.classList.contains("empty"));
+		const slotEmpty = !!(slot && schema.isEmptySlot(slot));
 		const slotKind = slot?.dataset?.kind ?? (slotEmpty ? "empty" : null);
 
 		let unit = null;
-		if (selected && this.schema.isUnit(selected)) unit = selected;
+		if (selected && schema.isUnit(selected)) unit = selected;
 		else if (hole) unit = hole;
-		else if (leaf) unit = closestMatch(leaf, (n) => n.classList?.contains("slot"), root) ?? leaf;
-		else if (op) unit = closestMatch(op, (n) => n.classList?.contains("block"), root) ?? op;
+		else if (leaf) unit = schema.closest(leaf, "slot", root) ?? leaf;
+		else if (op) unit = schema.closest(op, "block", root) ?? op;
 		else if (slot) unit = slot;
 		else if (block) unit = block;
 
 		const edge = this.edgeInLeaf(leaf, cursor);
-		const role = selected ? this.schema.roleOf(selected) : this.schema.roleOf(origin);
-		const selectedRole = selected ? this.schema.roleOf(selected) : null;
+		const role = selected ? schema.roleOf(selected) : schema.roleOf(origin);
+		const selectedRole = selected ? schema.roleOf(selected) : null;
 
 		return {
 			...base,
@@ -266,9 +555,9 @@ class Blocks {
 			role,
 			selectedRole,
 			emptySlot: slotEmpty ? slot : null,
-			isOpSelected: !!(selected && selected.classList.contains("op")),
-			isHoleSelected: !!(selected && selected.classList.contains("hole")),
-			isUnitSelected: !!(selected && this.schema.isUnit(selected)),
+			isOpSelected: !!(selected && schema.hasRole(selected, "op")),
+			isHoleSelected: !!(selected && schema.hasRole(selected, "hole")),
+			isUnitSelected: !!(selected && schema.isUnit(selected)),
 			inLeaf: !!leaf && cursor.selectionKind !== "node",
 		};
 	}
@@ -441,36 +730,37 @@ class Blocks {
 	// ------------------------------------------------------------------
 
 	closestSlot(node) {
-		return closestMatch(node, (n) => n.classList?.contains("slot"), this.editor.root);
+		return this.schema.closest(node, "slot", this.editor.root);
 	}
 
 	closestLeaf(node) {
-		return closestMatch(node, (n) => n.classList?.contains("leaf"), this.editor.root);
+		return this.schema.closest(node, "leaf", this.editor.root);
 	}
 
 	closestBlock(node) {
-		return closestMatch(node, (n) => n.classList?.contains("block"), this.editor.root);
+		return this.schema.closest(node, "block", this.editor.root);
 	}
 
 	closestHole(node) {
-		return closestMatch(node, (n) => n.classList?.contains("hole"), this.editor.root);
+		return this.schema.closest(node, "hole", this.editor.root);
 	}
 
 	// Method: extractOperandNode
 	// Normalizes a selection target into a wrappable slot/block node.
 	extractOperandNode(node) {
 		const root = this.editor.root;
+		const schema = this.schema;
 		if (!node || !root.contains(node)) return null;
-		if (node.classList.contains("op")) return this.closestBlock(node);
-		if (node.classList.contains("hole") || node.classList.contains("leaf")) {
+		if (schema.hasRole(node, "op")) return this.closestBlock(node);
+		if (schema.hasRole(node, "hole") || schema.hasRole(node, "leaf")) {
 			return this.closestSlot(node);
 		}
-		if (node.classList.contains("block")) {
+		if (schema.hasRole(node, "block")) {
 			const parent = node.parentElement;
-			if (parent?.classList.contains("slot") && parent.dataset.kind === "expr") return parent;
+			if (schema.hasRole(parent, "slot") && parent.dataset.kind === "expr") return parent;
 			return node;
 		}
-		if (node.classList.contains("slot")) return node;
+		if (schema.hasRole(node, "slot")) return node;
 		return this.closestSlot(node) || this.closestBlock(node);
 	}
 
@@ -478,7 +768,7 @@ class Blocks {
 	// Ensures a block child is slot-shaped (nests bare blocks).
 	asBlockChildOperand(node) {
 		if (!node) return this.schema.make("empty");
-		if (node.classList.contains("block")) {
+		if (this.schema.hasRole(node, "block")) {
 			if (typeof this.schema.nest === "function") return this.schema.nest(node);
 			if (this.schema.has("nest")) return this.schema.make("nest", node);
 			return node;
@@ -487,23 +777,24 @@ class Blocks {
 	}
 
 	resolveWrapUnit(ctx, sideHint = null) {
+		const schema = this.schema;
 		const cursor = ctx.cursor;
 		if (cursor.selectionKind === "node" && cursor.selectedNode) {
 			const n = cursor.selectedNode;
-			if (n.classList.contains("op") || n.classList.contains("hole")) return null;
-			if (n.classList.contains("empty")) return null;
+			if (schema.hasRole(n, "op") || schema.hasRole(n, "hole")) return null;
+			if (schema.hasToken(n, "empty")) return null;
 			const unit = this.extractOperandNode(n);
-			if (!unit || unit.classList.contains("empty")) return null;
+			if (!unit || schema.hasToken(unit, "empty") || schema.isEmptySlot(unit)) return null;
 			return unit;
 		}
 		const leaf = ctx.leaf ?? this.closestLeaf(cursor.anchor);
 		if (leaf) {
 			const slot = this.closestSlot(leaf);
-			if (!slot || slot.classList.contains("empty")) return null;
+			if (!slot || schema.isEmptySlot(slot)) return null;
 			return slot;
 		}
 		const slot = ctx.slot ?? this.closestSlot(cursor.anchor);
-		if (slot && !slot.classList.contains("empty")) return slot;
+		if (slot && !schema.isEmptySlot(slot)) return slot;
 		const block = ctx.block ?? this.closestBlock(cursor.anchor);
 		return block ?? null;
 	}
@@ -528,9 +819,10 @@ class Blocks {
 
 	onCursorMove(event) {
 		const cursor = this.editor.input.cursor;
+		const focusCls = this.schema.token("focus");
 		const { previous, current } = event.detail ?? {};
-		previous?.anchor?.classList?.remove("focus");
-		current?.anchor?.classList?.add("focus");
+		previous?.anchor?.classList?.remove(focusCls);
+		current?.anchor?.classList?.add(focusCls);
 		if (cursor.selectionKind === "node" && cursor.selectedNode) {
 			this.markSelected(cursor.selectedNode);
 		} else {
@@ -542,24 +834,25 @@ class Blocks {
 	// Selects a structural unit (atom/container/leaf) consistently.
 	selectUnit(node, env = {}) {
 		const editor = this.editor;
+		const schema = this.schema;
 		const cursor = env.session?.cursor ?? editor.input.cursor;
 		if (!node?.isConnected || !editor.root.contains(node)) return false;
 		editor.text.refresh();
 		this.markSelected(node);
 		try {
-			if (node.classList.contains("hole") || editor.text.isAtom(node)) {
+			if (schema.hasRole(node, "hole") || editor.text.isAtom(node)) {
 				cursor.selectAtom(node);
 				return true;
 			}
 			if (
 				editor.text.isContainer(node) ||
-				node.classList.contains("slot") ||
-				node.classList.contains("block")
+				schema.hasRole(node, "slot") ||
+				schema.hasRole(node, "block")
 			) {
 				cursor.selectContainer(node);
 				return true;
 			}
-			if (node.classList.contains("leaf")) {
+			if (schema.hasRole(node, "leaf")) {
 				cursor.select(node, { kind: "container", side: "before", behavior: "enter" });
 				return true;
 			}
@@ -574,6 +867,7 @@ class Blocks {
 	// Puts the caret inside a leaf (or selects hole/unit fallback).
 	placeCaretIn(node, atEnd = false, env = {}) {
 		const editor = this.editor;
+		const schema = this.schema;
 		const cursor = env.session?.cursor ?? editor.input.cursor;
 		editor.text.refresh();
 		this.clearSelectedClass();
@@ -581,17 +875,17 @@ class Blocks {
 			cursor.moveTo(0);
 			return true;
 		}
-		if (node.classList?.contains("slot") && node.dataset.kind === "empty") {
-			const hole = node.querySelector(".hole");
+		if (schema.hasRole(node, "slot") && node.dataset.kind === "empty") {
+			const hole = node.querySelector(schema.selector("hole"));
 			if (hole) return this.selectUnit(hole, env);
 		}
-		const leaf = node.classList?.contains("leaf") ? node : this.closestLeaf(node);
+		const leaf = schema.hasRole(node, "leaf") ? node : this.closestLeaf(node);
 		const host = leaf ?? node;
 		let text =
 			host.nodeType === Node.TEXT_NODE
 				? host
 				: [...(host.childNodes ?? [])].find((n) => n.nodeType === Node.TEXT_NODE) ?? null;
-		if (!text && host.classList?.contains("leaf")) {
+		if (!text && schema.hasRole(host, "leaf")) {
 			text = document.createTextNode("");
 			host.appendChild(text);
 			editor.text.refresh();
@@ -608,13 +902,14 @@ class Blocks {
 	}
 
 	selectFilledUnit(next, env = {}) {
+		const schema = this.schema;
 		if (!next?.isConnected) return false;
-		if (next.classList.contains("slot") && next.classList.contains("empty")) {
-			const hole = next.querySelector(".hole");
+		if (schema.isEmptySlot(next)) {
+			const hole = next.querySelector(schema.selector("hole"));
 			return this.selectUnit(hole ?? next, env);
 		}
 		if (next.dataset?.kind === "expr") {
-			const block = next.querySelector(":scope > .block");
+			const block = next.querySelector(`:scope > ${schema.selector("block")}`);
 			return this.selectUnit(block ?? next, env);
 		}
 		return this.selectUnit(next, env);
@@ -624,6 +919,7 @@ class Blocks {
 	// Ladder of unit nodes from the current selection outward to root.
 	unitScopeNodes(session = null) {
 		const editor = this.editor;
+		const schema = this.schema;
 		const active = editor.activeSession(session);
 		const cursor = active.cursor;
 		let start = cursor.selectedNode;
@@ -633,15 +929,15 @@ class Blocks {
 		}
 		if (!start || !editor.root.contains(start)) return [];
 
-		let el = start;
-		if (!this.schema.isUnit(el)) {
-			el = el.closest?.(this.schema.unitSelector()) ?? el;
+		let cur = start;
+		if (!schema.isUnit(cur)) {
+			cur = cur.closest?.(schema.unitSelector()) ?? cur;
 		}
 
 		const scopes = [];
-		while (el && el !== editor.root && editor.root.contains(el)) {
-			if (this.schema.isUnit(el) && !scopes.includes(el)) scopes.push(el);
-			el = el.parentElement;
+		while (cur && cur !== editor.root && editor.root.contains(cur)) {
+			if (schema.isUnit(cur) && !scopes.includes(cur)) scopes.push(cur);
+			cur = cur.parentElement;
 		}
 		const rootChild = editor.root.firstElementChild;
 		if (rootChild && editor.root.contains(rootChild) && !scopes.includes(rootChild)) {
@@ -650,57 +946,11 @@ class Blocks {
 		return scopes;
 	}
 
-	// Method: selectStructuralScope
-	// Expands/contracts node selection along the unit ladder (Mod+A).
-	selectStructuralScope(mode = "expand", env = {}) {
-		const editor = this.editor;
-		const session = env.session ?? editor.localSession;
-		const cursor = session.cursor;
-		const scopes = this.unitScopeNodes(session);
-		if (!scopes.length) return false;
-
-		const stored = cursor._structuralScopePath?.filter((n) => n?.isConnected);
-		const path = stored?.length ? stored : scopes;
-		const usePath = path.length && path.some((n) => scopes.includes(n)) ? path : scopes;
-
-		let currentIdx = usePath.indexOf(cursor._structuralScopeNode);
-		if (currentIdx < 0 && cursor.selectedNode) {
-			currentIdx = usePath.indexOf(cursor.selectedNode);
-		}
-		if (currentIdx < 0) {
-			currentIdx = usePath.findIndex((n) => scopes[0] === n);
-		}
-
-		if (mode === "contract") {
-			if (currentIdx <= 0) {
-				const focus =
-					cursor.selectedNode?.querySelector?.(".leaf") ||
-					this.closestLeaf(cursor.anchor) ||
-					cursor.selectedNode;
-				if (focus) this.placeCaretIn(focus, false, env);
-				else cursor.moveTo(cursor.offset ?? 0);
-				cursor._structuralScopeNode = null;
-				cursor._structuralScopePath = null;
-				this.clearSelectedClass();
-				return true;
-			}
-			currentIdx -= 1;
-		} else {
-			currentIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, usePath.length - 1);
-		}
-
-		const target = usePath[currentIdx];
-		if (!target?.isConnected) return false;
-		cursor._structuralScopeNode = target;
-		cursor._structuralScopePath = usePath;
-		this.editor.plugin("block-menus")?.hideAll?.({ keepChooser: false });
-		return this.selectUnit(target, env);
-	}
-
 	// Method: collapseStructural
 	// Escape: exit node selection into an inner caret/hole.
 	collapseStructural(env = {}) {
 		const editor = this.editor;
+		const schema = this.schema;
 		const cursor = env.session?.cursor ?? editor.input.cursor;
 		const menus = editor.plugin("block-menus");
 		if (menus?.hasOpen?.()) {
@@ -709,18 +959,20 @@ class Blocks {
 		}
 		if (cursor.selectionKind !== "node" || !cursor.selectedNode) return false;
 		const n = cursor.selectedNode;
-		if (n.classList.contains("op")) {
+		if (schema.hasRole(n, "op")) {
 			menus?.hideOpMenu?.();
 			const block = this.closestBlock(n);
-			const leaf = block?.querySelector(".leaf");
+			const leaf = block?.querySelector(schema.selector("leaf"));
 			if (leaf) this.placeCaretIn(leaf, false, env);
 			else cursor.moveTo(cursor.offset ?? 0);
 			this.clearSelectedClass();
 			return true;
 		}
 		const inner =
-			n.querySelector?.(".leaf") || n.querySelector?.(".hole") || this.closestLeaf(n);
-		if (inner?.classList?.contains("hole")) {
+			n.querySelector?.(schema.selector("leaf")) ||
+			n.querySelector?.(schema.selector("hole")) ||
+			this.closestLeaf(n);
+		if (inner && schema.hasRole(inner, "hole")) {
 			const slot = this.closestSlot(inner);
 			if (slot) menus?.suppressChooserFor?.(slot);
 			this.selectUnit(inner, env);
@@ -749,35 +1001,39 @@ class Blocks {
 	// Method: replaceNode
 	// Swaps a node and applies focus policy.
 	replaceNode(node, next, options = {}, env = {}) {
+		const schema = this.schema;
 		if (!node?.parentNode || !next) return null;
 		node.replaceWith(next);
 		this.retouchNested();
 		this.afterMutate(env);
 		const focus = options.focus ?? "select";
+		const leafSel = schema.selector("leaf");
+		const emptySlotSel = schema.selector("slot", "empty");
+		const holeSel = schema.selector("hole");
 		if (focus === "edit" || focus === true) {
 			const target =
-				next.querySelector?.(".leaf") || next.querySelector?.(".slot.empty") || next;
+				next.querySelector?.(leafSel) || next.querySelector?.(emptySlotSel) || next;
 			this.placeCaretIn(target, true, env);
 			if (options.edit === "var" || options.complete) {
-				const leaf = this.closestLeaf(target) ?? next.querySelector?.(".leaf");
+				const leaf = this.closestLeaf(target) ?? next.querySelector?.(leafSel);
 				if (leaf) this.editor.plugin("block-menus")?.showComplete?.(leaf);
 			}
 		} else if (focus === "hole") {
-			const hole = next.querySelector?.(".hole") ?? next;
+			const hole = next.querySelector?.(holeSel) ?? next;
 			this.selectUnit(hole, env);
 		} else {
 			this.selectFilledUnit(next, env);
 			if (next.dataset?.kind === "var") {
-				const leaf = next.querySelector?.(".leaf.var");
+				const leaf = next.querySelector?.(`${leafSel}.var`);
 				if (leaf && !(leaf.textContent ?? "").trim()) {
 					this.editor.plugin("block-menus")?.showComplete?.(leaf);
 				}
 			}
-			if (next.classList?.contains("empty")) {
+			if (schema.isEmptySlot(next) || schema.hasToken(next, "empty")) {
 				this.editor.plugin("block-menus")?.showChooser?.(next);
-			} else if (next.dataset?.kind === "expr" && next.querySelector?.(".slot.empty")) {
-				const empty = next.querySelector(".slot.empty");
-				const hole = empty?.querySelector(".hole");
+			} else if (next.dataset?.kind === "expr" && next.querySelector?.(emptySlotSel)) {
+				const empty = next.querySelector(emptySlotSel);
+				const hole = empty?.querySelector(holeSel);
 				if (hole) {
 					this.selectUnit(hole, env);
 					this.editor.plugin("block-menus")?.showChooser?.(empty);
@@ -789,15 +1045,24 @@ class Blocks {
 
 	retouchNested() {
 		const root = this.editor.root;
-		for (const block of root.querySelectorAll(".block")) {
-			const inExpr =
-				block.parentElement?.classList?.contains("slot") &&
-				block.parentElement.dataset.kind === "expr";
-			block.classList.toggle("nested", inExpr || !!block.parentElement?.closest?.(".block"));
+		const schema = this.schema;
+		const nestedTok = schema.token("nested");
+		const blockSel = schema.selector("block");
+		const emptySlotSel = schema.selector("slot", "empty");
+		const holeSel = schema.selector("hole");
+		for (const block of root.querySelectorAll(blockSel)) {
+			const parent = block.parentElement;
+			const inExpr = schema.hasRole(parent, "slot") && parent?.dataset?.kind === "expr";
+			block.classList.toggle(
+				nestedTok,
+				inExpr || !!parent?.closest?.(blockSel),
+			);
 		}
-		for (const slot of root.querySelectorAll(".slot.empty")) {
-			if (!slot.querySelector(":scope > .hole")) {
-				slot.replaceChildren(el("span", "hole atom", { text: "⬚" }));
+		for (const slot of root.querySelectorAll(emptySlotSel)) {
+			if (!slot.querySelector(`:scope > ${holeSel}`)) {
+				slot.replaceChildren(
+					el("span", schema.classes("hole", "atom"), { text: "⬚" }),
+				);
 			}
 		}
 	}
@@ -805,34 +1070,30 @@ class Blocks {
 	// Method: fill
 	// Fills an empty slot with a created kind.
 	fill(args = {}, env = {}) {
+		const schema = this.schema;
 		const slot = args.slot;
-		if (!slot?.classList?.contains("empty")) return false;
+		if (!slot || !schema.isEmptySlot(slot)) return false;
 		const as = args.as;
 		if (as == null) return false;
 		this.editor.plugin("block-menus")?.hideChooser?.();
 		let next = null;
-		if (this.schema.has(as)) {
+		if (schema.has(as)) {
 			const init = args.init;
-			// Prefer (init) when provided and factory accepts it.
 			next =
 				init != null && as !== init
-					? this.schema.make(as, init)
-					: this.schema.make(as);
-		} else if (this.schema.shape(as) || this.schema.has("binary") || this.schema.has("unary")) {
-			const shape = this.schema.shape(as);
+					? schema.make(as, init)
+					: schema.make(as);
+		} else if (schema.shape(as) || schema.has("binary") || schema.has("unary")) {
+			const shape = schema.shape(as);
 			if (shape?.kind === "unary" || as === "neg") {
-				next = this.schema.has("unary")
-					? this.schema.make("unary", as)
-					: this.schema.make(as);
+				next = schema.has("unary") ? schema.make("unary", as) : schema.make(as);
 			} else {
-				next = this.schema.has("binary")
-					? this.schema.make("binary", as)
-					: this.schema.make(as);
+				next = schema.has("binary") ? schema.make("binary", as) : schema.make(as);
 			}
-			if (this.schema.nest && next?.classList?.contains("block")) {
-				next = this.schema.nest(next);
-			} else if (this.schema.has("nest") && next?.classList?.contains("block")) {
-				next = this.schema.make("nest", next);
+			if (schema.nest && schema.hasRole(next, "block")) {
+				next = schema.nest(next);
+			} else if (schema.has("nest") && schema.hasRole(next, "block")) {
+				next = schema.make("nest", next);
 			}
 		} else {
 			return false;
@@ -848,6 +1109,7 @@ class Blocks {
 	// Method: clear
 	// Clears a unit back to an empty hole, preserving parent structure.
 	clear(args = {}, env = {}) {
+		const schema = this.schema;
 		const node = args.node;
 		const root = this.editor.root;
 		if (!node || !root.contains(node)) return false;
@@ -855,7 +1117,7 @@ class Blocks {
 		cursor._structuralScopeNode = null;
 		cursor._structuralScopePath = null;
 
-		if (node.classList?.contains("hole")) {
+		if (schema.hasRole(node, "hole")) {
 			const slot = this.closestSlot(node);
 			if (slot) {
 				this.selectUnit(node, env);
@@ -863,37 +1125,39 @@ class Blocks {
 			}
 			return true;
 		}
-		if (node.classList?.contains("op")) {
+		if (schema.hasRole(node, "op")) {
 			const block = this.closestBlock(node);
 			if (block) return this.clear({ node: block }, env);
 			return false;
 		}
-		if (node.classList?.contains("leaf")) {
+		if (schema.hasRole(node, "leaf")) {
 			const slot = this.closestSlot(node);
 			if (slot) {
-				this.replaceNode(slot, this.schema.make("empty"), { focus: "hole" }, env);
-				this.editor.plugin("block-menus")?.showChooser?.(this.closestSlot(cursor.selectedNode) ?? slot);
+				this.replaceNode(slot, schema.make("empty"), { focus: "hole" }, env);
+				this.editor.plugin("block-menus")?.showChooser?.(
+					this.closestSlot(cursor.selectedNode) ?? slot,
+				);
 				return true;
 			}
 			return false;
 		}
-		if (node.classList?.contains("slot")) {
-			this.replaceNode(node, this.schema.make("empty"), { focus: "hole" }, env);
+		if (schema.hasRole(node, "slot")) {
+			this.replaceNode(node, schema.make("empty"), { focus: "hole" }, env);
 			return true;
 		}
-		if (node.classList?.contains("block")) {
+		if (schema.hasRole(node, "block")) {
 			const parent = node.parentElement;
-			if (parent?.classList?.contains("slot") && parent.dataset.kind === "expr") {
-				this.replaceNode(parent, this.schema.make("empty"), { focus: "hole" }, env);
+			if (schema.hasRole(parent, "slot") && parent.dataset.kind === "expr") {
+				this.replaceNode(parent, schema.make("empty"), { focus: "hole" }, env);
 				return true;
 			}
 			if (parent === root) {
-				this.replaceNode(node, this.schema.make("empty"), { focus: "hole" }, env);
+				this.replaceNode(node, schema.make("empty"), { focus: "hole" }, env);
 				return true;
 			}
 			const slot = this.closestSlot(node);
 			if (slot) {
-				this.replaceNode(slot, this.schema.make("empty"), { focus: "hole" }, env);
+				this.replaceNode(slot, schema.make("empty"), { focus: "hole" }, env);
 				return true;
 			}
 		}
@@ -903,43 +1167,46 @@ class Blocks {
 	// Method: changeOp
 	// Changes a block's operator, reshaping unary↔binary when needed.
 	changeOp(args = {}, env = {}) {
+		const schema = this.schema;
 		const block = args.block ?? args.form;
 		const newOp = args.op;
-		if (!block?.classList?.contains("block") || !newOp) return false;
+		if (!block || !schema.hasRole(block, "block") || !newOp) return false;
 		const prev = block.dataset.op;
-		const labelOf = (op) => this.schema.shape(op)?.label ?? op;
+		const labelOf = (op) => schema.shape(op)?.label ?? op;
+		const opSel = `:scope > ${schema.selector("op")}`;
+		const opAtom = schema.classes("op", "atom");
 
 		if (prev === "neg" && newOp !== "neg") {
-			const slots = [...block.children].filter((c) => c.classList.contains("slot"));
-			const operand = slots[0] ?? this.schema.make("empty");
+			const slots = [...block.children].filter((c) => schema.hasRole(c, "slot"));
+			const operand = slots[0] ?? schema.make("empty");
 			block.dataset.op = newOp;
 			block.replaceChildren(
 				operand,
-				el("span", "op atom", { "data-op": newOp, text: labelOf(newOp) }),
-				this.schema.make("empty"),
+				el("span", opAtom, { "data-op": newOp, text: labelOf(newOp) }),
+				schema.make("empty"),
 			);
 			this.retouchNested();
 			this.afterMutate(env);
-			this.selectUnit(block.querySelector(":scope > .op"), env);
+			this.selectUnit(block.querySelector(opSel), env);
 			return true;
 		}
 
 		if (prev !== "neg" && newOp === "neg") {
-			const slots = [...block.children].filter((c) => c.classList.contains("slot"));
-			const left = slots[0] ?? this.schema.make("empty");
+			const slots = [...block.children].filter((c) => schema.hasRole(c, "slot"));
+			const left = slots[0] ?? schema.make("empty");
 			block.dataset.op = "neg";
 			block.replaceChildren(
-				el("span", "op atom", { "data-op": "neg", text: labelOf("neg") }),
+				el("span", opAtom, { "data-op": "neg", text: labelOf("neg") }),
 				left,
 			);
 			this.retouchNested();
 			this.afterMutate(env);
-			this.selectUnit(block.querySelector(":scope > .op"), env);
+			this.selectUnit(block.querySelector(opSel), env);
 			return true;
 		}
 
 		block.dataset.op = newOp;
-		const opEl = block.querySelector(":scope > .op");
+		const opEl = block.querySelector(opSel);
 		if (opEl) {
 			opEl.dataset.op = newOp;
 			opEl.textContent = labelOf(newOp);
@@ -952,54 +1219,59 @@ class Blocks {
 	// Method: wrap
 	// Wraps a unit with a binary block on the given side.
 	wrap(args = {}, env = {}) {
+		const schema = this.schema;
 		const unit = args.unit;
 		const op = args.op;
 		const side = args.side === "before" ? "before" : "after";
 		if (!unit?.parentNode || !op) return false;
-		if (unit.classList.contains("empty")) return false;
+		if (schema.hasToken(unit, "empty") || schema.isEmptySlot(unit)) return false;
 
 		const node = this.extractOperandNode(unit) ?? unit;
-		if (!node?.parentNode || node.classList.contains("empty")) return false;
+		if (!node?.parentNode || schema.hasToken(node, "empty") || schema.isEmptySlot(node)) {
+			return false;
+		}
 
 		const marker = document.createElement("span");
 		marker.className = "skipped wrap-marker";
 		node.replaceWith(marker);
 
-		const empty = this.schema.make("empty");
+		const empty = schema.make("empty");
 		const left = side === "after" ? this.asBlockChildOperand(node) : empty;
 		const right = side === "before" ? this.asBlockChildOperand(node) : empty;
-		const label = this.schema.shape(op)?.label ?? op;
-		const block = el("span", "block container", { "data-op": op });
+		const label = schema.shape(op)?.label ?? op;
+		const block = el("span", schema.classes("block", "container"), { "data-op": op });
 		block.append(
 			left,
-			el("span", "op atom", { "data-op": op, text: label }),
+			el("span", schema.classes("op", "atom"), { "data-op": op, text: label }),
 			right,
 		);
 
 		const parent = marker.parentElement;
 		let replacement = block;
-		if (parent && parent !== this.editor.root && parent.classList.contains("block")) {
-			if (typeof this.schema.nest === "function") replacement = this.schema.nest(block);
-			else if (this.schema.has("nest")) replacement = this.schema.make("nest", block);
+		if (parent && parent !== this.editor.root && schema.hasRole(parent, "block")) {
+			if (typeof schema.nest === "function") replacement = schema.nest(block);
+			else if (schema.has("nest")) replacement = schema.make("nest", block);
 		}
 
 		marker.replaceWith(replacement);
 		this.retouchNested();
 		this.afterMutate(env);
 
+		const sideNode = side === "after" ? right : left;
 		const focusEmpty =
-			(side === "after" ? right : left).classList?.contains("empty")
-				? side === "after"
-					? right
-					: left
-				: replacement.querySelector?.(".slot.empty");
+			schema.isEmptySlot(sideNode) || schema.hasToken(sideNode, "empty")
+				? sideNode
+				: replacement.querySelector?.(schema.selector("slot", "empty"));
 		if (focusEmpty) {
-			const hole = focusEmpty.querySelector?.(".hole");
+			const hole = focusEmpty.querySelector?.(schema.selector("hole"));
 			if (hole) this.selectUnit(hole, env);
 			else this.selectUnit(focusEmpty, env);
 			this.editor.plugin("block-menus")?.showChooser?.(focusEmpty, { force: true });
 		} else {
-			this.selectUnit(block.querySelector(":scope > .op") || block, env);
+			this.selectUnit(
+				block.querySelector(`:scope > ${schema.selector("op")}`) || block,
+				env,
+			);
 		}
 		return true;
 	}
@@ -1029,6 +1301,7 @@ class Blocks {
 
 	_handleDelete(direction, env = {}) {
 		const editor = this.editor;
+		const schema = this.schema;
 		const cursor = env.session?.cursor ?? editor.input.cursor;
 		const menus = editor.plugin("block-menus");
 		menus?.hideChooser?.();
@@ -1060,7 +1333,7 @@ class Blocks {
 		if (!leaf) {
 			if (cursor.selectedNode) return this.clear({ node: cursor.selectedNode }, env);
 			const slot = this.closestSlot(cursor.anchor);
-			if (slot?.classList.contains("empty")) return true;
+			if (slot && schema.isEmptySlot(slot)) return true;
 			const block = this.closestBlock(cursor.anchor);
 			return this.clear({ node: block ?? slot }, env);
 		}
@@ -1115,6 +1388,8 @@ class Blocks {
 
 // Class: BlockMenus
 // Chooser / operator / autocomplete chrome driven by schema + context.
+// Public option bags (chooser/operator/complete) are unchanged; list chrome
+// is shared via ListMenu.
 class BlockMenus {
 	static pluginName = "block-menus";
 
@@ -1128,15 +1403,19 @@ class BlockMenus {
 		this.activeEmptySlot = null;
 		this.activeOpEl = null;
 		this.activeVarLeaf = null;
-		this.chooserIndex = 0;
-		this.opMenuIndex = 0;
 		this.autoItems = [];
-		this.autoIndex = 0;
 		this.chooserSuppressedFor = null;
+		this._chooserMenu = null;
+		this._opMenu = null;
+		this._autoMenu = null;
 		this._onCursorMove = this.onCursorMove.bind(this);
 		this._onClick = this.onClick.bind(this);
 		this._onMouseDown = this.onMouseDown.bind(this);
 		this._mo = null;
+	}
+
+	get schema() {
+		return this.blocks?.schema ?? null;
 	}
 
 	attach(editor) {
@@ -1146,146 +1425,110 @@ class BlockMenus {
 		editor.root.addEventListener("click", this._onClick);
 		document.addEventListener("mousedown", this._onMouseDown);
 
-		// Menu navigation / confirm rules take priority while a menu is open.
-		editor.addInputRules([
-			{
-				when: () => this.isChooserOpen(),
-				key: "ArrowDown",
-				do: () => {
-					this.moveChooser(1);
-					return true;
-				},
+		this._chooserMenu = new ListMenu({
+			el: this.chooser?.el,
+			getItems: () => this.chooserItems(),
+			renderItem: (item) => this._rowButton(item),
+			onPick: (item) => {
+				if (!this.activeEmptySlot) return false;
+				this.blocks?.fill({ slot: this.activeEmptySlot, as: item.id });
+				this.hideChooser();
+				return true;
 			},
-			{
-				when: () => this.isChooserOpen(),
-				key: "ArrowUp",
-				do: () => {
-					this.moveChooser(-1);
-					return true;
-				},
+			onShortcut: (key, items) => this.chooserShortcut(key, items),
+		});
+		this._opMenu = new ListMenu({
+			el: this.operator?.el,
+			getItems: () => {
+				const items = this.opItems(this.blocks?.closestBlock(this.activeOpEl));
+				if (!items.length) return items;
+				return items.map((it, i) =>
+					i === 0 && !it.section ? { ...it, section: "Operator" } : it,
+				);
 			},
-			{
-				when: () => this.isChooserOpen(),
-				key: "Enter",
-				do: () => {
-					this.confirmChooser();
-					return true;
-				},
+			renderItem: (item) => {
+				const block = this.blocks?.closestBlock(this.activeOpEl);
+				const mark = block?.dataset.op === item.id ? " ✓" : "";
+				return this._rowButton({ ...item, label: `${item.label ?? item.id}${mark}` });
 			},
-			{
-				when: () => this.isChooserOpen(),
-				key: "Escape",
-				do: () => {
-					const keep = this.activeEmptySlot;
-					this.hideChooser({ suppress: true });
-					const hole = keep?.querySelector?.(".hole");
-					if (hole) this.blocks?.selectUnit(hole);
-					return true;
-				},
+			onPick: (item) => {
+				if (!this.activeOpEl) return false;
+				this.blocks?.changeOp({
+					block: this.blocks.closestBlock(this.activeOpEl),
+					op: item.id,
+				});
+				this.hideOpMenu();
+				return true;
 			},
-			{
-				when: () => this.isChooserOpen(),
-				match: /.*/,
-				do: (args, env) => this.chooserShortcut(args, env),
+			onShortcut: (key) => this.opMenuShortcut(key),
+		});
+		this._autoMenu = new ListMenu({
+			el: this.complete?.el,
+			getItems: () => this.autoItems,
+			renderItem: (name) => {
+				const format =
+					this.complete?.formatItem ??
+					((n) => ({
+						label: n,
+						kbd: this.complete?.detail?.(n),
+					}));
+				const meta = format(name) ?? { label: name };
+				const btn = this._rowButton({ label: meta.label ?? name, kbd: meta.kbd });
+				btn.dataset.name = name;
+				return btn;
 			},
-			{
-				when: () => this.isCompleteOpen(),
-				key: "ArrowDown",
-				do: () => {
-					this.moveAuto(1);
-					return true;
-				},
-			},
-			{
-				when: () => this.isCompleteOpen(),
-				key: "ArrowUp",
-				do: () => {
-					this.moveAuto(-1);
-					return true;
-				},
-			},
-			{
-				when: () => this.isCompleteOpen(),
-				key: ["Enter", "Tab"],
-				do: () => {
-					this.confirmAuto();
-					return true;
-				},
-			},
-			{
-				when: () => this.isCompleteOpen(),
-				key: "Escape",
-				do: () => {
-					this.hideComplete();
-					return true;
-				},
-			},
-			{
-				when: () => this.isOpMenuOpen(),
-				key: "ArrowDown",
-				do: () => {
-					this.moveOpMenu(1);
-					return true;
-				},
-			},
-			{
-				when: () => this.isOpMenuOpen(),
-				key: "ArrowUp",
-				do: () => {
-					this.moveOpMenu(-1);
-					return true;
-				},
-			},
-			{
-				when: () => this.isOpMenuOpen(),
-				key: "Enter",
-				do: () => {
-					this.confirmOpMenu();
-					return true;
-				},
-			},
-			{
-				when: () => this.isOpMenuOpen(),
-				key: "Escape",
-				do: () => {
-					const keep = this.activeOpEl;
-					this.hideOpMenu();
-					if (keep) this.blocks?.selectUnit(keep);
-					return true;
-				},
-			},
-			{
-				when: () => this.isOpMenuOpen(),
-				match: /.*/,
-				do: (args, env) => this.opMenuShortcut(args, env),
-			},
-			// Open chooser on Enter/Space when on empty slot.
-			{
-				when: { slot: "empty" },
-				key: ["Enter", "Space"],
-				do: (args) => {
-					const slot = args.context?.emptySlot ?? args.context?.slot;
-					if (!slot) return false;
-					const hole = slot.querySelector(".hole");
-					if (hole) this.blocks?.selectUnit(hole);
-					this.showChooser(slot, { force: true });
-					return true;
-				},
-			},
-			// Enter/Space on op opens operator menu.
-			{
-				when: { selected: "op" },
-				key: ["Enter", "Space"],
-				do: (args) => {
-					const op = args.context?.selected;
-					if (!op) return false;
-					this.showOpMenu(op);
-					return true;
-				},
-			},
-		], { prepend: true });
+			onPick: (name) => this.applyVarName(name),
+		});
 
-		// Leaf mutation observer for live complete / change notify.
+		editor.addInputRules(
+			[
+				...listMenuKeyRules(() => this.isChooserOpen(), this._chooserMenu, {
+					catchAll: true,
+					onEscape: () => {
+						const keep = this.activeEmptySlot;
+						this.hideChooser({ suppress: true });
+						const hole = keep?.querySelector?.(this.schema?.selector("hole") ?? ".hole");
+						if (hole) this.blocks?.selectUnit(hole);
+					},
+				}),
+				...listMenuKeyRules(() => this.isCompleteOpen(), this._autoMenu, {
+					confirmKeys: ["Enter", "Tab"],
+					onEscape: () => this.hideComplete(),
+				}),
+				...listMenuKeyRules(() => this.isOpMenuOpen(), this._opMenu, {
+					catchAll: true,
+					onEscape: () => {
+						const keep = this.activeOpEl;
+						this.hideOpMenu();
+						if (keep) this.blocks?.selectUnit(keep);
+					},
+				}),
+				{
+					when: { slot: "empty" },
+					key: ["Enter", "Space"],
+					do: (args) => {
+						const slot = args.context?.emptySlot ?? args.context?.slot;
+						if (!slot) return false;
+						const hole = slot.querySelector(this.schema?.selector("hole") ?? ".hole");
+						if (hole) this.blocks?.selectUnit(hole);
+						this.showChooser(slot, { force: true });
+						return true;
+					},
+				},
+				{
+					when: { selected: "op" },
+					key: ["Enter", "Space"],
+					do: (args) => {
+						const op = args.context?.selected;
+						if (!op) return false;
+						this.showOpMenu(op);
+						return true;
+					},
+				},
+			],
+			{ prepend: true },
+		);
+
 		this._mo = new MutationObserver(() => {
 			const cursor = editor.input.cursor;
 			const leaf = this.blocks?.closestLeaf(cursor.anchor);
@@ -1314,7 +1557,19 @@ class BlockMenus {
 		this.hideAll();
 		this.editor = null;
 		this.blocks = null;
+		this._chooserMenu = null;
+		this._opMenu = null;
+		this._autoMenu = null;
 		return this;
+	}
+
+	_rowButton(item) {
+		const btn = el("button", "", { type: "button" });
+		if (item?.id != null) btn.dataset.id = item.id;
+		btn.innerHTML = `<span>${item?.label ?? item?.id ?? item ?? ""}</span>${
+			item?.kbd != null ? `<span class="kbd">${item.kbd}</span>` : ""
+		}`;
+		return btn;
 	}
 
 	// ------------------------------------------------------------------
@@ -1322,15 +1577,15 @@ class BlockMenus {
 	// ------------------------------------------------------------------
 
 	isChooserOpen() {
-		return !!this.chooser?.el?.classList.contains("open");
+		return !!this._chooserMenu?.isOpen;
 	}
 
 	isOpMenuOpen() {
-		return !!this.operator?.el?.classList.contains("open");
+		return !!this._opMenu?.isOpen;
 	}
 
 	isCompleteOpen() {
-		return !!this.complete?.el?.classList.contains("open");
+		return !!this._autoMenu?.isOpen;
 	}
 
 	hasOpen() {
@@ -1348,26 +1603,13 @@ class BlockMenus {
 	}
 
 	// ------------------------------------------------------------------
-	// Positioning / items
+	// Items
 	// ------------------------------------------------------------------
-
-	positionMenu(menu, anchor) {
-		if (!menu || !anchor) return;
-		const rect = anchor.getBoundingClientRect();
-		const pad = 6;
-		menu.style.left = `${Math.min(rect.left, window.innerWidth - 200)}px`;
-		menu.style.top = `${rect.bottom + pad}px`;
-		menu.classList.add("open");
-		const mrect = menu.getBoundingClientRect();
-		if (mrect.bottom > window.innerHeight - 8) {
-			menu.style.top = `${Math.max(8, rect.top - mrect.height - pad)}px`;
-		}
-	}
 
 	chooserItems() {
 		if (typeof this.chooser?.items === "function") return this.chooser.items();
 		if (Array.isArray(this.chooser?.items)) return this.chooser.items;
-		const schema = this.blocks?.schema;
+		const schema = this.schema;
 		if (Array.isArray(schema?.choices)) return schema.choices;
 		return [];
 	}
@@ -1375,7 +1617,7 @@ class BlockMenus {
 	opItems(block) {
 		if (typeof this.operator?.items === "function") return this.operator.items(block);
 		if (Array.isArray(this.operator?.items)) return this.operator.items;
-		const shapes = this.blocks?.schema?.shapes ?? {};
+		const shapes = this.schema?.shapes ?? {};
 		return Object.entries(shapes).map(([id, shape]) => ({
 			id,
 			label: shape.menuLabel ?? shape.label ?? id,
@@ -1387,75 +1629,33 @@ class BlockMenus {
 	// Chooser
 	// ------------------------------------------------------------------
 
-	renderChooser() {
-		const menu = this.chooser?.el;
-		if (!menu) return;
-		const items = this.chooserItems();
-		menu.innerHTML = "";
-		let lastSection = null;
-		items.forEach((item, i) => {
-			if (item.section && item.section !== lastSection) {
-				lastSection = item.section;
-				menu.append(el("div", "section", { text: item.section }));
-			}
-			const btn = el("button", i === this.chooserIndex ? "active" : "", { type: "button" });
-			btn.dataset.id = item.id;
-			btn.innerHTML = `<span>${item.label}</span>${
-				item.kbd != null ? `<span class="kbd">${item.kbd}</span>` : ""
-			}`;
-			btn.addEventListener("mousedown", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				if (this.activeEmptySlot) {
-					this.blocks?.fill({ slot: this.activeEmptySlot, as: item.id });
-					this.hideChooser();
-				}
-			});
-			menu.append(btn);
-		});
-	}
-
 	showChooser(slot, options = {}) {
-		if (!this.chooser?.el || !slot?.isConnected) return;
+		if (!this._chooserMenu || !slot?.isConnected) return;
 		if (!options.force && this.chooserSuppressedFor === slot) return;
 		this.chooserSuppressedFor = null;
 		this.hideComplete();
 		this.hideOpMenu();
 		this.activeEmptySlot = slot;
-		this.chooserIndex = 0;
-		this.renderChooser();
-		this.positionMenu(this.chooser.el, slot);
+		this._chooserMenu.show(slot, { index: 0 });
 	}
 
 	hideChooser(options = {}) {
 		if (options.suppress && this.activeEmptySlot) {
 			this.chooserSuppressedFor = this.activeEmptySlot;
 		}
-		this.chooser?.el?.classList.remove("open");
+		this._chooserMenu?.hide();
 		this.activeEmptySlot = null;
 	}
 
 	moveChooser(delta) {
-		const items = this.chooserItems();
-		if (!items.length) return;
-		this.chooserIndex = (this.chooserIndex + delta + items.length) % items.length;
-		this.renderChooser();
-		this.chooser.el?.querySelector("button.active")?.scrollIntoView({ block: "nearest" });
+		this._chooserMenu?.move(delta);
 	}
 
 	confirmChooser() {
-		const items = this.chooserItems();
-		const item = items[this.chooserIndex];
-		if (!item || !this.activeEmptySlot) return false;
-		this.blocks?.fill({ slot: this.activeEmptySlot, as: item.id });
-		this.hideChooser();
-		return true;
+		return this._chooserMenu?.confirm() === true;
 	}
 
-	chooserShortcut(args) {
-		const key = args.key;
-		const items = this.chooserItems();
-		// Prefer explicit item.shortcut / id match via schema ops.
+	chooserShortcut(key, items = this.chooserItems()) {
 		const op = this.blocks?.schema?.opFromKey(key);
 		if (op && this.activeEmptySlot) {
 			const hit = items.find((it) => it.id === op);
@@ -1465,18 +1665,14 @@ class BlockMenus {
 				return true;
 			}
 		}
-		const byId = items.find(
-			(it) => it.id === key || it.shortcut === key || it.kbd === key,
-		);
+		const byId = items.find((it) => it.id === key || it.shortcut === key || it.kbd === key);
 		if (byId && this.activeEmptySlot) {
-			// Only treat single-letter section shortcuts specially when declared.
 			if (byId.shortcut === key || (key.length === 1 && byId.id === key)) {
 				this.blocks.fill({ slot: this.activeEmptySlot, as: byId.id });
 				this.hideChooser();
 				return true;
 			}
 		}
-		// Digit / letter type-through is handled by block input rules (fill), not here.
 		return false;
 	}
 
@@ -1484,71 +1680,32 @@ class BlockMenus {
 	// Operator menu
 	// ------------------------------------------------------------------
 
-	renderOpMenu(block) {
-		const menu = this.operator?.el;
-		if (!menu) return;
-		const items = this.opItems(block);
-		menu.innerHTML = "";
-		menu.append(el("div", "section", { text: "Operator" }));
-		items.forEach((item, i) => {
-			const btn = el("button", i === this.opMenuIndex ? "active" : "", { type: "button" });
-			btn.dataset.id = item.id;
-			const mark = block?.dataset.op === item.id ? " ✓" : "";
-			btn.innerHTML = `<span>${item.label}${mark}</span>${
-				item.kbd != null ? `<span class="kbd">${item.kbd}</span>` : ""
-			}`;
-			btn.addEventListener("mousedown", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				if (this.activeOpEl) {
-					this.blocks?.changeOp({ block: this.blocks.closestBlock(this.activeOpEl), op: item.id });
-					this.hideOpMenu();
-				}
-			});
-			menu.append(btn);
-		});
-	}
-
 	showOpMenu(opEl) {
-		if (!this.operator?.el || !opEl?.isConnected) return;
+		if (!this._opMenu || !opEl?.isConnected) return;
 		this.hideChooser();
 		this.hideComplete();
 		this.activeOpEl = opEl;
 		const block = this.blocks?.closestBlock(opEl);
 		const items = this.opItems(block);
 		const cur = items.findIndex((it) => it.id === block?.dataset.op);
-		this.opMenuIndex = cur >= 0 ? cur : 0;
-		this.renderOpMenu(block);
-		this.positionMenu(this.operator.el, opEl);
+		this._opMenu.show(opEl, { index: cur >= 0 ? cur : 0 });
 	}
 
 	hideOpMenu() {
-		this.operator?.el?.classList.remove("open");
+		this._opMenu?.hide();
 		this.activeOpEl = null;
 	}
 
 	moveOpMenu(delta) {
-		if (!this.activeOpEl) return;
-		const block = this.blocks?.closestBlock(this.activeOpEl);
-		const items = this.opItems(block);
-		if (!items.length) return;
-		this.opMenuIndex = (this.opMenuIndex + delta + items.length) % items.length;
-		this.renderOpMenu(block);
-		this.operator.el?.querySelector("button.active")?.scrollIntoView({ block: "nearest" });
+		this._opMenu?.move(delta);
 	}
 
 	confirmOpMenu() {
-		if (!this.activeOpEl) return false;
-		const block = this.blocks?.closestBlock(this.activeOpEl);
-		const items = this.opItems(block);
-		const item = items[this.opMenuIndex];
-		if (item) this.blocks?.changeOp({ block, op: item.id });
-		this.hideOpMenu();
-		return true;
+		return this._opMenu?.confirm() === true;
 	}
 
-	opMenuShortcut(args) {
-		const op = this.blocks?.schema?.opFromKey(args.key);
+	opMenuShortcut(key) {
+		const op = this.blocks?.schema?.opFromKey(key);
 		if (!op || !this.activeOpEl) return false;
 		this.blocks.changeOp({ block: this.blocks.closestBlock(this.activeOpEl), op });
 		this.hideOpMenu();
@@ -1570,64 +1727,38 @@ class BlockMenus {
 		return [];
 	}
 
-	renderComplete() {
-		const menu = this.complete?.el;
-		if (!menu) return;
-		menu.innerHTML = "";
-		if (!this.autoItems.length) {
-			menu.append(el("div", "section", { text: "No matches" }));
-			return;
-		}
-		const format =
-			this.complete?.formatItem ??
-			((name) => ({
-				label: name,
-				kbd: this.complete?.detail?.(name),
-			}));
-		this.autoItems.forEach((name, i) => {
-			const meta = format(name) ?? { label: name };
-			const btn = el("button", i === this.autoIndex ? "active" : "", { type: "button" });
-			btn.dataset.name = name;
-			btn.innerHTML = `<span>${meta.label ?? name}</span>${
-				meta.kbd != null ? `<span class="kbd">${meta.kbd}</span>` : ""
-			}`;
-			btn.addEventListener("mousedown", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				this.applyVarName(name);
-			});
-			menu.append(btn);
-		});
-	}
-
 	showComplete(leaf) {
-		if (!this.complete?.el || !leaf?.isConnected) return;
+		if (!this._autoMenu || !leaf?.isConnected) return;
 		this.hideChooser();
 		this.hideOpMenu();
 		this.activeVarLeaf = leaf;
 		const prefix = leaf.textContent ?? "";
 		this.autoItems = this.completeSource(prefix);
-		this.autoIndex = 0;
-		this.renderComplete();
-		this.positionMenu(this.complete.el, leaf);
+		if (!this.autoItems.length) {
+			// Keep empty-state messaging consistent with prior UI.
+			const menu = this.complete?.el;
+			if (menu) {
+				menu.innerHTML = "";
+				menu.append(el("div", "section", { text: "No matches" }));
+				positionMenu(menu, leaf);
+			}
+			return;
+		}
+		this._autoMenu.show(leaf, { index: 0 });
 	}
 
 	hideComplete() {
-		this.complete?.el?.classList.remove("open");
+		this._autoMenu?.hide();
 		this.activeVarLeaf = null;
 		this.autoItems = [];
 	}
 
 	moveAuto(delta) {
-		if (!this.autoItems.length) return;
-		this.autoIndex = (this.autoIndex + delta + this.autoItems.length) % this.autoItems.length;
-		this.renderComplete();
-		this.complete.el?.querySelector("button.active")?.scrollIntoView({ block: "nearest" });
+		this._autoMenu?.move(delta);
 	}
 
 	confirmAuto() {
-		if (!this.autoItems.length) return false;
-		return this.applyVarName(this.autoItems[this.autoIndex]);
+		return this._autoMenu?.confirm() === true;
 	}
 
 	applyVarName(name) {
@@ -1635,9 +1766,7 @@ class BlockMenus {
 			this.hideComplete();
 			return false;
 		}
-		return (
-			this.blocks?.applyCompletion({ leaf: this.activeVarLeaf, value: name }) ?? false
-		);
+		return this.blocks?.applyCompletion({ leaf: this.activeVarLeaf, value: name }) ?? false;
 	}
 
 	// ------------------------------------------------------------------
@@ -1645,22 +1774,24 @@ class BlockMenus {
 	// ------------------------------------------------------------------
 
 	emptySlotFromSelection() {
+		const schema = this.schema;
 		const cursor = this.editor.input.cursor;
 		if (cursor.selectionKind === "node" && cursor.selectedNode) {
 			const n = cursor.selectedNode;
-			if (n.classList.contains("hole")) {
+			if (schema?.hasRole(n, "hole")) {
 				const slot = this.blocks?.closestSlot(n);
-				if (slot?.classList.contains("empty")) return slot;
+				if (slot && schema.isEmptySlot(slot)) return slot;
 			}
-			if (n.classList.contains("slot") && n.classList.contains("empty")) return n;
+			if (schema?.isEmptySlot(n)) return n;
 		}
 		const slot =
 			this.blocks?.closestSlot(cursor.selectedNode) ??
 			this.blocks?.closestSlot(cursor.anchor);
-		return slot?.classList.contains("empty") ? slot : null;
+		return slot && schema?.isEmptySlot(slot) ? slot : null;
 	}
 
 	onCursorMove() {
+		const schema = this.schema;
 		const slot = this.emptySlotFromSelection();
 		if (slot) {
 			this.hideOpMenu();
@@ -1684,7 +1815,7 @@ class BlockMenus {
 		}
 
 		const cursor = this.editor.input.cursor;
-		if (cursor.selectionKind === "node" && cursor.selectedNode?.classList?.contains("op")) {
+		if (cursor.selectionKind === "node" && schema?.hasRole(cursor.selectedNode, "op")) {
 			if (this.activeOpEl !== cursor.selectedNode || !this.isOpMenuOpen()) {
 				this.showOpMenu(cursor.selectedNode);
 			}
@@ -1694,56 +1825,62 @@ class BlockMenus {
 	}
 
 	onClick(event) {
-		const op = event.target.closest?.(".op.atom");
+		const schema = this.schema;
+		const opSel = schema
+			? `${schema.selector("op")}.${schema.token("atom")}`
+			: ".op.atom";
+		const op = event.target.closest?.(opSel);
 		if (op && this.editor.root.contains(op)) {
 			event.preventDefault();
 			this.blocks?.selectUnit(op);
 			this.showOpMenu(op);
 			return;
 		}
-		const hole = event.target.closest?.(".hole");
+		const hole = event.target.closest?.(schema?.selector("hole") ?? ".hole");
 		if (hole) {
 			const slot = this.blocks?.closestSlot(hole);
-			if (slot?.classList.contains("empty")) {
+			if (slot && schema?.isEmptySlot(slot)) {
 				event.preventDefault();
 				this.blocks?.selectUnit(hole);
 				this.showChooser(slot);
 			}
 		}
-		const leaf = event.target.closest?.(".leaf.var");
+		const leafSel = schema ? `${schema.selector("leaf")}.var` : ".leaf.var";
+		const leaf = event.target.closest?.(leafSel);
 		if (leaf) this.showComplete(leaf);
 	}
 
 	onMouseDown(event) {
 		const t = event.target;
+		const schema = this.schema;
+		const holeSel = schema?.selector("hole") ?? ".hole";
+		const emptySlotSel = schema?.selector("slot", "empty") ?? ".slot.empty";
+		const leafVarSel = schema ? `${schema.selector("leaf")}.var` : ".leaf.var";
+		const opAtomSel = schema
+			? `${schema.selector("op")}.${schema.token("atom")}`
+			: ".op.atom";
+		const root = this.editor.root;
+
 		if (
 			this.chooser?.el &&
 			!this.chooser.el.contains(t) &&
-			!t.closest?.(".hole") &&
-			!t.closest?.(".slot.empty")
+			!t.closest?.(holeSel) &&
+			!t.closest?.(emptySlotSel)
 		) {
 			this.hideChooser();
 		}
-		if (
-			this.complete?.el &&
-			!this.complete.el.contains(t) &&
-			!t.closest?.(".leaf.var")
-		) {
-			if (!t.closest?.("#editor") && t !== this.editor.root && !this.editor.root.contains(t)) {
+		if (this.complete?.el && !this.complete.el.contains(t) && !t.closest?.(leafVarSel)) {
+			if (t !== root && !root.contains(t)) {
 				this.hideComplete();
 			}
 		}
-		if (
-			this.operator?.el &&
-			!this.operator.el.contains(t) &&
-			!t.closest?.(".op.atom")
-		) {
+		if (this.operator?.el && !this.operator.el.contains(t) && !t.closest?.(opAtomSel)) {
 			this.hideOpMenu();
 		}
 	}
 }
 
-// Function: defaultExprInput
+// Function: defaultBlockInput
 // Common input rules for expression-like block editors.
 function defaultBlockInput(options = {}) {
 	const opKeys = options.opKeys ?? ["+", "-", "*", "/", "−", "÷"];
@@ -1836,8 +1973,10 @@ function defaultBlockInput(options = {}) {
 				ctx.slot.dataset?.kind === "number",
 			match: numberMatch,
 			do: (args, env) => {
+				const schema = env.editor.blocks?.schema;
+				const leafSel = schema ? `${schema.selector("leaf")}.num` : ".leaf.num";
 				const slot = args.context.slot;
-				const leaf = slot?.querySelector?.(".leaf.num");
+				const leaf = slot?.querySelector?.(leafSel);
 				if (!leaf) return false;
 				leaf.textContent = args.key === "." ? "0." : args.key;
 				env.editor.text.refresh();
@@ -1853,8 +1992,10 @@ function defaultBlockInput(options = {}) {
 				ctx.slot.dataset?.kind === "var",
 			match: varMatch,
 			do: (args, env) => {
+				const schema = env.editor.blocks?.schema;
+				const leafSel = schema ? `${schema.selector("leaf")}.var` : ".leaf.var";
 				const slot = args.context.slot;
-				const leaf = slot?.querySelector?.(".leaf.var");
+				const leaf = slot?.querySelector?.(leafSel);
 				if (!leaf) return false;
 				leaf.textContent = args.key;
 				env.editor.text.refresh();
@@ -1885,6 +2026,7 @@ export {
 	BlockMenus,
 	BlockSchema,
 	Blocks,
+	ListMenu,
 	defaultBlockInput,
 	el as blockEl,
 	blockKeymap,
@@ -1895,6 +2037,7 @@ export default {
 	BlockMenus,
 	BlockSchema,
 	Blocks,
+	ListMenu,
 	defaultBlockInput,
 	blockEl: el,
 	blockKeymap,

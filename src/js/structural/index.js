@@ -37,6 +37,7 @@ export {
 	BlockMenus,
 	BlockSchema,
 	Blocks,
+	ListMenu,
 	defaultBlockInput,
 	blockEl,
 	blockKeymap,
