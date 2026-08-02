@@ -107,20 +107,22 @@ copy/paste listeners, and removes them on plugin detachment.
 | `deleteSmart` | Delete selected blocks, remove an empty block, or merge backward. |
 | `indent` / `dedent` | Indent or dedent current list item. |
 
-The plugin binds these helpers directly to `editor` while installed:
+**On `Editor` (core, always available):** `blockSelector()`, `blockFor(node)`,
+`firstTextNode(node)`, `lastTextNode(node)`.
+
+**On the plugin** (`editor.richText` — also driven by keymap actions):
 
 | Helper | Purpose |
 | --- | --- |
-| `blockSelector()` / `blockFor(node)` | Resolve editable block elements. |
 | `createBlock(tag?)` / `replaceBlock(block, tag)` | Create or replace an editable block. |
-| `firstTextNode(node)` / `lastTextNode(node)` | Find descendant text nodes. |
 | `ensureEditableContent(block, preferBr?)` | Ensure an empty block has a text node or `<br>`. |
 | `moveCursorToBlockStart(block, session?)` / `moveCursorToBlockEnd(...)` | Place cursor at a block edge. |
 | `currentEditableBlock(session?)` | Resolve the active block. |
-| `selectCurrentBlock(session?, mode?)` | Expand or contract selection scopes programmatically. |
-| `splitCurrentBlock(session?)` / `insertLineBreak(session?)` | Enter behavior primitives. |
-| `indentCurrentListItem(session?)` / `dedentCurrentListItem(session?)` | List indentation primitives. |
-| `deleteSelectedBlocks(session?)`, `deleteEmptyBlock(session?)`, `mergeBlockBackward(session?, event?)` | Smart deletion primitives. |
+| `firstBlockIn` / `lastBlockIn` / `blockText` / `isEmptyBlock` | Block inspection helpers. |
+| `splitCurrentBlock` / `insertLineBreak` | Enter behavior primitives. |
+| `indentCurrentListItem` / `dedentCurrentListItem` | List indentation. |
+| `deleteSelectedBlocks` / `deleteEmptyBlock` / `mergeBlockBackward` | Smart deletion. |
+| `selectCurrentBlock(session?, mode?)` | Expand or contract selection scopes. |
 
 ## Editing behavior
 

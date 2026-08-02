@@ -6,7 +6,9 @@
 // Module: blocks
 // Declarative structural-block editing: role schema, transforms, input rules, menus.
 
-import { editorKeymap } from "./editor.js";
+import { asElement } from "./dom.js";
+import { editorKeymap } from "./keymap.js";
+import { blockWhenDomain, matchInputRuleWhen } from "./rules.js";
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -40,11 +42,6 @@ function el(tag, className, attrs = {}) {
 		else node.setAttribute(k, v);
 	}
 	return node;
-}
-
-function asElement(node) {
-	if (!node) return null;
-	return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
 }
 
 function closestMatch(node, predicate, root) {
@@ -600,61 +597,9 @@ class Blocks {
 	}
 
 	// Method: matchWhen
-	// Declarative context matcher for block rules.
+	// Declarative context matcher for block rules (generic matcher + block domain keys).
 	matchWhen(when, ctx, event) {
-		if (when == null) return true;
-		if (typeof when === "function") return !!when(ctx, event);
-		if (typeof when !== "object") return !!when;
-
-		if (when.slot != null) {
-			if (when.slot === "empty" || when.slot === true) {
-				if (!ctx.slotEmpty && !ctx.emptySlot) return false;
-			} else if (typeof when.slot === "string") {
-				if (ctx.slotKind !== when.slot && !(when.slot === "empty" && ctx.slotEmpty)) return false;
-			}
-		}
-		if (when.slotEmpty != null && !!ctx.slotEmpty !== !!when.slotEmpty) return false;
-		if (when.selected != null) {
-			const sel = when.selected;
-			if (sel === "op" && !ctx.isOpSelected) return false;
-			else if (sel === "hole" && !ctx.isHoleSelected) return false;
-			else if (sel === "unit" && !ctx.isUnitSelected) return false;
-			else if (sel === "node" && ctx.selectionKind !== "node") return false;
-			else if (typeof sel === "string" && sel !== "op" && sel !== "hole" && sel !== "unit" && sel !== "node") {
-				if (ctx.selectedRole !== sel && !ctx.selected?.classList?.contains?.(sel)) return false;
-			} else if (sel === true && ctx.selectionKind !== "node") return false;
-		}
-		if (when.unit != null) {
-			if (when.unit === true && !ctx.unit) return false;
-			if (when.unit === false && ctx.unit) return false;
-		}
-		if (when.edge != null) {
-			if (when.edge === "start" && ctx.edge !== "start") return false;
-			if (when.edge === "end" && ctx.edge !== "end") return false;
-			if (when.edge === "inside" && ctx.edge !== "inside") return false;
-			if (when.edge === "boundary" && ctx.edge !== "start" && ctx.edge !== "end") return false;
-		}
-		if (when.leaf != null) {
-			if (when.leaf === true && !ctx.leaf) return false;
-			if (when.leaf === false && ctx.leaf) return false;
-			if (typeof when.leaf === "string" && !ctx.leaf?.classList?.contains?.(when.leaf)) return false;
-		}
-		if (when.inLeaf != null && !!ctx.inLeaf !== !!when.inLeaf) return false;
-		if (when.block != null) {
-			if (when.block === true && !ctx.block) return false;
-			if (typeof when.block === "string" && ctx.block?.dataset?.op !== when.block) return false;
-		}
-		if (when.role != null && ctx.role !== when.role && ctx.selectedRole !== when.role) return false;
-		if (when.not) {
-			if (this.matchWhen(when.not, ctx, event)) return false;
-		}
-		if (when.or) {
-			const list = Array.isArray(when.or) ? when.or : [when.or];
-			if (!list.some((item) => this.matchWhen(item, ctx, event))) return false;
-		}
-		// Custom predicate
-		if (typeof when.test === "function" && !when.test(ctx, event)) return false;
-		return true;
+		return matchInputRuleWhen(when, ctx, event, { domain: blockWhenDomain });
 	}
 
 	// Method: runRuleAction

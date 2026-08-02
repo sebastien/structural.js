@@ -6,6 +6,8 @@
 // Module: modification
 // Provides rich-text formatting operations that mutate the DOM tree managed by an Editor.
 
+import { DEFAULT_BLOCK_SELECTOR, asElement, wordRangeAtIndex } from "./dom.js";
+
 // ----------------------------------------------------------------------------
 //
 // CLASSES
@@ -218,9 +220,9 @@ class Modification {
 	// Method: toggleBlock
 	// Toggles block tag style (e.g. `ul`, `ol`, `blockquote`, headings) on the current block.
 	toggleBlock(tag) {
-		const remembered = typeof this.editor.currentEditableBlock === 'function'
-			? this.editor.currentEditableBlock(this.session ?? this.editor.localSession)
-			: null;
+		const remembered = this.editor.richText?.currentEditableBlock?.(
+			this.session ?? this.editor.localSession,
+		) ?? null;
 		const block = this.findBlock(this.cursor.anchor);
 		const target = block === this.editor.root && remembered ? remembered : block;
 		if (target === this.editor.root) return false;
@@ -274,23 +276,7 @@ class Modification {
 	// Method: expandToWord
 	// Expands the current cursor offset to the boundaries of the surrounding word.
 	expandToWord() {
-		const point = this.text.pointAt(this.cursor.offset);
-		if (!point || point.node?.nodeType !== Node.TEXT_NODE) return null;
-
-		const data = point.node.data;
-		let start = point.offset;
-		let end = point.offset;
-
-		while (start > 0 && /\w/.test(data[start - 1])) start -= 1;
-		while (end < data.length && /\w/.test(data[end])) end += 1;
-
-		if (start === end) return null;
-
-		const startIndex = this.text.indexOfPoint({ node: point.node, offset: start });
-		const endIndex = this.text.indexOfPoint({ node: point.node, offset: end });
-
-		if (startIndex < 0 || endIndex < 0) return null;
-		return { start: startIndex, end: endIndex };
+		return wordRangeAtIndex(this.text, this.cursor.offset);
 	}
 
 	// ----------------------------------------------------------------------------
@@ -373,9 +359,13 @@ class Modification {
 	// Method: findBlock
 	// Finds the nearest ancestor block element for the given `node`.
 	findBlock(node) {
-		const el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+		const el = asElement(node);
 		if (!el) return this.editor.root;
-		const block = el.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, div');
+		const selector =
+			typeof this.editor.blockSelector === "function"
+				? this.editor.blockSelector()
+				: DEFAULT_BLOCK_SELECTOR;
+		const block = el.closest(selector);
 		return block && this.editor.root.contains(block) ? block : this.editor.root;
 	}
 

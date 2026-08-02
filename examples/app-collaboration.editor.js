@@ -390,7 +390,9 @@ export function createCollaborationEditor(mount, options = {}) {
     } else {
       editor.localSession.cursor.moveTo(end);
     }
-    editor.localSession.currentBlock = editor.blockFor(editor.localSession.cursor.anchor) ?? editor.currentEditableBlock(editor.localSession);
+    editor.localSession.currentBlock =
+      editor.blockFor(editor.localSession.cursor.anchor) ??
+      editor.richText?.currentEditableBlock(editor.localSession);
     editor._currentBlock = editor.localSession.currentBlock;
     const synced = editor.selection.syncToNative(editor.localSession);
     const nativeSelection = doc.defaultView.getSelection();
@@ -528,7 +530,7 @@ export function createCollaborationEditor(mount, options = {}) {
     patchDomChildren(editorEl, Array.from(yxml.toDOM().childNodes));
     editor.text.refresh();
     editor.normalize(editor.root, { session: editor.localSession });
-    editor.localSession.currentBlock = editor.currentEditableBlock(editor.localSession);
+    editor.localSession.currentBlock = editor.richText?.currentEditableBlock(editor.localSession);
     editor._currentBlock = editor.localSession.currentBlock;
     editor.localSession.classes?.update();
 
@@ -555,7 +557,7 @@ export function createCollaborationEditor(mount, options = {}) {
         editor.selection.syncFromNative(editor.root, editor.localSession);
       }
     }
-    editor.localSession.currentBlock = editor.currentEditableBlock(editor.localSession);
+    editor.localSession.currentBlock = editor.richText?.currentEditableBlock(editor.localSession);
     editor._currentBlock = editor.localSession.currentBlock;
     editor.localSession.classes?.update();
     suppressObserver = false;
@@ -622,7 +624,8 @@ export function createCollaborationEditor(mount, options = {}) {
     suppressObserver = true;
     editorEl.innerHTML = "<p><br></p>";
     suppressObserver = false;
-    editor.syncAfterMutation(editor.firstBlockIn(editor.root) ? { block: editor.firstBlockIn(editor.root) } : null, editor.localSession);
+    const first = editor.richText?.firstBlockIn(editor.root);
+    editor.syncAfterMutation(first ? { block: first } : null, editor.localSession);
     scheduleLocalSync();
   };
   const onToolbarMouseDown = event => event.preventDefault();
@@ -645,7 +648,7 @@ export function createCollaborationEditor(mount, options = {}) {
     if (!editor.range.within(editor.root, range)) return;
     editor.text.refresh();
     editor.selection.syncFromNative(editor.root, editor.localSession);
-    editor.localSession.currentBlock = editor.currentEditableBlock(editor.localSession);
+    editor.localSession.currentBlock = editor.richText?.currentEditableBlock(editor.localSession);
     editor._currentBlock = editor.localSession.currentBlock;
     updateToolbar();
   };

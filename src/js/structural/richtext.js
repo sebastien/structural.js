@@ -6,7 +6,8 @@
 // Module: richtext
 // Installs rich-text schema presets, keymaps, classes, and block editing behavior.
 
-import { editorKeymap, EditorNormalizer, EditorSchema } from "./editor.js";
+import { editorKeymap } from "./keymap.js";
+import { EditorNormalizer, EditorSchema } from "./schema.js";
 
 const richTextRules = {
 	":root": {
@@ -113,12 +114,11 @@ class RichText {
 	constructor(options = {}) {
 		this.options = options;
 		this.editor = null;
-		this.boundMethods = new Map();
+		// Timestamp of the last keymap clipboard chord so document events do not double-apply.
+		this._clipboardChordAt = 0;
 		this._onCopy = this.onCopy.bind(this);
 		this._onCut = this.onCut.bind(this);
 		this._onPaste = this.onPaste.bind(this);
-		// Timestamp of the last keymap clipboard chord so document events do not double-apply.
-		this._clipboardChordAt = 0;
 	}
 
 	attach(editor) {
@@ -127,42 +127,8 @@ class RichText {
 		document.addEventListener("copy", this._onCopy);
 		document.addEventListener("cut", this._onCut);
 		document.addEventListener("paste", this._onPaste);
-		this.attachEditorMethods([
-			"blockSelector",
-			"blockFor",
-			"createBlock",
-			"replaceBlock",
-			"firstTextNode",
-			"lastTextNode",
-			"pruneEmptyTextChildren",
-			"ensureEditableContent",
-			"moveCursorToBlockStart",
-			"moveCursorToBlockEnd",
-			"firstBlockIn",
-			"lastBlockIn",
-			"blockText",
-			"isEmptyBlock",
-			"removePlaceholderInCurrentBlock",
-			"shouldInsertText",
-			"currentEditableBlock",
-			"isFullySelectedBlock",
-			"fullySelectedBlocks",
-			"removeBlock",
-			"deleteSelectedBlocks",
-			"deleteEmptyBlock",
-			"previousEditableBlock",
-			"mergeBlockBackward",
-			"exitEmptyBlock",
-			"splitBlockElement",
-			"splitListItem",
-			"insertLineBreak",
-			"splitCurrentBlock",
-			"indentListItem",
-			"dedentListItem",
-			"currentListItem",
-			"indentCurrentListItem",
-			"dedentCurrentListItem",
-		]);
+		// Editing helpers live on the plugin (editor.richText). Keymap actions call them
+		// directly; apps should use editor.richText.* rather than methods on Editor.
 		editor.configureActions({
 			beforeTextInput: (_command, context) => this.removePlaceholderInCurrentBlock(context.session),
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
@@ -202,33 +168,26 @@ class RichText {
 		document.removeEventListener("copy", this._onCopy);
 		document.removeEventListener("cut", this._onCut);
 		document.removeEventListener("paste", this._onPaste);
-		for (const [name, method] of this.boundMethods) {
-			if (this.editor[name] === method) delete this.editor[name];
-		}
 		if (this.editor.richText === this) delete this.editor.richText;
-		this.boundMethods.clear();
 		this.editor = null;
 		return this;
 	}
 
-	attachEditorMethods(names) {
-		for (const name of names) {
-			const method = this[name].bind(this);
-			this.boundMethods.set(name, method);
-			this.editor[name] = method;
-		}
-	}
-
+	// blockSelector / blockFor / firstTextNode / lastTextNode: Editor core defaults.
 	blockSelector() {
-		const blocks = this.editor.schema.tagsOfType("block")
-			.filter(tag => this.editor.schema.contains(tag, "#text") || tag === "blockquote");
-		return blocks.join(", ") || "p, h1, h2, h3, h4, h5, h6, li, blockquote, div";
+		return this.editor.blockSelector();
 	}
 
 	blockFor(node) {
-		const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
-		const block = el?.closest(this.blockSelector());
-		return block && this.editor.root.contains(block) ? block : null;
+		return this.editor.blockFor(node);
+	}
+
+	firstTextNode(node) {
+		return this.editor.firstTextNode(node);
+	}
+
+	lastTextNode(node) {
+		return this.editor.lastTextNode(node);
 	}
 
 	createBlock(tag = "p") {
@@ -241,22 +200,6 @@ class RichText {
 		const next = this.createBlock(tag);
 		block.replaceWith(next);
 		return next;
-	}
-
-	firstTextNode(node) {
-		if (!node) return null;
-		if (node.nodeType === Node.TEXT_NODE) return node;
-		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-		return walker.nextNode();
-	}
-
-	lastTextNode(node) {
-		if (!node) return null;
-		if (node.nodeType === Node.TEXT_NODE) return node;
-		const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-		let text = null;
-		while (walker.nextNode()) text = walker.currentNode;
-		return text;
 	}
 
 	pruneEmptyTextChildren(block) {
@@ -771,12 +714,35 @@ class RichText {
 		return range ? range.toString() : "";
 	}
 
+	// Method: selectedHTML
+	// Rich HTML for the current selection, including block wrappers for select-all.
+	selectedHTML(session = null) {
+		const range = this.editor.range.selected(this.editor.root, session);
+		if (!range) return "";
+		const normalized = this.editor.activeSession(session).cursor.selection.normalizedRange();
+		const documentLength = this.editor.root.innerText?.length ?? this.editor.root.textContent?.length ?? 0;
+		if (normalized.start === 0 && normalized.end >= documentLength)
+			return this.editor.root.innerHTML;
+		const container = document.createElement("div");
+		container.appendChild(range.cloneContents());
+		return container.innerHTML;
+	}
+
 	// Method: writeClipboard
-	// Writes plain text to the system clipboard (event payload or Clipboard API).
-	writeClipboard(text, event = null) {
+	// Writes rich and plain text to the system clipboard (event payload or Clipboard API).
+	writeClipboard(text, event = null, html = "") {
 		if (text == null) return false;
 		if (event?.clipboardData) {
+			if (html) event.clipboardData.setData("text/html", html);
 			event.clipboardData.setData("text/plain", text);
+			return true;
+		}
+		if (html && globalThis.navigator?.clipboard?.write && globalThis.ClipboardItem) {
+			const item = new ClipboardItem({
+				"text/html": new Blob([html], { type: "text/html" }),
+				"text/plain": new Blob([text], { type: "text/plain" }),
+			});
+			navigator.clipboard.write([item]).catch(() => {});
 			return true;
 		}
 		if (globalThis.navigator?.clipboard?.writeText) {
@@ -810,6 +776,81 @@ class RichText {
 		return Promise.resolve("");
 	}
 
+	// Method: sanitizeClipboardHTML
+	// Keeps only tags supported by the rich-text schema before DOM insertion.
+	sanitizeClipboardHTML(html) {
+		if (typeof html !== "string" || !html.trim()) return null;
+		const template = document.createElement("template");
+		template.innerHTML = html;
+		const allowed = new Set([
+			"blockquote", "br", "code", "em", "h1", "h2", "h3", "li", "ol", "p", "pre", "strong", "ul",
+		]);
+		const clean = (node) => {
+			for (const child of [...node.childNodes]) {
+				if (child.nodeType === Node.COMMENT_NODE) {
+					child.remove();
+					continue;
+				}
+				if (child.nodeType !== Node.ELEMENT_NODE) continue;
+				clean(child);
+				if (!allowed.has(child.tagName.toLowerCase())) {
+					while (child.firstChild) child.parentNode.insertBefore(child.firstChild, child);
+					child.remove();
+				}
+			}
+		};
+		clean(template.content);
+		return template.content;
+	}
+
+	// Method: pasteHTML
+	// Inserts supported clipboard HTML and lets the editor normalizer repair structure.
+	pasteHTML(html, session = null, event = null) {
+		if (event && !this.ownsClipboard(event)) return false;
+		if (!event && !this.ownsClipboard()) return false;
+		const fragment = this.sanitizeClipboardHTML(html);
+		if (!fragment?.childNodes.length) return false;
+		const active = this.editor.activeSession(session);
+		const range = this.editor.range.current(this.editor.root, active);
+		if (!range) return false;
+		if (event) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
+		this.editor.history.run("paste", () => {
+			const inserted = [...fragment.childNodes];
+			const normalized = active.cursor.selection.normalizedRange();
+			const documentLength = this.editor.root.innerText?.length ?? this.editor.root.textContent?.length ?? 0;
+			const fullDocument = normalized.start === 0 && normalized.end >= documentLength;
+			const hasBlock = inserted.some((node) =>
+				node.nodeType === Node.ELEMENT_NODE && this.editor.schema.rule(node)?.type === "block",
+			);
+			const block = this.currentEditableBlock(active);
+			if (fullDocument) this.editor.root.replaceChildren(fragment);
+			else if (hasBlock && block && this.isEmptyBlock(block)) block.replaceWith(...inserted);
+			else {
+				range.deleteContents();
+				range.insertNode(fragment);
+			}
+			const last = inserted.at(-1);
+			if (last?.parentNode) {
+				range.setStartAfter(last);
+				range.collapse(true);
+			}
+			this.editor.text.refresh();
+			this.editor.setContent(undefined, {
+				session: active,
+				history: true,
+				selection: last?.nodeType === Node.TEXT_NODE
+					? { node: last, offset: last.length }
+					: last
+						? { node: last, position: "end" }
+						: undefined,
+			});
+		});
+		return true;
+	}
+
 	// Method: _markClipboardChord
 	// Notes a keymap-driven clipboard op so the matching document event is ignored.
 	_markClipboardChord() {
@@ -833,7 +874,7 @@ class RichText {
 		if (!event && !this.ownsClipboard()) return false;
 		const text = this.selectedPlainText();
 		if (!text) return false;
-		const ok = this.writeClipboard(text, event);
+		const ok = this.writeClipboard(text, event, this.selectedHTML());
 		if (ok && event) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -853,7 +894,7 @@ class RichText {
 		const session = this.editor.activeSession();
 		const text = this.selectedPlainText(session);
 		if (!text) return false;
-		const ok = this.writeClipboard(text, event);
+		const ok = this.writeClipboard(text, event, this.selectedHTML(session));
 		if (!ok) return false;
 		if (event) {
 			event.preventDefault();
@@ -890,6 +931,8 @@ class RichText {
 		};
 		if (text != null) return apply(text);
 		if (event?.clipboardData) {
+			const html = event.clipboardData.getData("text/html");
+			if (html && this.pasteHTML(html, session, event)) return true;
 			// text/plain first; fall back to text if browsers only expose that.
 			const plain =
 				event.clipboardData.getData("text/plain") ||

@@ -10,8 +10,23 @@ export { Caret, Cursor } from "./cursor.js";
 export { EditorSelectionController, SelectionOverlay, TextSelection } from "./selection.js";
 export { Modification } from "./modification.js";
 export {
+	asElement,
+	blockSelectorFromSchema,
+	firstTextNode,
+	lastTextNode,
+	wordBoundsInData,
+	wordRangeAtIndex,
+	DEFAULT_BLOCK_SELECTOR,
+} from "./dom.js";
+export {
+	blockWhenDomain,
+	matchInputRuleKey,
+	matchInputRuleWhen,
+} from "./rules.js";
+export { HISTORY_SKIP } from "./keymap.js";
+// Schema/history/session/keymap symbols also re-exported from editor for deep-import compat.
+export {
 	Editor,
-	EditorAdapter,
 	EditorClassController,
 	EditorCommand,
 	EditorCursor,
@@ -20,6 +35,7 @@ export {
 	EditorNormalizer,
 	EditorSchema,
 	EditorSession,
+	EditorTextInput,
 	EditorTransaction,
 } from "./editor.js";
 export {

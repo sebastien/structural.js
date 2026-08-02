@@ -54,8 +54,9 @@ class BlockController {
 		this.setReadonly(null);
 
 		if (this.current && options.place !== false) {
-			if (options.place === "end") this.app.editor.moveCursorToBlockEnd(this.current);
-			else if (options.place === "start") this.app.editor.moveCursorToBlockStart(this.current);
+			const rt = this.app.editor.richText;
+			if (options.place === "end") rt?.moveCursorToBlockEnd(this.current);
+			else if (options.place === "start") rt?.moveCursorToBlockStart(this.current);
 		}
 
 		this.app.editor.classes?.update();
@@ -104,7 +105,7 @@ class SelectionController {
 	moveCursorInto(block, event = null) {
 		if (!block?.isConnected) return false;
 		if (!event) {
-			return this.app.editor.moveCursorToBlockStart(block, this.app.editor.localSession);
+			return this.app.editor.richText?.moveCursorToBlockStart(block, this.app.editor.localSession);
 		}
 		return this.app.editor.selection.placeCaretFromPoint(
 			block,
@@ -322,8 +323,9 @@ class EmailTemplateApp {
 		else this.editor.input.cursor.backspace();
 
 		if (!this.blocks.editableFor(this.editor.input.cursor.anchor)) {
-			if (key === "Delete") this.editor.moveCursorToBlockEnd(slot, this.editor.localSession);
-			else this.editor.moveCursorToBlockStart(slot, this.editor.localSession);
+			const rt = this.editor.richText;
+			if (key === "Delete") rt?.moveCursorToBlockEnd(slot, this.editor.localSession);
+			else rt?.moveCursorToBlockStart(slot, this.editor.localSession);
 		}
 
 		this.blocks.normalize(slot);

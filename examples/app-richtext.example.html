@@ -236,13 +236,14 @@
         const target = event.target?.nodeType === Node.ELEMENT_NODE
           ? event.target
           : event.target?.parentElement;
+        const rt = editor.richText;
         const block = editor.blockFor(target);
-        if (!block || !editor.isEmptyBlock(block)) return;
+        if (!block || !rt?.isEmptyBlock(block)) return;
         event.preventDefault();
         event.stopPropagation();
         editor.localSession.currentBlock = block;
         editor._currentBlock = block;
-        editor.moveCursorToBlockStart(block);
+        rt.moveCursorToBlockStart(block);
         editor.classes?.update();
         updateToolbar();
       }, true);
@@ -261,7 +262,7 @@
 
       document.addEventListener('selectionchange', () => {
         if (window.getSelection()?.rangeCount > 0 && editor.range.within(editor.root, window.getSelection().getRangeAt(0))) {
-          editor.localSession.currentBlock = editor.currentEditableBlock(editor.localSession);
+          editor.localSession.currentBlock = editor.richText?.currentEditableBlock(editor.localSession);
           editor._currentBlock = editor.localSession.currentBlock;
         }
       });

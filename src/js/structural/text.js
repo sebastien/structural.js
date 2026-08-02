@@ -6,6 +6,8 @@
 // Module: text
 // Wraps a DOM tree and schema, supporting key text and structural operations.
 
+import { blockSelectorFromSchema } from "./dom.js";
+
 // ----------------------------------------------------------------------------
 //
 // MODULE FUNCTIONS
@@ -254,14 +256,7 @@ class TextAdapter {
 	// ----------------------------------------------------------------------------
 
 	_getBlockSelector() {
-		if (this._schema && typeof this._schema.tagsOfType === "function") {
-			const tags = this._schema.tagsOfType("block");
-			const filtered = tags.filter((t) =>
-				this._schema.contains ? this._schema.contains(t, "#text") || t === "blockquote" : true,
-			);
-			if (filtered.length) return filtered.join(",");
-		}
-		return "p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,div,section,nav,header";
+		return blockSelectorFromSchema(this._schema);
 	}
 
 	_getTopLevelBlocks() {

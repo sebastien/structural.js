@@ -6,6 +6,8 @@
 // Module: selection
 // Manages and overlays selection ranges in the editor.
 
+import { firstTextNode, lastTextNode } from "./dom.js";
+
 // ----------------------------------------------------------------------------
 //
 // OVERLAY HOST HELPERS
@@ -477,12 +479,16 @@ class TextSelection {
 
 	// Method: toDomRange
 	// Converts a `normalized` range to a native DOM Range.
-	// Prefers exact DOM points captured at selection time (robust to windowed/stale numeric offsets).
+	// Prefers exact DOM points when they still represent the normalized bounds.
 	toDomRange(normalized = this.normalizedRange()) {
 		// Prefer stored points if we have them and they are still valid/connected.
 		const ap = this._anchorPoint;
 		const fp = this._focusPoint;
-		if (this.isActive && ap && fp && ap.node && fp.node && ap.node.isConnected && fp.node.isConnected && ap.node.ownerDocument === fp.node.ownerDocument) {
+		const matchesNormalized =
+			this.isActive &&
+			normalized.start === this.start &&
+			normalized.end === this.end;
+		if (matchesNormalized && ap && fp && ap.node && fp.node && ap.node.isConnected && fp.node.isConnected && ap.node.ownerDocument === fp.node.ownerDocument) {
 			try {
 				const r = document.createRange();
 				// Order by document position
@@ -629,30 +635,10 @@ class EditorSelectionController {
 		return x > rect.left + rect.width / 2 ? "end" : "start";
 	}
 
-	// Method: _firstTextNode
-	// Resolves the first descendant text node within `root`.
-	_firstTextNode(root) {
-		if (!root) return null;
-		if (root.nodeType === Node.TEXT_NODE) return root;
-		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-		return walker.nextNode();
-	}
-
-	// Method: _lastTextNode
-	// Resolves the last descendant text node within `root`.
-	_lastTextNode(root) {
-		if (!root) return null;
-		if (root.nodeType === Node.TEXT_NODE) return root;
-		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-		let text = null;
-		while (walker.nextNode()) text = walker.currentNode;
-		return text;
-	}
-
 	// Method: _setEdgeCaret
 	// Places the caret at the subtree start or end when block helpers are unavailable.
 	_setEdgeCaret(root, placement, session = null) {
-		const textNode = placement === "end" ? this._lastTextNode(root) : this._firstTextNode(root);
+		const textNode = placement === "end" ? lastTextNode(root) : firstTextNode(root);
 		if (textNode) {
 			return this.setCaret(textNode, placement === "end" ? textNode.data.length : 0, session);
 		}
@@ -757,9 +743,10 @@ class EditorSelectionController {
 		}
 
 		const placement = this._edgePlacement(root, x);
+		const rt = this.editor.richText;
 		return placement === "end"
-			? (this.editor.moveCursorToBlockEnd?.(root, active) ?? this._setEdgeCaret(root, "end", active))
-			: (this.editor.moveCursorToBlockStart?.(root, active) ?? this._setEdgeCaret(root, "start", active));
+			? (rt?.moveCursorToBlockEnd?.(root, active) ?? this._setEdgeCaret(root, "end", active))
+			: (rt?.moveCursorToBlockStart?.(root, active) ?? this._setEdgeCaret(root, "start", active));
 	}
 
 	// Method: syncToNative
