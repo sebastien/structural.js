@@ -4,476 +4,19 @@
 // Created: 2026-06-16
 
 // Module: cursor
-// Implements the caret rendering and the logical navigation cursor.
+// Implements the logical navigation cursor.
 
-import {
-	TextSelection,
-	prepareOverlayHost,
-	clientToOffsetParent,
-} from "./selection.js";
+import { TextSelection } from "./selection.js";
+import Caret from "./rendering/caret.js";
+import { CursorEditing } from "./cursor/editing.js";
+import { CursorNavigation } from "./cursor/navigation.js";
+import { CursorSelection } from "./cursor/selection.js";
 
 // ----------------------------------------------------------------------------
 //
 // CLASSES
 //
 // ----------------------------------------------------------------------------
-
-// Class: Caret
-// Controls the visual representation and layout of the editor's text cursor.
-// - node: HTMLElement - visual DOM element representing the caret
-class Caret {
-	// Method: constructor
-	// Initializes the `Caret` controller with a custom visual `node`.
-	constructor(config = {}) {
-		if (config && (config.nodeType === 1 || config instanceof HTMLElement)) {
-			config = { node: config };
-		}
-		this._config = config || {};
-		this.mode = (this._config.mode === "native") ? "native" : "virtual";
-		this.node = (this.mode === "virtual" ? (this._config.node ?? null) : null);
-		this._container = this._config.container ?? null;
-		// Mount alongside the editor (shared offset/scroll parent), not under body.
-		// Caret left/top are relative to the host's offset parent.
-		if (this.mode === "virtual" && this.node) {
-			prepareOverlayHost(this.node, this._container);
-		}
-		this.focused = !!this._config.focused;
-		this._className = this._config.className || null;
-		this._classes = this._config.classes || null;
-		this._style = this._config.style || null;
-		this._styles = this._config.styles || null;
-		this._managedClasses = new Set();
-		this._managedStyleProps = new Set();
-		this._destroyed = false;
-		this._measureCanvas = document.createElement("canvas");
-		this._onSelectionChange = this._onSelectionChange.bind(this);
-		if (this.mode !== "native") {
-			document.addEventListener("selectionchange", this._onSelectionChange);
-		}
-		this._applyInitialVisual();
-	}
-
-	// Method: setContainer
-	// Mounts the caret node under `container` (typically the editor root's parent).
-	setContainer(container) {
-		this._container = container ?? null;
-		if (this.mode === "virtual" && this.node) {
-			prepareOverlayHost(this.node, this._container);
-		}
-		return this;
-	}
-
-	_applyInitialVisual() {
-		if (this.mode === "native" || !this.node) return;
-		this._applyState(this.focused ? "focus" : "default");
-	}
-
-	_resolveStateConfig(state) {
-		const direct = (state === "focus" && this._config.focus) ? this._config.focus : null;
-		const byKey = (state === "focus" && this._styles && this._styles.focus) ? this._styles.focus
-			: (state === "default" && this._styles && this._styles.default) ? this._styles.default
-			: null;
-		const legacyStyle = (state === "focus" && this._style && typeof this._style === "object") ? this._style : null;
-		return { classes: this._classes || null, direct: direct || legacyStyle || null, byKey: byKey || null };
-	}
-
-	_applyClasses(stateCfg) {
-		if (!this.node) return;
-		const toAdd = new Set();
-		const add = (v) => {
-			if (!v) return;
-			if (Array.isArray(v)) v.forEach(x => { if (x) toAdd.add(String(x)); });
-			else String(v).split(/\s+/).forEach(x => { if (x) toAdd.add(x); });
-		};
-		add(this._className);
-		if (stateCfg?.classes) {
-			add(stateCfg.classes[state] || stateCfg.classes.default || null);
-		}
-		for (const c of this._managedClasses) {
-			if (!toAdd.has(c)) this.node.classList.remove(c);
-		}
-		for (const c of toAdd) {
-			if (!this.node.classList.contains(c)) this.node.classList.add(c);
-		}
-		this._managedClasses = toAdd;
-	}
-
-	_applyInlineStyles(stateCfg) {
-		if (!this.node) return;
-		const next = {};
-		const merge = (obj) => { if (obj && typeof obj === "object") Object.assign(next, obj); };
-		merge(stateCfg?.byKey || null);
-		merge(stateCfg?.direct || null);
-		for (const p of this._managedStyleProps) {
-			if (!(p in next)) this.node.style.removeProperty(p.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
-		}
-		const applied = new Set();
-		for (const [k, v] of Object.entries(next)) {
-			const css = k.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`);
-			this.node.style.setProperty(css, String(v));
-			applied.add(k);
-		}
-		this._managedStyleProps = applied;
-	}
-
-	_applyState(state) {
-		if (this.mode === "native" || !this.node) return;
-		const cfg = this._resolveStateConfig(state);
-		this._applyClasses(cfg);
-		this._applyInlineStyles(cfg);
-	}
-
-	setFocused(focused) {
-		this.focused = !!focused;
-		if (this.mode !== "native" && this.node) {
-			const vis = this.node.style.visibility;
-			if (vis === "visible") {
-				this._applyState(this.focused ? "focus" : "default");
-			}
-		}
-	}
-
-	destroy() {
-		if (this._destroyed) return;
-		this._destroyed = true;
-		document.removeEventListener("selectionchange", this._onSelectionChange);
-		if (this.node) {
-			for (const c of this._managedClasses) this.node.classList.remove(c);
-			for (const p of this._managedStyleProps) {
-				this.node.style.removeProperty(p.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
-			}
-			this.node.style.visibility = "hidden";
-		}
-		this._managedClasses.clear();
-		this._managedStyleProps.clear();
-	}
-
-	// Method: _onSelectionChange
-	// Hides the virtual caret when a non-collapsed selection is active.
-	_onSelectionChange() {
-		const sel = window.getSelection();
-		if (sel && !sel.isCollapsed) {
-			this._hide();
-		}
-	}
-
-	// Method: _pointRect
-	// Internal helper to get client rect for the given DOM node and offset.
-	_pointRect(node, offset) {
-		const range = document.createRange();
-		try {
-			range.setStart(node, offset);
-			range.collapse(true);
-			return { rect: range.getBoundingClientRect(), range, source: "range" };
-		} catch (_e) {
-			return null;
-		}
-	}
-
-	// Method: _edgeRect
-	// Internal helper to get bounding rect for extreme edges of a `node`.
-	_edgeRect(node, edge) {
-		if (!node) {
-			return null;
-		}
-		if (node.nodeType === Node.TEXT_NODE) {
-			const offset = edge === "start" ? 0 : node.data.length;
-			const result = this._pointRect(node, offset);
-			if (result && (result.rect.width !== 0 || result.rect.height !== 0)) {
-				return { ...result, source: `text-${edge}` };
-			}
-			if (node.data.length === 0) {
-				return result ? { ...result, source: `text-${edge}` } : null;
-			}
-			const range = document.createRange();
-			try {
-				if (edge === "start") {
-					range.setStart(node, 0);
-					range.setEnd(node, 1);
-				} else {
-					range.setStart(node, node.data.length - 1);
-					range.setEnd(node, node.data.length);
-				}
-				return {
-					rect: range.getBoundingClientRect(),
-					range,
-					source: `text-${edge}-char`,
-				};
-			} catch (_e) {
-				return result ? { ...result, source: `text-${edge}` } : null;
-			}
-		}
-		if (node.nodeType === Node.ELEMENT_NODE) {
-			const rect = node.getBoundingClientRect();
-			return { rect, range: null, source: `element-${edge}` };
-		}
-		return null;
-	}
-
-	// Method: _deepCaretPoint
-	// Internal helper to retrieve the deepest text/element point inside `node`.
-	_deepCaretPoint(node, edge) {
-		let current = node;
-		while (current) {
-			if (current.nodeType === Node.TEXT_NODE) {
-				return {
-					node: current,
-					offset: edge === "start" ? 0 : current.data.length,
-				};
-			}
-			if (current.nodeType !== Node.ELEMENT_NODE) {
-				return null;
-			}
-			const children = current.childNodes;
-			if (children.length === 0) {
-				return { node: current, offset: edge === "start" ? 0 : children.length };
-			}
-			current =
-				edge === "start"
-					? children[0] ?? null
-					: children[children.length - 1] ?? null;
-		}
-		return null;
-	}
-
-	// Method: _visibleEdgeRect
-	// Internal helper to find a non-collapsed bounding rect around a `node` edge.
-	_visibleEdgeRect(node, edge) {
-		let current = node;
-		while (current) {
-			const result = this._edgeRect(current, edge);
-			if (result && (result.rect.width !== 0 || result.rect.height !== 0)) {
-				return { ...result, node: current };
-			}
-			current = edge === "end" ? current.previousSibling : current.nextSibling;
-		}
-		return null;
-	}
-
-	// Method: _boundaryRect
-	// Internal helper to compute a visual bounding rect around a structural boundary position.
-	_boundaryRect(position) {
-		const leftNode = position?.boundary?.leftNode;
-		const left = this._visibleEdgeRect(leftNode, "end");
-		if (left && (left.rect.width !== 0 || left.rect.height !== 0)) {
-			const point =
-				left.node?.nodeType === Node.ELEMENT_NODE
-					? this._edgeRect(this._deepCaretPoint(left.node, "end")?.node, "end")
-					: null;
-			const local = clientToOffsetParent(
-				left.rect.right,
-				point?.rect.top ?? left.rect.top,
-				this.node,
-			);
-			return {
-				x: local.x,
-				y: local.y,
-				height: left.rect.height,
-				source: "left-boundary",
-			};
-		}
-		const rightNode = position?.boundary?.rightNode;
-		const right = this._visibleEdgeRect(rightNode, "start");
-		if (right && (right.rect.width !== 0 || right.rect.height !== 0)) {
-			const point =
-				right.node?.nodeType === Node.ELEMENT_NODE
-					? this._edgeRect(this._deepCaretPoint(right.node, "start")?.node, "start")
-					: null;
-			const local = clientToOffsetParent(
-				right.rect.left,
-				point?.rect.top ?? right.rect.top,
-				this.node,
-			);
-			return {
-				x: local.x,
-				y: local.y,
-				height: right.rect.height,
-				source: "right-boundary",
-			};
-		}
-		return null;
-	}
-
-	// Method: _hide
-	// Hides the visual caret node.
-	_hide() {
-		if (this.node) {
-			this.node.style.visibility = "hidden";
-		}
-	}
-
-	// Method: _showAt
-	// Displays the visual caret at specified `x` and `y` coordinates with configurable `height`.
-	_showAt(x, y, height) {
-		if (this.node) {
-			// Floor X so the bar sits on the insertion edge (round biases right).
-			this.node.style.left = `${Math.floor(x)}px`;
-			this.node.style.top = `${Math.round(y)}px`;
-			if (height !== undefined) {
-				this.node.style.height = `${Math.max(1, Math.round(height))}px`;
-			}
-			this.node.style.visibility = "visible";
-			this._applyState(this.focused ? "focus" : "default");
-			// Restart blink so the caret stays solid while the user is typing/moving.
-			if (this.node.classList?.contains("caret-blink")) {
-				this.node.classList.remove("caret-blink");
-				// Force style flush before re-adding the animation class.
-				void this.node.offsetWidth;
-				this.node.classList.add("caret-blink");
-			}
-		}
-	}
-
-	// Method: _measureTextWidth
-	// Internal helper to measure the width of `text` based on style of DOM `node`.
-	_measureTextWidth(text, node) {
-		if (!text) {
-			return 0;
-		}
-		const element =
-			node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-		if (!element) {
-			return 0;
-		}
-		const context = this._measureCanvas.getContext("2d");
-		if (!context) {
-			return 0;
-		}
-		const style = window.getComputedStyle(element);
-		context.font = style.font;
-		let width = context.measureText(text).width;
-		const letterSpacing = Number.parseFloat(style.letterSpacing);
-		if (Number.isFinite(letterSpacing)) {
-			width += Math.max(0, text.length - 1) * letterSpacing;
-		}
-		const wordSpacing = Number.parseFloat(style.wordSpacing);
-		if (Number.isFinite(wordSpacing)) {
-			const spaces = text.match(/ /g)?.length ?? 0;
-			width += spaces * wordSpacing;
-		}
-		return width;
-	}
-
-	// Method: _collapsedTrailingSpaceWidth
-	// Internal helper to calculate width of collapsed trailing space at `position`.
-	_collapsedTrailingSpaceWidth(position) {
-		const pointNode = position?.point?.node;
-		const pointOffset = position?.point?.offset ?? 0;
-		const whitespaceNodes = [];
-		let trailingSpaces = "";
-		if (
-			pointNode?.nodeType === Node.TEXT_NODE &&
-			pointOffset === pointNode.data.length &&
-			pointNode.nextSibling === null
-		) {
-			const match = pointNode.data.slice(0, pointOffset).match(/ +$/);
-			if (!match) {
-				return 0;
-			}
-			trailingSpaces = match[0];
-			whitespaceNodes.unshift(pointNode);
-			let current = pointNode.previousSibling;
-			while (current?.nodeType === Node.TEXT_NODE && /^[ ]+$/.test(current.data)) {
-				trailingSpaces = `${current.data}${trailingSpaces}`;
-				whitespaceNodes.unshift(current);
-				current = current.previousSibling;
-			}
-		} else {
-			const leftNode = position?.boundary?.leftNode;
-			if (
-				leftNode?.nodeType !== Node.TEXT_NODE ||
-				position?.boundary?.rightNode ||
-				!/^[ ]+$/.test(leftNode.data ?? "")
-			) {
-				return 0;
-			}
-			trailingSpaces = leftNode.data;
-			whitespaceNodes.unshift(leftNode);
-			let current = leftNode.previousSibling;
-			while (current?.nodeType === Node.TEXT_NODE && /^[ ]+$/.test(current.data)) {
-				trailingSpaces = `${current.data}${trailingSpaces}`;
-				whitespaceNodes.unshift(current);
-				current = current.previousSibling;
-			}
-		}
-		const referenceNode = whitespaceNodes[0] ?? pointNode;
-		return this._measureTextWidth(trailingSpaces, referenceNode);
-	}
-
-	// Method: setVirtual
-	// Positions the virtual caret relative to standard text layout or element boundaries.
-	setVirtual(position, options = {}) {
-		if (this.mode === "native") {
-			return { visible: false, editable: false, source: null };
-		}
-		const editable = options.editable === true;
-		const point = position?.point;
-		if (!point) {
-			this._hide();
-			return { visible: false, editable: false, source: null };
-		}
-		const trailingSpaceWidth = this._collapsedTrailingSpaceWidth(position);
-		const result =
-			point.node?.nodeType === Node.TEXT_NODE ||
-			point.node?.nodeType === Node.ELEMENT_NODE
-				? this._pointRect(point.node, point.offset)
-				: null;
-		const rect = result?.rect;
-		if (rect && (rect.width !== 0 || rect.height !== 0)) {
-			const local = clientToOffsetParent(
-				rect.left + (rect.width === 0 ? trailingSpaceWidth : 0),
-				rect.top,
-				this.node,
-			);
-			const x = local.x;
-			const y = local.y;
-			if (editable) {
-				this._showAt(x, y, rect.height);
-			} else {
-				this._hide();
-			}
-			return { x, y, source: result.source, visible: editable, editable };
-		}
-		const boundary = this._boundaryRect(position);
-		if (boundary) {
-			const x = boundary.x + trailingSpaceWidth;
-			if (editable) {
-				this._showAt(x, boundary.y, boundary.height);
-			} else {
-				this._hide();
-			}
-			return { ...boundary, x, visible: editable, editable };
-		}
-		this._hide();
-		return { visible: false, editable, source: result?.source ?? null };
-	}
-
-	// Method: set
-	// Sets native caret selection in the window on specified `node` at `offset`.
-	set(node, offset, focus = true) {
-		if (!node) {
-			return;
-		}
-		const selection = window.getSelection();
-		const range = document.createRange();
-		try {
-			range.setStart(node, offset);
-			range.collapse(true);
-			selection.removeAllRanges();
-			selection.addRange(range);
-			if (focus && node.parentElement) {
-				node.parentElement.focus();
-			}
-			return range;
-		} catch (_e) {
-			console.error(
-				`[hed] Unable to set caret: ${_e}`,
-				{ node, offset },
-				_e,
-			);
-		}
-	}
-}
 
 // Class: Cursor
 // Manages logical text selection, navigation, insertion, and deletion.
@@ -521,6 +64,9 @@ class Cursor {
 		}
 		this.caret = new Caret(caretCfg);
 		this._input = input;
+		this.editing = new CursorEditing(this);
+		this.navigation = new CursorNavigation(this);
+		this.selectionController = new CursorSelection(this);
 		this._eventFocusedNode = null;
 		this._eventActivePath = [];
 		this.bindOverlayHosts();
@@ -544,6 +90,12 @@ class Cursor {
 		return this._input.editor;
 	}
 
+	// Property: session
+	// Retrieves the session that owns this cursor.
+	get session() {
+		return this._input?.editor ? this._input : null;
+	}
+
 	// Property: text
 	// Retrieves the active document TextAdapter.
 	get text() {
@@ -562,86 +114,19 @@ class Cursor {
 	// Method: insertText
 	// Inserts the specified `text` at the current cursor position or replaces selected content.
 	insertText(text) {
-		this._ensureSelectionFromNativeIfPresent();
-		if (this.selectionKind === "range") {
-			this.editor?.noteEdit?.("input");
-			const next = this.selection.replaceWithText(text);
-			if (next) {
-				this._desiredX = null;
-				this.moveTo(next.index, { skipBoundaryCollapse: true });
-			}
-			return;
-		}
-		if (this.selectionKind === "node") {
-			this.editor?.noteEdit?.("input");
-			this.replaceSelectedNode(text);
-			return;
-		}
-		this.text.ensureIndex(this.offset);
-		const position = this.text.positionSlotAt(this.offset);
-		if (!this.text.acceptsText(position)) {
-			return;
-		}
-		this.editor?.noteEdit?.("input");
-		const next = this.text.insertAtIndex(this.offset, text);
-		this._desiredX = null;
-		this.moveTo(next.index, { skipBoundaryCollapse: true });
+		return this.editing.insertText(text);
 	}
 
 	// Method: backspace
 	// Deletes the character or node immediately preceding the cursor.
 	backspace() {
-		this._ensureSelectionFromNativeIfPresent();
-		if (this.selectionKind === "range") {
-			this.editor?.noteEdit?.("delete");
-			const next = this.selection.replaceWithText("");
-			if (next) {
-				this._desiredX = null;
-				this.moveTo(next.index);
-			}
-			return;
-		}
-		if (this.selectionKind === "node") {
-			this.editor?.noteEdit?.("delete");
-			this.removeSelectedNode();
-			return;
-		}
-		this.text.ensureIndex(this.offset);
-		this.editor?.noteEdit?.("delete");
-		const next = this.text.deleteBackwardAtIndex(this.offset);
-		this._desiredX = null;
-		this.moveTo(next.index, {
-			skipBoundaryCollapse: true,
-			skipFormattingWhitespace: true,
-		});
+		return this.editing.backspace();
 	}
 
 	// Method: delete
 	// Deletes the character or node immediately following the cursor.
 	delete() {
-		this._ensureSelectionFromNativeIfPresent();
-		if (this.selectionKind === "range") {
-			this.editor?.noteEdit?.("delete");
-			const next = this.selection.replaceWithText("");
-			if (next) {
-				this._desiredX = null;
-				this.moveTo(next.index);
-			}
-			return;
-		}
-		if (this.selectionKind === "node") {
-			this.editor?.noteEdit?.("delete");
-			this.removeSelectedNode();
-			return;
-		}
-		this.text.ensureIndex(this.offset);
-		this.editor?.noteEdit?.("delete");
-		const next = this.text.deleteForwardAtIndex(this.offset);
-		this._desiredX = null;
-		this.moveTo(next.index, {
-			skipBoundaryCollapse: true,
-			skipFormattingWhitespace: true,
-		});
+		return this.editing.delete();
 	}
 
 	// Method: _syncStructuralToNative
@@ -652,7 +137,7 @@ class Cursor {
 			const ed = this.editor;
 			const input = ed?.input;
 			const sel = ed?.selection;
-			const active = ed ? ed.activeSession() : null;
+			const active = ed ? ed.activeSession(this.session) : null;
 			if (!sel || typeof sel.syncToNative !== "function") return;
 			const run = () => sel.syncToNative(active);
 			if (typeof input?._guardNativeSync === "function") input._guardNativeSync(run);
@@ -1218,487 +703,72 @@ class Cursor {
 	// Method: _setRangeSelection
 	// Applies a text range selection and renders visual updates.
 	_setRangeSelection(anchorOffset, focusOffset, move, caretEditable = true) {
-		const previous = this._snapshot();
-		this._clearNodeSelection();
-		this.selection.set(anchorOffset, focusOffset);
-		const normalized = this.selection.normalizedRange();
-		this.offset = move.clamped;
-		this.anchor = move.position.focusNode;
-		this.delta = move.position.point.offset;
-		this.direction = move.direction;
-		if (normalized.collapsed) {
-			this.selectionKind = "caret";
-			this.selection.clear();
-			const caret = this.caret.setVirtual(move.position, {
-				editable: caretEditable,
-			});
-			this._syncStructuralToNative();
-			const current = {
-				...this._snapshot(),
-				requestedOffset: move.requested,
-				kind: move.position.kind,
-				boundary: move.position.boundary,
-				char: move.position.char,
-				remap: {
-					from: move.requested,
-					to: move.clamped,
-					reasons: move.reasons,
-				},
-				caretEditable: caret?.editable ?? false,
-				caretVisible: caret?.visible ?? false,
-				caretSource: caret?.source ?? null,
-			};
-			this._emitMove(previous, current);
-			return;
-		}
-		this.selectionKind = "range";
-		this.caret.setVirtual(null);
-		const render = this.selection.apply();
-		this._syncStructuralToNative();
-		const current = {
-			...this._snapshot(),
-			requestedOffset: move.requested,
-			kind: move.position.kind,
-			boundary: move.position.boundary,
-			char: move.position.char,
-			remap: {
-				from: move.requested,
-				to: move.clamped,
-				reasons: move.reasons,
-			},
-			caretEditable: false,
-			caretVisible: false,
-			caretSource: null,
-			selectionVisible: render.visible,
-		};
-		this._emitMove(previous, current);
+		return this.selectionController._setRangeSelection(
+			anchorOffset,
+			focusOffset,
+			move,
+			caretEditable,
+		);
 	}
 
 	// Method: select
 	// Applies semantic text or node selection depending on argument shape.
 	select(target, focusOrOptions) {
-		if (typeof target === "number") {
-			const anchorOffset = target;
-			const focusOffset = focusOrOptions;
-			if (typeof focusOffset !== "number") {
-				return false;
-			}
-
-			const previous = this._snapshot();
-			this._clearNodeSelection();
-			this.selection.set(anchorOffset, focusOffset);
-			const normalized = this.selection.normalizedRange();
-			if (normalized.collapsed) {
-				this.selection.clear();
-				this.moveTo(focusOffset);
-				return true;
-			}
-
-			this.selectionKind = "range";
-			this.offset = this.text.clampIndex(focusOffset);
-			this.anchor = this.text.focusNodeAt(this.offset) || this.anchor;
-			const point = this.text.pointAt(this.offset);
-			this.delta = point?.offset ?? this.delta;
-			this.direction =
-				previous.offset === undefined
-					? 0
-					: this.offset > previous.offset
-						? 1
-						: this.offset < previous.offset
-							? -1
-							: 0;
-			this.caret.setVirtual(null);
-			const render = this.selection.apply();
-			this._syncStructuralToNative();
-			this._emitMove(previous, {
-				...this._snapshot(),
-				requestedOffset: focusOffset,
-				kind: "range-selection",
-				boundary: null,
-				char: null,
-				remap: {
-					from: focusOffset,
-					to: this.offset,
-					reasons: [],
-				},
-				caretEditable: false,
-				caretVisible: false,
-				caretSource: null,
-				selectionVisible: render.visible,
-			});
-			return true;
-		}
-
-		if (target?.nodeType === Node.ELEMENT_NODE) {
-			const node = target;
-			const options = focusOrOptions ?? {};
-			const kind =
-				options.kind ??
-				(this.text.isAtom(node)
-					? "atom"
-					: this.text.isContainer(node)
-						? "container"
-						: null);
-			if (!kind) {
-				return false;
-			}
-
-			const side = options.side ?? "before";
-			const direction = options.direction ?? (side === "after" ? -1 : 1);
-			const offset = options.offset ?? this._boundaryIndexForNode(node, side);
-			const behavior = options.behavior ?? (kind === "atom" ? "skip" : "enter");
-			this._selectNode(node, offset, direction, behavior);
-			return true;
-		}
-
-		return false;
-	}
-
-	// Method: _advanceHorizontalOffset
-	// Moves caret position horizontally, skipping whitespace according to configuration.
-	_advanceHorizontalOffset(origin, direction) {
-		const current = this._canonicalOffset(origin, direction);
-		let next = this.text.moveIndex(current, direction, {
-			skipWhitespace: this.skipWhitespace,
-		});
-		next = this._remapFormattingWhitespace(next, direction).offset;
-		let canonical = this._canonicalOffset(next, direction);
-		const movesForward = value =>
-			direction > 0 ? value > current : value < current;
-		while (canonical === current) {
-			const advanced = this.text.moveIndex(next, direction, {
-				skipWhitespace: this.skipWhitespace,
-			});
-			if (advanced === next) {
-				break;
-			}
-			const remapped = this._remapFormattingWhitespace(advanced, direction).offset;
-			if (!movesForward(remapped)) {
-				break;
-			}
-			next = remapped;
-			canonical = this._canonicalOffset(next, direction);
-			if (!movesForward(canonical)) {
-				break;
-			}
-		}
-		return canonical;
-	}
-
-	// Method: _verticalTarget
-	// Solves target caret slot when traversing vertically.
-	_verticalTarget(origin, direction) {
-		this.text.ensureIndex(origin);
-		const visibleOrigin = this._visibleEquivalentOffset(origin, direction);
-		const next = this.text.indexFromLineMove(
-			visibleOrigin,
-			direction,
-			this._desiredX,
-		);
-		this._desiredX = next.desiredX;
-		return this._resolveMoveOffset(next.index, {
-			skipBoundaryCollapse: true,
-			preserveVisibleEquivalent: true,
-			visibleDirection: direction,
-		});
+		return this.selectionController.select(target, focusOrOptions);
 	}
 
 	// Method: _nodeSelectionRange
 	// Gets selection index boundaries for currently highlighted node.
 	_nodeSelectionRange() {
-		if (!this.selectedNode) {
-			return null;
-		}
-		return {
-			start: this._boundaryIndexForNode(this.selectedNode, "before"),
-			end: this._boundaryIndexForNode(this.selectedNode, "after"),
-		};
+		return this.selectionController._nodeSelectionRange();
 	}
 
 	// Method: _collapseRangeSelection
 	// Collapses range selection in designated `direction`.
 	_collapseRangeSelection(direction) {
-		const normalized = this.selection.normalizedRange();
-		const target = direction < 0 ? normalized.start : normalized.end;
-		this._desiredX = null;
-		this.moveTo(target);
+		return this.selectionController._collapseRangeSelection(direction);
 	}
 
 	// Method: _selectNode
 	// Selects entire container or atom element `node` at boundary index.
 	_selectNode(node, offset, direction, behavior = "enter") {
-		const previous = this._snapshot();
-		this.selection.clear();
-		this.selectionKind = "node";
-		this.selectedNode = node;
-		this.selectedOffset = offset;
-		this.selectedDirection = direction;
-		this.selectedBehavior = behavior;
-		this.offset = offset;
-		this.anchor = node;
-		this.delta = null;
-		this.direction = direction;
-		this.caret.setVirtual(null);
-		const current = {
-			...this._snapshot(),
-			requestedOffset: offset,
-			kind: "node-selection",
-			boundary: null,
-			char: null,
-			remap: {
-				from: offset,
-				to: offset,
-				reasons: ["container-selection"],
-			},
-			caretEditable: false,
-			caretVisible: false,
-			caretSource: null,
-		};
-		this._emitMove(previous, current);
+		return this.selectionController._selectNode(node, offset, direction, behavior);
 	}
 
 	// Method: selectNode
 	// Applies semantic node selection for container or atom `node`.
 	selectNode(node, options = {}) {
-		return this.select(node, options);
+		return this.selectionController.selectNode(node, options);
 	}
 
 	// Method: selectAtom
 	// Directly selects atomic `node` element at designated `side`.
 	selectAtom(node, side = "before") {
-		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isAtom(node)) {
-			return false;
-		}
-		return this.select(node, { kind: "atom", side, behavior: "skip" });
+		return this.selectionController.selectAtom(node, side);
 	}
 
 	// Method: selectContainer
 	// Directly selects structural container `node` at designated `side`.
 	selectContainer(node, side = "before") {
-		if (node?.nodeType !== Node.ELEMENT_NODE || !this.text.isContainer(node)) {
-			return false;
-		}
-		return this.select(node, { kind: "container", side, behavior: "enter" });
+		return this.selectionController.selectContainer(node, side);
 	}
 
 	// Method: _moveFromSelectedNode
 	// Resolves next caret position when exiting a node selection in `direction`.
 	_moveFromSelectedNode(direction) {
-		const originOffset = this.selectedOffset ?? this.offset;
-		const selectedNode = this.selectedNode;
-		const selectedDirection = this.selectedDirection;
-		const selectedBehavior = this.selectedBehavior;
-		if (!selectedNode) {
-			this._clearNodeSelection();
-			this.selectionKind = "caret";
-			this.moveTo(originOffset);
-			return;
-		}
-		if (direction === selectedDirection) {
-			if (selectedBehavior === "skip") {
-				const exitIndex = this._exitIndexForNode(
-					selectedNode,
-					direction,
-					originOffset,
-				);
-				this._clearNodeSelection();
-				this.selectionKind = "caret";
-				this.moveTo(exitIndex);
-				return;
-			}
-			const entry = this._entryIndexForNode(selectedNode, direction);
-			this._clearNodeSelection();
-			this.selectionKind = "caret";
-			if (entry !== null) {
-				this.moveTo(entry);
-				return;
-			}
-		}
-		this._clearNodeSelection();
-		this.selectionKind = "caret";
-		this.moveTo(originOffset);
+		return this.selectionController._moveFromSelectedNode(direction);
 	}
 
 	// Method: replaceSelectedNode
 	// Replaces selected element node with plain text `text`.
 	replaceSelectedNode(text) {
-		const node = this.selectedNode;
-		const offset = this.selectedOffset ?? this.offset;
-		if (!node?.parentNode) {
-			this._clearNodeSelection();
-			this.selectionKind = "caret";
-			this.moveTo(offset);
-			return;
-		}
-		const textNode = document.createTextNode(text);
-		node.replaceWith(textNode);
-		this.text.invalidatePositions();
-		this.text.ensurePositions();
-		const nextIndex = this.text.indexOfPoint({ node: textNode, offset: text.length });
-		this._desiredX = null;
-		this._clearNodeSelection();
-		this.selectionKind = "caret";
-		this.moveTo(nextIndex >= 0 ? nextIndex : offset);
+		return this.editing.replaceSelectedNode(text);
 	}
 
 	// Method: removeSelectedNode
 	// Deletes the currently selected node from DOM tree.
 	removeSelectedNode() {
-		const node = this.selectedNode;
-		const offset = this.selectedOffset ?? this.offset;
-		if (node?.parentNode) {
-			node.remove();
-			this.text.invalidatePositions();
-			this.text.ensurePositions();
-		}
-		this._desiredX = null;
-		this._clearNodeSelection();
-		this.selectionKind = "caret";
-		this.moveTo(offset);
-	}
-
-	// Method: _moveHorizontal
-	// Internal controller for horizontal cursor movement.
-	_moveHorizontal(direction, extend = false) {
-		if (extend) {
-			this._desiredX = null;
-			let anchorOffset = this.selection.isActive ? this.selection.anchorOffset : this.offset;
-			let focusOffset = this.selection.isActive ? this.selection.focusOffset : this.offset;
-			if (this.selectionKind === "node") {
-				const range = this._nodeSelectionRange();
-				if (!range) {
-					return;
-				}
-				anchorOffset = direction < 0 ? range.end : range.start;
-				focusOffset = direction < 0 ? range.start : range.end;
-			}
-			const target = this._advanceHorizontalOffset(focusOffset, direction);
-			const move = this._resolveMoveOffset(target);
-			if (!move) {
-				return;
-			}
-			this._setRangeSelection(anchorOffset, move.clamped, move);
-			return;
-		}
-		if (this.selectionKind === "range") {
-			this._collapseRangeSelection(direction);
-			return;
-		}
-		if (this.selectionKind === "node") {
-			this._moveFromSelectedNode(direction);
-			return;
-		}
-		this._desiredX = null;
-		const explicitSelection = this._structuralSelectionAt(this.offset, direction);
-		if (explicitSelection) {
-			this.select(explicitSelection.node, {
-				offset: explicitSelection.offset,
-				direction: explicitSelection.direction,
-				behavior: explicitSelection.behavior,
-			});
-			return;
-		}
-		const current = this._canonicalOffset(this.offset, direction);
-		const structuralSelection = this._structuralSelectionAt(current, direction);
-		if (structuralSelection) {
-			this.select(structuralSelection.node, {
-				offset: structuralSelection.offset,
-				direction: structuralSelection.direction,
-				behavior: structuralSelection.behavior,
-			});
-			return;
-		}
-		this.moveTo(this._advanceHorizontalOffset(current, direction));
-	}
-
-	// Method: _wordTarget
-	// Finds the next word start using the structural position index.
-	_wordTarget(offset, direction) {
-		let current = this.text.clampIndex(offset);
-		const crossed = (next) => {
-			const from = this.text.pointAt(Math.min(current, next));
-			const to = this.text.pointAt(Math.max(current, next));
-			if (!from || !to) return "";
-			const range = document.createRange();
-			range.setStart(from.node, from.offset);
-			range.setEnd(to.node, to.offset);
-			return range.toString();
-		};
-		const advance = () => this._advanceHorizontalOffset(current, direction);
-		const isWord = (value) => /[\p{L}\p{N}_]/u.test(value);
-		let next = advance();
-		const skip = (matches) => {
-			while (next !== current && matches(crossed(next))) {
-				current = next;
-				next = advance();
-			}
-		};
-		if (direction > 0) {
-			skip(isWord);
-			skip((value) => !isWord(value));
-		} else {
-			skip((value) => !isWord(value));
-			skip(isWord);
-		}
-		return current;
-	}
-
-	// Method: _moveWord
-	// Moves by words and preserves the selection anchor when extending.
-	_moveWord(direction, extend = false) {
-		this._desiredX = null;
-		if (extend) {
-			const anchor = this.selection.isActive ? this.selection.anchorOffset : this.offset;
-			const focus = this.selection.isActive ? this.selection.focusOffset : this.offset;
-			const move = this._resolveMoveOffset(this._wordTarget(focus, direction));
-			if (move) this._setRangeSelection(anchor, move.clamped, move);
-			return;
-		}
-		if (this.selectionKind === "range") {
-			this._collapseRangeSelection(direction);
-			return;
-		}
-		if (this.selectionKind === "node") {
-			this._moveFromSelectedNode(direction);
-			return;
-		}
-		this.moveTo(this._wordTarget(this.offset, direction));
-	}
-
-	// Method: _moveVertical
-	// Internal controller for vertical cursor movement.
-	_moveVertical(direction, extend = false) {
-		if (extend) {
-			let anchorOffset = this.selection.isActive ? this.selection.anchorOffset : this.offset;
-			let focusOffset = this.selection.isActive ? this.selection.focusOffset : this.offset;
-			if (this.selectionKind === "node") {
-				const range = this._nodeSelectionRange();
-				if (!range) {
-					return;
-				}
-				anchorOffset = direction < 0 ? range.end : range.start;
-				focusOffset = direction < 0 ? range.start : range.end;
-			}
-			const move = this._verticalTarget(focusOffset, direction);
-			if (!move) {
-				return;
-			}
-			this._setRangeSelection(anchorOffset, move.clamped, move);
-			return;
-		}
-		if (this.selectionKind === "range") {
-			this._collapseRangeSelection(direction);
-			return;
-		}
-		const move = this._verticalTarget(this.offset, direction);
-		if (!move) {
-			return;
-		}
-		this.moveTo(move.clamped, {
-			skipBoundaryCollapse: true,
-			preserveVisibleEquivalent: true,
-			visibleDirection: direction,
-		});
+		return this.editing.removeSelectedNode();
 	}
 
 	// Method: moveTo
@@ -1770,37 +840,37 @@ class Cursor {
 	// Method: left
 	// Moves the cursor to the left, optionally extending selection.
 	left(extend = false) {
-		this._moveHorizontal(-1, extend);
+		this.navigation.left(extend);
 	}
 
 	// Method: wordLeft
 	// Moves to the start of the current or previous word.
 	wordLeft(extend = false) {
-		this._moveWord(-1, extend);
+		this.navigation.wordLeft(extend);
 	}
 
 	// Method: right
 	// Moves the cursor to the right, optionally extending selection.
 	right(extend = false) {
-		this._moveHorizontal(1, extend);
+		this.navigation.right(extend);
 	}
 
 	// Method: wordRight
 	// Moves to the start of the next word.
 	wordRight(extend = false) {
-		this._moveWord(1, extend);
+		this.navigation.wordRight(extend);
 	}
 
 	// Method: up
 	// Moves the cursor up one line, optionally extending selection.
 	up(extend = false) {
-		this._moveVertical(-1, extend);
+		this.navigation.up(extend);
 	}
 
 	// Method: down
 	// Moves the cursor down one line, optionally extending selection.
 	down(extend = false) {
-		this._moveVertical(1, extend);
+		this.navigation.down(extend);
 	}
 }
 

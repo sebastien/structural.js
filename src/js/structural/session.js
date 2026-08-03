@@ -7,7 +7,7 @@
 // Per-actor editor sessions and focus/selection CSS class tracking.
 
 import { Cursor as EditorCursor } from "./cursor.js";
-import { EditorCommand } from "./schema.js";
+import { EditorCommand } from "./core/command.js";
 
 // Class: EditorSession
 // Encapsulates a distinct user or collaborative session within a structural Editor.
@@ -79,12 +79,12 @@ class EditorSession {
 	snapshotSelection() {
 		// ensure current window before snapshot
 		this.text.ensurePositions();
+		const selection = this.cursor.selection;
+		const anchor = selection?._anchorPoint;
 		return {
 			offset: this.cursor.offset ?? 0,
 			selectionKind: this.cursor.selectionKind,
-			anchorOffset: this.cursor.anchor
-				? this.text.indexOfPoint({ node: this.cursor.anchor, offset: 0 })
-				: -1,
+			anchorOffset: anchor ? this.text.indexOfPoint(anchor) : this.cursor.offset ?? -1,
 		};
 	}
 

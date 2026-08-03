@@ -66,6 +66,7 @@ export function matchInputRuleWhen(when, ctx, event, options = {}) {
 			continue;
 		}
 		if (expected instanceof RegExp) {
+			expected.lastIndex = 0;
 			if (!expected.test(String(actual ?? ""))) return false;
 			continue;
 		}
@@ -100,6 +101,7 @@ export function matchInputRuleKey(rule, event) {
 	let matchOk = true;
 	if (rule.match != null) {
 		const re = rule.match instanceof RegExp ? rule.match : new RegExp(rule.match);
+		re.lastIndex = 0;
 		matchOk = re.test(key);
 	}
 	// If neither key nor match specified, key always matches (when-only rule).

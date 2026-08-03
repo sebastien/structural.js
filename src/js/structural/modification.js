@@ -220,7 +220,8 @@ class Modification {
 	// Method: toggleBlock
 	// Toggles block tag style (e.g. `ul`, `ol`, `blockquote`, headings) on the current block.
 	toggleBlock(tag) {
-		const remembered = this.editor.richText?.currentEditableBlock?.(
+		const richText = this.editor.capability?.("richtext") ?? this.editor.richText;
+		const remembered = richText?.currentEditableBlock?.(
 			this.session ?? this.editor.localSession,
 		) ?? null;
 		const block = this.findBlock(this.cursor.anchor);

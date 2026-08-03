@@ -16,15 +16,14 @@ class EditorHistory {
 		this.undoStack = [];
 		this.redoStack = [];
 		this._restoring = false;
-		this._nested = false;
+		this._nestedDepth = 0;
 		this._lastKind = null;
 		this._lastAt = 0;
 	}
 
 	// Method: snapshot
 	// Captures document HTML and caret/range selection.
-	snapshot() {
-		const session = this.editor.localSession;
+	snapshot(session = this.editor.localSession) {
 		const cursor = session?.cursor;
 		const sel = cursor?.selection;
 		let selection;
@@ -43,13 +42,12 @@ class EditorHistory {
 
 	// Method: restore
 	// Replaces root contents and repositions the caret/selection.
-	restore(entry) {
+	restore(entry, session = this.editor.localSession) {
 		if (!entry || !this.editor?.root) return false;
 		this._restoring = true;
 		try {
 			this.editor.root.innerHTML = entry.html;
 			this.editor.text.refresh();
-			const session = this.editor.localSession;
 			const s = entry.selection;
 			if (s?.kind === "range" && typeof s.start === "number" && typeof s.end === "number") {
 				this.editor.selection.select(
@@ -71,8 +69,8 @@ class EditorHistory {
 	// Method: record
 	// Pushes a before-change snapshot. Same-kind input/delete within coalesceMs merge.
 	// Nested records (e.g. deleteSmart → cursor.backspace) are ignored.
-	record(kind = "edit") {
-		if (this._restoring || this._nested || !this.editor?.root?.isConnected) return this;
+	record(kind = "edit", session = this.editor.localSession) {
+		if (this._restoring || this._nestedDepth > 0 || !this.editor?.root?.isConnected) return this;
 		const now = performance.now();
 		const coalesce =
 			kind === this._lastKind &&
@@ -83,7 +81,7 @@ class EditorHistory {
 			this._lastAt = now;
 			return this;
 		}
-		this.undoStack.push(this.snapshot());
+		this.undoStack.push(this.snapshot(session));
 		while (this.undoStack.length > this.limit) this.undoStack.shift();
 		this.redoStack.length = 0;
 		this._lastKind = kind;
@@ -93,13 +91,13 @@ class EditorHistory {
 
 	// Method: run
 	// Runs `fn` while suppressing nested history records (one undo unit).
-	run(kind, fn) {
-		this.record(kind);
-		this._nested = true;
+	run(kind, fn, session = this.editor.localSession) {
+		this.record(kind, session);
+		this._nestedDepth += 1;
 		try {
 			return fn();
 		} finally {
-			this._nested = false;
+			this._nestedDepth = Math.max(0, this._nestedDepth - 1);
 		}
 	}
 
@@ -115,24 +113,24 @@ class EditorHistory {
 
 	// Method: undo
 	// Restores the previous snapshot.
-	undo() {
+	undo(session = this.editor.localSession) {
 		if (!this.undoStack.length) return false;
-		const current = this.snapshot();
+		const current = this.snapshot(session);
 		const prev = this.undoStack.pop();
 		this.redoStack.push(current);
 		this._lastKind = null;
-		return this.restore(prev);
+		return this.restore(prev, session);
 	}
 
 	// Method: redo
 	// Re-applies a previously undone snapshot.
-	redo() {
+	redo(session = this.editor.localSession) {
 		if (!this.redoStack.length) return false;
-		const current = this.snapshot();
+		const current = this.snapshot(session);
 		const next = this.redoStack.pop();
 		this.undoStack.push(current);
 		this._lastKind = null;
-		return this.restore(next);
+		return this.restore(next, session);
 	}
 
 	get canUndo() {

@@ -17,11 +17,12 @@ import {
 import { EditorHistory } from "./history.js";
 import { EditorTextInput } from "./input.js";
 import { editorKeymap, HISTORY_SKIP } from "./keymap.js";
+import { EditorPluginHost } from "./core/plugin-host.js";
 import { EditorRangeController } from "./range.js";
 import { matchInputRuleKey, matchInputRuleWhen } from "./rules.js";
+import { EditorNormalizer } from "./document/normalizer.js";
 import {
 	EditorCommand,
-	EditorNormalizer,
 	EditorSchema,
 	EditorTransaction,
 } from "./schema.js";
@@ -51,6 +52,7 @@ class Editor {
 		this.history = new EditorHistory(this, options.history);
 		this.sessions = new Map();
 		this.plugins = [];
+		this.pluginHost = new EditorPluginHost(this);
 		this._active = false;
 		this._currentBlock = null;
 		// Optional app/plugin hook: (session) => partial context merged into contextAt().
@@ -199,11 +201,15 @@ class Editor {
 	}
 
 	// Method: scopeNodes
-	// Ladder for selectStructuralScope. Delegates to scopeProvider when set.
+	// Ladder for selectStructuralScope. Consults registered scope providers first.
 	scopeNodes(session = null) {
 		const active = this.activeSession(session);
-		const provider = this.scopeProvider;
-		if (provider && typeof provider.scopeNodes === "function") {
+		const providers = [
+			...this.pluginHost.all("scope-provider"),
+			...(this.scopeProvider ? [this.scopeProvider] : []),
+		];
+		for (const provider of new Set(providers)) {
+			if (typeof provider?.scopeNodes !== "function") continue;
 			const nodes = provider.scopeNodes(active);
 			if (Array.isArray(nodes)) return nodes;
 		}
@@ -214,8 +220,12 @@ class Editor {
 	// Selects a scope ladder node. Default: text range. Provider may node-select.
 	applyScopeSelection(node, session = null, options = {}) {
 		const active = this.activeSession(session);
-		const provider = this.scopeProvider;
-		if (provider && typeof provider.applyScopeSelection === "function") {
+		const providers = [
+			...this.pluginHost.all("scope-provider"),
+			...(this.scopeProvider ? [this.scopeProvider] : []),
+		];
+		for (const provider of new Set(providers)) {
+			if (typeof provider?.applyScopeSelection !== "function") continue;
 			const result = provider.applyScopeSelection(node, active, options);
 			if (result !== undefined) return result;
 		}
@@ -229,8 +239,12 @@ class Editor {
 	// Exits the scope ladder to a caret (or provider-specific inner focus).
 	collapseScopeSelection(session = null) {
 		const active = this.activeSession(session);
-		const provider = this.scopeProvider;
-		if (provider && typeof provider.collapseScopeSelection === "function") {
+		const providers = [
+			...this.pluginHost.all("scope-provider"),
+			...(this.scopeProvider ? [this.scopeProvider] : []),
+		];
+		for (const provider of new Set(providers)) {
+			if (typeof provider?.collapseScopeSelection !== "function") continue;
 			const result = provider.collapseScopeSelection(active);
 			if (result !== undefined) return result;
 		}
@@ -497,6 +511,7 @@ class Editor {
 	// Tears down sessions, normalizers, input events, and adapters.
 	destroy() {
 		for (const plugin of this.plugins) plugin.detach?.(this);
+		this.pluginHost.clear();
 		for (const session of this.sessions.values()) session.destroy();
 		this.input.unbind();
 		this.text.detach();
@@ -642,14 +657,33 @@ class Editor {
 					: plugin(this)
 				: plugin;
 		instance?.attach?.(this);
-		if (instance) this.plugins.push(instance);
+		if (instance) {
+			this.plugins.push(instance);
+			this.pluginHost.registerPlugin(instance);
+		}
 		return instance ?? null;
+	}
+
+	// Method: capability
+	// Resolves the first plugin registered for a capability name.
+	capability(name) {
+		return this.pluginHost.get(name);
+	}
+
+	// Method: capabilities
+	// Returns every plugin registered for a capability name in installation order.
+	capabilities(name) {
+		return this.pluginHost.all(name);
 	}
 
 	// Method: plugin
 	// Resolves an installed plugin by constructor, name, or exact instance.
 	plugin(type) {
 		if (!type) return null;
+		if (typeof type === "string") {
+			const registered = this.capability(type);
+			if (registered) return registered;
+		}
 		for (const plugin of this.plugins) {
 			if (plugin === type) return plugin;
 			if (typeof type === "string") {
@@ -671,20 +705,20 @@ class Editor {
 
 	// Method: undo
 	// Restores the previous document snapshot.
-	undo() {
-		return this.history.undo();
+	undo(session = null) {
+		return this.history.undo(this.activeSession(session));
 	}
 
 	// Method: redo
 	// Re-applies a previously undone snapshot.
-	redo() {
-		return this.history.redo();
+	redo(session = null) {
+		return this.history.redo(this.activeSession(session));
 	}
 
 	// Method: noteEdit
 	// Records a before-change history snapshot (used by cursor text ops).
-	noteEdit(kind = "edit") {
-		this.history.record(kind);
+	noteEdit(kind = "edit", session = null) {
+		this.history.record(kind, this.activeSession(session));
 		return this;
 	}
 
@@ -715,7 +749,7 @@ class Editor {
 				command.type === "splitBlock" || command.type === "insertLineBreak"
 					? "input"
 					: command.type;
-			this.history.record(kind);
+			this.history.record(kind, session);
 		}
 		const selectionBefore = session.snapshotSelection();
 		const result = fn(command, { editor: this, session, event: options.event });

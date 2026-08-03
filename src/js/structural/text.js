@@ -7,6 +7,7 @@
 // Wraps a DOM tree and schema, supporting key text and structural operations.
 
 import { blockSelectorFromSchema } from "./dom.js";
+import { isLegacyAtom, isLegacyContainer, isLegacySkipped } from "./compat.js";
 
 // ----------------------------------------------------------------------------
 //
@@ -210,24 +211,20 @@ class TextAdapter {
 	// Method: isSkipped
 	// Checks if the given `node` is marked to be skipped during traversal.
 	isSkipped(node) {
-		return (
-			node?.classList?.contains("skipped") ||
-			node?.classList?.contains("skip") ||
-			node?.classList?.contains("S")
-		);
+		return isLegacySkipped(node);
 	}
 
 	// Method: isContainer
 	// Checks if the given `node` is marked as a structural container.
 	isContainer(node) {
-		return node?.classList?.contains("container") || node?.classList?.contains("C");
+		return isLegacyContainer(node);
 	}
 
 	/* Method: isAtom
 	 * Returns true if node is marked atom via class or schema. */
 	isAtom(node) {
 		if (!node) return false;
-		if (node?.classList?.contains("atom") || node?.classList?.contains("atomic")) return true;
+		if (isLegacyAtom(node)) return true;
 		const schema = this._schema || this.root?._editorSchema || null;
 		if (schema && typeof schema.isAtom === "function") {
 			return schema.isAtom(node);
@@ -388,8 +385,23 @@ class TextAdapter {
 		if (!point?.node) return false;
 		const block = this._blockForPoint(point);
 		if (!block || this._blockIndex.has(block)) return false;
-		// append only if after current last in order (to avoid renumbering live prefix)
-		// for simplicity, append; caller decides
+		const blocks = this._getTopLevelBlocks();
+		const blockIndex = blocks.indexOf(block);
+		const insertionIndex = this._blockOrder.findIndex((current) =>
+			blocks.indexOf(current) > blockIndex,
+		);
+		// Appending is safe only when this block follows every loaded block. Rebuild
+		// the full window otherwise, preserving document-order position indexes.
+		if (insertionIndex >= 0) {
+			const eagerBlockCount = this.eagerBlockCount;
+			this.eagerBlockCount = blocks.length;
+			try {
+				this.rebuildPositions();
+			} finally {
+				this.eagerBlockCount = eagerBlockCount;
+			}
+			return this._blockIndex.has(block);
+		}
 		const start = this._positions.length;
 		const news = this._collectPositionSlotsFor(block, start);
 		this._positions.push(...news);
@@ -662,16 +674,15 @@ class TextAdapter {
 	_scheduleRebuild() {
 		if (this._rebuildScheduled) return;
 		this._rebuildScheduled = true;
+		const rebuild = () => {
+			this._rebuildScheduled = false;
+			this._rebuildRafId = 0;
+			if (this._positionsDirty) this.rebuildPositions();
+		};
 		this._rebuildRafId =
 			typeof requestAnimationFrame === "function"
-				? requestAnimationFrame(() => {
-						this._rebuildScheduled = false;
-						this._rebuildRafId = 0;
-						if (this._positionsDirty) {
-							this.rebuildPositions();
-						}
-					})
-				: 0;
+				? requestAnimationFrame(rebuild)
+				: setTimeout(rebuild, 0);
 	}
 
 	// Method: _rebuildWindowStats
@@ -1226,12 +1237,18 @@ class TextAdapter {
 	// Method: positionFromPoint
 	// Finds the text caret position corresponding to client coordinates `x` and `y`.
 	positionFromPoint(x, y) {
-		const pos = document.caretPositionFromPoint(x, y);
-		const position = this.positionFromNode(pos.offsetNode);
+		const pos =
+			document.caretPositionFromPoint?.(x, y) ??
+			document.caretRangeFromPoint?.(x, y);
+		const node = pos?.offsetNode ?? pos?.startContainer;
+		const offset = pos?.offset ?? pos?.startOffset;
+		if (!node || offset == null) return null;
+		const position = this.positionFromNode(node);
+		if (!position) return null;
 		position.offset +=
-			pos.offsetNode?.nodeType === Node.TEXT_NODE
-				? this._graphemeIndexAtCodeUnit(pos.offsetNode.data, pos.offset)
-				: pos.offset;
+			node.nodeType === Node.TEXT_NODE
+				? this._graphemeIndexAtCodeUnit(node.data, offset)
+				: offset;
 		return position;
 	}
 
