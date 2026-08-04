@@ -26,11 +26,7 @@
     <script type="importmap">
     {
       "imports": {
-        "structural/editor": "../src/js/structural/editor.js",
-        "structural/cursor": "../src/js/structural/cursor.js",
-        "structural/text": "../src/js/structural/text.js",
-        "structural/selection": "../src/js/structural/selection.js",
-        "structural/range": "../src/js/structural/range.js"
+        "structural": "../src/js/structural/index.js"
       }
     }
     </script>
@@ -67,7 +63,7 @@
       <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
       <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
       <script type="module">
-        import { Editor } from "structural/editor";
+        import { Editor } from "structural";
         const editor = new Editor(document.getElementById("editor"));
         const cursor = editor.input.cursor;
         const nodeLabel = node => {

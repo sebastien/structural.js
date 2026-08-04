@@ -36,12 +36,7 @@
   </style>
   <script type="importmap">
   { "imports": {
-    "structural/editor": "/src/js/structural/editor.js",
-    "structural/cursor": "/src/js/structural/cursor.js",
-    "structural/text": "/src/js/structural/text.js",
-    "structural/selection": "/src/js/structural/selection.js",
-    "structural/range": "/src/js/structural/range.js",
-    "structural/modification": "/src/js/structural/modification.js"
+    "structural": "/src/js/structural/index.js"
   }}
   </script>
 </head>
@@ -57,7 +52,7 @@
     <div id="caret"></div>
   </div>
   <script type="module">
-    import { Editor } from "structural/editor";
+    import { Editor } from "structural";
 
     function measure(el) {
       const r = el.getBoundingClientRect();

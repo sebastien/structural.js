@@ -1,7 +1,5 @@
 import * as Y from "https://esm.sh/yjs@13.6.15";
-import { Editor } from "../src/js/structural/editor.js";
-import { Modification } from "../src/js/structural/modification.js";
-import { RichText, richTextClasses, richTextKeymap, richTextSchema } from "../src/js/structural/richtext.js";
+import { Editor, Modification, RichText, richTextClasses, richTextKeymap, richTextSchema } from "../src/js/structural/index.js";
 
 const STYLE_ID = "collaboration-editor-styles";
 

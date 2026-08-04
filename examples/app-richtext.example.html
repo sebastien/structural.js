@@ -120,13 +120,7 @@
     <script type="importmap">
     {
       "imports": {
-        "structural/editor": "../src/js/structural/editor.js",
-        "structural/richtext": "../src/js/structural/richtext.js",
-        "structural/cursor": "../src/js/structural/cursor.js",
-        "structural/text": "../src/js/structural/text.js",
-        "structural/selection": "../src/js/structural/selection.js",
-        "structural/range": "../src/js/structural/range.js",
-        "structural/modification": "../src/js/structural/modification.js"
+        "structural": "../src/js/structural/index.js"
       }
     }
     </script>
@@ -186,9 +180,9 @@
     <div id="caret" style="position:absolute;height:1lh;width:2px;visibility:hidden;pointer-events:none;"></div>
 
     <script type="module">
-      import { Editor } from "structural/editor";
-      import { RichText, richTextClasses, richTextKeymap, richTextSchema } from "structural/richtext";
-      import { Modification } from "structural/modification";
+      import { Editor } from "structural";
+      import { RichText, richTextClasses, richTextKeymap, richTextSchema } from "structural";
+      import { Modification } from "structural";
 
       const editor = new Editor(document.getElementById("editor"), {
         schema: richTextSchema(),

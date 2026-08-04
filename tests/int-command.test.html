@@ -5,12 +5,7 @@
     <script type="importmap">
     {
       "imports": {
-        "structural/editor": "/src/js/structural/editor.js",
-        "structural/richtext": "/src/js/structural/richtext.js",
-        "structural/cursor": "/src/js/structural/cursor.js",
-        "structural/text": "/src/js/structural/text.js",
-        "structural/selection": "/src/js/structural/selection.js",
-        "structural/range": "/src/js/structural/range.js"
+        "structural": "/src/js/structural/index.js"
       }
     }
     </script>
@@ -19,8 +14,8 @@
     <div id="editor">hello</div>
     <div id="basic-editor">abc</div>
     <script type="module">
-      import { Editor, EditorCommand, EditorTransaction } from "structural/editor";
-      import { richTextKeymap, richTextSchema } from "structural/richtext";
+      import { Editor, EditorCommand, EditorTransaction } from "structural";
+      import { richTextKeymap, richTextSchema } from "structural";
 
       const stringCommand = EditorCommand.from("toggleInline:strong", {
         actor: "agent",

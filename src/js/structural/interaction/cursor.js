@@ -1,3 +1,658 @@
+import { Caret, TextSelection } from "./selection.js";
+// Project: structural.js
+// Author: Sebastien Pierre
+// License: Revised BSD License
+
+// Session-bound public editing collaborator.
+class CursorEditing {
+	constructor(cursor) {
+		this.cursor = cursor;
+	}
+
+	// Method: insertText
+	// Inserts the specified `text` at the current cursor position or replaces selected content.
+	insertText(text) {
+		const cursor = this.cursor;
+		cursor._ensureSelectionFromNativeIfPresent();
+		if (cursor.selectionKind === "range") {
+			cursor.editor?.noteEdit?.("input", cursor.session);
+			const next = cursor.selection.replaceWithText(text);
+			if (next) {
+				cursor._desiredX = null;
+				cursor.moveTo(next.index, { skipBoundaryCollapse: true });
+			}
+			return;
+		}
+		if (cursor.selectionKind === "node") {
+			cursor.editor?.noteEdit?.("input", cursor.session);
+			cursor.replaceSelectedNode(text);
+			return;
+		}
+		cursor.text.ensureIndex(cursor.offset);
+		const position = cursor.text.positionSlotAt(cursor.offset);
+		if (!cursor.text.acceptsText(position)) {
+			return;
+		}
+		cursor.editor?.noteEdit?.("input", cursor.session);
+		const next = cursor.text.insertAtIndex(cursor.offset, text);
+		cursor._desiredX = null;
+		cursor.moveTo(next.index, { skipBoundaryCollapse: true });
+	}
+
+	// Method: backspace
+	// Deletes the character or node immediately preceding the cursor.
+	backspace() {
+		const cursor = this.cursor;
+		cursor._ensureSelectionFromNativeIfPresent();
+		if (cursor.selectionKind === "range") {
+			cursor.editor?.noteEdit?.("delete", cursor.session);
+			const next = cursor.selection.replaceWithText("");
+			if (next) {
+				cursor._desiredX = null;
+				cursor.moveTo(next.index);
+			}
+			return;
+		}
+		if (cursor.selectionKind === "node") {
+			cursor.editor?.noteEdit?.("delete", cursor.session);
+			cursor.removeSelectedNode();
+			return;
+		}
+		cursor.text.ensureIndex(cursor.offset);
+		cursor.editor?.noteEdit?.("delete", cursor.session);
+		const next = cursor.text.deleteBackwardAtIndex(cursor.offset);
+		cursor._desiredX = null;
+		cursor.moveTo(next.index, {
+			skipBoundaryCollapse: true,
+			skipFormattingWhitespace: true,
+		});
+	}
+
+	// Method: delete
+	// Deletes the character or node immediately following the cursor.
+	delete() {
+		const cursor = this.cursor;
+		cursor._ensureSelectionFromNativeIfPresent();
+		if (cursor.selectionKind === "range") {
+			cursor.editor?.noteEdit?.("delete", cursor.session);
+			const next = cursor.selection.replaceWithText("");
+			if (next) {
+				cursor._desiredX = null;
+				cursor.moveTo(next.index);
+			}
+			return;
+		}
+		if (cursor.selectionKind === "node") {
+			cursor.editor?.noteEdit?.("delete", cursor.session);
+			cursor.removeSelectedNode();
+			return;
+		}
+		cursor.text.ensureIndex(cursor.offset);
+		cursor.editor?.noteEdit?.("delete", cursor.session);
+		const next = cursor.text.deleteForwardAtIndex(cursor.offset);
+		cursor._desiredX = null;
+		cursor.moveTo(next.index, {
+			skipBoundaryCollapse: true,
+			skipFormattingWhitespace: true,
+		});
+	}
+
+	// Method: replaceSelectedNode
+	// Replaces selected element node with plain text `text`.
+	replaceSelectedNode(text) {
+		const cursor = this.cursor;
+		const node = cursor.selectedNode;
+		const offset = cursor.selectedOffset ?? cursor.offset;
+		if (!node?.parentNode) {
+			cursor._clearNodeSelection();
+			cursor.selectionKind = "caret";
+			cursor.moveTo(offset);
+			return;
+		}
+		const textNode = document.createTextNode(text);
+		node.replaceWith(textNode);
+		cursor.text.invalidatePositions();
+		cursor.text.ensurePositions();
+		const nextIndex = cursor.text.indexOfPoint({ node: textNode, offset: text.length });
+		cursor._desiredX = null;
+		cursor._clearNodeSelection();
+		cursor.selectionKind = "caret";
+		cursor.moveTo(nextIndex >= 0 ? nextIndex : offset);
+	}
+
+	// Method: removeSelectedNode
+	// Deletes the currently selected node from DOM tree.
+	removeSelectedNode() {
+		const cursor = this.cursor;
+		const node = cursor.selectedNode;
+		const offset = cursor.selectedOffset ?? cursor.offset;
+		if (node?.parentNode) {
+			node.remove();
+			cursor.text.invalidatePositions();
+			cursor.text.ensurePositions();
+		}
+		cursor._desiredX = null;
+		cursor._clearNodeSelection();
+		cursor.selectionKind = "caret";
+		cursor.moveTo(offset);
+	}
+}
+
+export { CursorEditing };
+
+// Project: structural.js
+// Author: Sebastien Pierre
+// License: Revised BSD License
+
+// Session-bound public navigation collaborator.
+class CursorNavigation {
+	constructor(cursor) {
+		this.cursor = cursor;
+	}
+
+	left(extend = false) {
+		this._moveHorizontal(-1, extend);
+	}
+
+	wordLeft(extend = false) {
+		this._moveWord(-1, extend);
+	}
+
+	right(extend = false) {
+		this._moveHorizontal(1, extend);
+	}
+
+	wordRight(extend = false) {
+		this._moveWord(1, extend);
+	}
+
+	up(extend = false) {
+		this._moveVertical(-1, extend);
+	}
+
+	down(extend = false) {
+		this._moveVertical(1, extend);
+	}
+
+	// Method: _advanceHorizontalOffset
+	// Moves caret position horizontally, skipping whitespace according to configuration.
+	_advanceHorizontalOffset(origin, direction) {
+		const cursor = this.cursor;
+		const current = cursor._canonicalOffset(origin, direction);
+		let next = cursor.text.moveIndex(current, direction, {
+			skipWhitespace: cursor.skipWhitespace,
+		});
+		next = cursor._remapFormattingWhitespace(next, direction).offset;
+		let canonical = cursor._canonicalOffset(next, direction);
+		const movesForward = value =>
+			direction > 0 ? value > current : value < current;
+		while (canonical === current) {
+			const advanced = cursor.text.moveIndex(next, direction, {
+				skipWhitespace: cursor.skipWhitespace,
+			});
+			if (advanced === next) {
+				break;
+			}
+			const remapped = cursor._remapFormattingWhitespace(advanced, direction).offset;
+			if (!movesForward(remapped)) {
+				break;
+			}
+			next = remapped;
+			canonical = cursor._canonicalOffset(next, direction);
+			if (!movesForward(canonical)) {
+				break;
+			}
+		}
+		return canonical;
+	}
+
+	// Method: _verticalTarget
+	// Solves target caret slot when traversing vertically.
+	_verticalTarget(origin, direction) {
+		const cursor = this.cursor;
+		cursor.text.ensureIndex(origin);
+		const visibleOrigin = cursor._visibleEquivalentOffset(origin, direction);
+		const next = cursor.text.indexFromLineMove(
+			visibleOrigin,
+			direction,
+			cursor._desiredX,
+		);
+		cursor._desiredX = next.desiredX;
+		return cursor._resolveMoveOffset(next.index, {
+			skipBoundaryCollapse: true,
+			preserveVisibleEquivalent: true,
+			visibleDirection: direction,
+		});
+	}
+
+	// Method: _moveHorizontal
+	// Internal controller for horizontal cursor movement.
+	_moveHorizontal(direction, extend = false) {
+		const cursor = this.cursor;
+		if (extend) {
+			cursor._desiredX = null;
+			let anchorOffset = cursor.selection.isActive ? cursor.selection.anchorOffset : cursor.offset;
+			let focusOffset = cursor.selection.isActive ? cursor.selection.focusOffset : cursor.offset;
+			if (cursor.selectionKind === "node") {
+				const range = cursor._nodeSelectionRange();
+				if (!range) {
+					return;
+				}
+				anchorOffset = direction < 0 ? range.end : range.start;
+				focusOffset = direction < 0 ? range.start : range.end;
+			}
+			const target = this._advanceHorizontalOffset(focusOffset, direction);
+			const move = cursor._resolveMoveOffset(target);
+			if (!move) {
+				return;
+			}
+			cursor._setRangeSelection(anchorOffset, move.clamped, move);
+			return;
+		}
+		if (cursor.selectionKind === "range") {
+			cursor._collapseRangeSelection(direction);
+			return;
+		}
+		if (cursor.selectionKind === "node") {
+			cursor._moveFromSelectedNode(direction);
+			return;
+		}
+		cursor._desiredX = null;
+		const explicitSelection = cursor._structuralSelectionAt(cursor.offset, direction);
+		if (explicitSelection) {
+			cursor.select(explicitSelection.node, {
+				offset: explicitSelection.offset,
+				direction: explicitSelection.direction,
+				behavior: explicitSelection.behavior,
+			});
+			return;
+		}
+		const current = cursor._canonicalOffset(cursor.offset, direction);
+		const structuralSelection = cursor._structuralSelectionAt(current, direction);
+		if (structuralSelection) {
+			cursor.select(structuralSelection.node, {
+				offset: structuralSelection.offset,
+				direction: structuralSelection.direction,
+				behavior: structuralSelection.behavior,
+			});
+			return;
+		}
+		cursor.moveTo(this._advanceHorizontalOffset(current, direction));
+	}
+
+	// Method: _wordTarget
+	// Finds the next word start using the structural position index.
+	_wordTarget(offset, direction) {
+		const cursor = this.cursor;
+		let current = cursor.text.clampIndex(offset);
+		const crossed = (next) => {
+			const from = cursor.text.pointAt(Math.min(current, next));
+			const to = cursor.text.pointAt(Math.max(current, next));
+			if (!from || !to) return "";
+			const range = document.createRange();
+			range.setStart(from.node, from.offset);
+			range.setEnd(to.node, to.offset);
+			return range.toString();
+		};
+		const advance = () => this._advanceHorizontalOffset(current, direction);
+		const isWord = (value) => /[\p{L}\p{N}_]/u.test(value);
+		let next = advance();
+		const skip = (matches) => {
+			while (next !== current && matches(crossed(next))) {
+				current = next;
+				next = advance();
+			}
+		};
+		if (direction > 0) {
+			skip(isWord);
+			skip((value) => !isWord(value));
+		} else {
+			skip((value) => !isWord(value));
+			skip(isWord);
+		}
+		return current;
+	}
+
+	// Method: _moveWord
+	// Moves by words and preserves the selection anchor when extending.
+	_moveWord(direction, extend = false) {
+		const cursor = this.cursor;
+		cursor._desiredX = null;
+		if (extend) {
+			const anchor = cursor.selection.isActive ? cursor.selection.anchorOffset : cursor.offset;
+			const focus = cursor.selection.isActive ? cursor.selection.focusOffset : cursor.offset;
+			const move = cursor._resolveMoveOffset(this._wordTarget(focus, direction));
+			if (move) cursor._setRangeSelection(anchor, move.clamped, move);
+			return;
+		}
+		if (cursor.selectionKind === "range") {
+			cursor._collapseRangeSelection(direction);
+			return;
+		}
+		if (cursor.selectionKind === "node") {
+			cursor._moveFromSelectedNode(direction);
+			return;
+		}
+		cursor.moveTo(this._wordTarget(cursor.offset, direction));
+	}
+
+	// Method: _moveVertical
+	// Internal controller for vertical cursor movement.
+	_moveVertical(direction, extend = false) {
+		const cursor = this.cursor;
+		if (extend) {
+			let anchorOffset = cursor.selection.isActive ? cursor.selection.anchorOffset : cursor.offset;
+			let focusOffset = cursor.selection.isActive ? cursor.selection.focusOffset : cursor.offset;
+			if (cursor.selectionKind === "node") {
+				const range = cursor._nodeSelectionRange();
+				if (!range) {
+					return;
+				}
+				anchorOffset = direction < 0 ? range.end : range.start;
+				focusOffset = direction < 0 ? range.start : range.end;
+			}
+			const move = this._verticalTarget(focusOffset, direction);
+			if (!move) {
+				return;
+			}
+			cursor._setRangeSelection(anchorOffset, move.clamped, move);
+			return;
+		}
+		if (cursor.selectionKind === "range") {
+			cursor._collapseRangeSelection(direction);
+			return;
+		}
+		const move = this._verticalTarget(cursor.offset, direction);
+		if (!move) {
+			return;
+		}
+		cursor.moveTo(move.clamped, {
+			skipBoundaryCollapse: true,
+			preserveVisibleEquivalent: true,
+			visibleDirection: direction,
+		});
+	}
+}
+
+export { CursorNavigation };
+
+// Project: structural.js
+// Author: Sebastien Pierre
+// License: Revised BSD License
+
+// Session-bound public selection collaborator.
+class CursorSelection {
+	constructor(cursor) {
+		this.cursor = cursor;
+	}
+
+	// Method: _setRangeSelection
+	// Applies a text range selection and renders visual updates.
+	_setRangeSelection(anchorOffset, focusOffset, move, caretEditable = true) {
+		const cursor = this.cursor;
+		const previous = cursor._snapshot();
+		cursor._clearNodeSelection();
+		cursor.selection.set(anchorOffset, focusOffset);
+		const normalized = cursor.selection.normalizedRange();
+		cursor.offset = move.clamped;
+		cursor.anchor = move.position.focusNode;
+		cursor.delta = move.position.point.offset;
+		cursor.direction = move.direction;
+		if (normalized.collapsed) {
+			cursor.selectionKind = "caret";
+			cursor.selection.clear();
+			const caret = cursor.caret.setVirtual(move.position, {
+				editable: caretEditable,
+			});
+			cursor._syncStructuralToNative();
+			const current = {
+				...cursor._snapshot(),
+				requestedOffset: move.requested,
+				kind: move.position.kind,
+				boundary: move.position.boundary,
+				char: move.position.char,
+				remap: {
+					from: move.requested,
+					to: move.clamped,
+					reasons: move.reasons,
+				},
+				caretEditable: caret?.editable ?? false,
+				caretVisible: caret?.visible ?? false,
+				caretSource: caret?.source ?? null,
+			};
+			cursor._emitMove(previous, current);
+			return;
+		}
+		cursor.selectionKind = "range";
+		cursor.caret.setVirtual(null);
+		const render = cursor.selection.apply();
+		cursor._syncStructuralToNative();
+		const current = {
+			...cursor._snapshot(),
+			requestedOffset: move.requested,
+			kind: move.position.kind,
+			boundary: move.position.boundary,
+			char: move.position.char,
+			remap: {
+				from: move.requested,
+				to: move.clamped,
+				reasons: move.reasons,
+			},
+			caretEditable: false,
+			caretVisible: false,
+			caretSource: null,
+			selectionVisible: render.visible,
+		};
+		cursor._emitMove(previous, current);
+	}
+
+	// Method: select
+	// Applies semantic text or node selection depending on argument shape.
+	select(target, focusOrOptions) {
+		const cursor = this.cursor;
+		if (typeof target === "number") {
+			const anchorOffset = target;
+			const focusOffset = focusOrOptions;
+			if (typeof focusOffset !== "number") {
+				return false;
+			}
+
+			const previous = cursor._snapshot();
+			cursor._clearNodeSelection();
+			cursor.selection.set(anchorOffset, focusOffset);
+			const normalized = cursor.selection.normalizedRange();
+			if (normalized.collapsed) {
+				cursor.selection.clear();
+				cursor.moveTo(focusOffset);
+				return true;
+			}
+
+			cursor.selectionKind = "range";
+			cursor.offset = cursor.text.clampIndex(focusOffset);
+			cursor.anchor = cursor.text.focusNodeAt(cursor.offset) || cursor.anchor;
+			const point = cursor.text.pointAt(cursor.offset);
+			cursor.delta = point?.offset ?? cursor.delta;
+			cursor.direction =
+				previous.offset === undefined
+					? 0
+					: cursor.offset > previous.offset
+						? 1
+						: cursor.offset < previous.offset
+							? -1
+							: 0;
+			cursor.caret.setVirtual(null);
+			const render = cursor.selection.apply();
+			cursor._syncStructuralToNative();
+			cursor._emitMove(previous, {
+				...cursor._snapshot(),
+				requestedOffset: focusOffset,
+				kind: "range-selection",
+				boundary: null,
+				char: null,
+				remap: {
+					from: focusOffset,
+					to: cursor.offset,
+					reasons: [],
+				},
+				caretEditable: false,
+				caretVisible: false,
+				caretSource: null,
+				selectionVisible: render.visible,
+			});
+			return true;
+		}
+
+		if (target?.nodeType === Node.ELEMENT_NODE) {
+			const node = target;
+			const options = focusOrOptions ?? {};
+			const kind =
+				options.kind ??
+				(cursor.text.isAtom(node)
+					? "atom"
+					: cursor.text.isContainer(node)
+						? "container"
+						: null);
+			if (!kind) {
+				return false;
+			}
+
+			const side = options.side ?? "before";
+			const direction = options.direction ?? (side === "after" ? -1 : 1);
+			const offset = options.offset ?? cursor._boundaryIndexForNode(node, side);
+			const behavior = options.behavior ?? (kind === "atom" ? "skip" : "enter");
+			cursor._selectNode(node, offset, direction, behavior);
+			return true;
+		}
+
+		return false;
+	}
+
+	// Method: _nodeSelectionRange
+	// Gets selection index boundaries for currently highlighted node.
+	_nodeSelectionRange() {
+		const cursor = this.cursor;
+		if (!cursor.selectedNode) {
+			return null;
+		}
+		return {
+			start: cursor._boundaryIndexForNode(cursor.selectedNode, "before"),
+			end: cursor._boundaryIndexForNode(cursor.selectedNode, "after"),
+		};
+	}
+
+	// Method: _collapseRangeSelection
+	// Collapses range selection in designated `direction`.
+	_collapseRangeSelection(direction) {
+		const cursor = this.cursor;
+		const normalized = cursor.selection.normalizedRange();
+		const target = direction < 0 ? normalized.start : normalized.end;
+		cursor._desiredX = null;
+		cursor.moveTo(target);
+	}
+
+	// Method: _selectNode
+	// Selects entire container or atom element `node` at boundary index.
+	_selectNode(node, offset, direction, behavior = "enter") {
+		const cursor = this.cursor;
+		const previous = cursor._snapshot();
+		cursor.selection.clear();
+		cursor.selectionKind = "node";
+		cursor.selectedNode = node;
+		cursor.selectedOffset = offset;
+		cursor.selectedDirection = direction;
+		cursor.selectedBehavior = behavior;
+		cursor.offset = offset;
+		cursor.anchor = node;
+		cursor.delta = null;
+		cursor.direction = direction;
+		cursor.caret.setVirtual(null);
+		const current = {
+			...cursor._snapshot(),
+			requestedOffset: offset,
+			kind: "node-selection",
+			boundary: null,
+			char: null,
+			remap: {
+				from: offset,
+				to: offset,
+				reasons: ["container-selection"],
+			},
+			caretEditable: false,
+			caretVisible: false,
+			caretSource: null,
+		};
+		cursor._emitMove(previous, current);
+	}
+
+	// Method: selectNode
+	// Applies semantic node selection for container or atom `node`.
+	selectNode(node, options = {}) {
+		const cursor = this.cursor;
+		return cursor.select(node, options);
+	}
+
+	// Method: selectAtom
+	// Directly selects atomic `node` element at designated `side`.
+	selectAtom(node, side = "before") {
+		const cursor = this.cursor;
+		if (node?.nodeType !== Node.ELEMENT_NODE || !cursor.text.isAtom(node)) {
+			return false;
+		}
+		return cursor.select(node, { kind: "atom", side, behavior: "skip" });
+	}
+
+	// Method: selectContainer
+	// Directly selects structural container `node` at designated `side`.
+	selectContainer(node, side = "before") {
+		const cursor = this.cursor;
+		if (node?.nodeType !== Node.ELEMENT_NODE || !cursor.text.isContainer(node)) {
+			return false;
+		}
+		return cursor.select(node, { kind: "container", side, behavior: "enter" });
+	}
+
+	// Method: _moveFromSelectedNode
+	// Resolves next caret position when exiting a node selection in `direction`.
+	_moveFromSelectedNode(direction) {
+		const cursor = this.cursor;
+		const originOffset = cursor.selectedOffset ?? cursor.offset;
+		const selectedNode = cursor.selectedNode;
+		const selectedDirection = cursor.selectedDirection;
+		const selectedBehavior = cursor.selectedBehavior;
+		if (!selectedNode) {
+			cursor._clearNodeSelection();
+			cursor.selectionKind = "caret";
+			cursor.moveTo(originOffset);
+			return;
+		}
+		if (direction === selectedDirection) {
+			if (selectedBehavior === "skip") {
+				const exitIndex = cursor._exitIndexForNode(
+					selectedNode,
+					direction,
+					originOffset,
+				);
+				cursor._clearNodeSelection();
+				cursor.selectionKind = "caret";
+				cursor.moveTo(exitIndex);
+				return;
+			}
+			const entry = cursor._entryIndexForNode(selectedNode, direction);
+			cursor._clearNodeSelection();
+			cursor.selectionKind = "caret";
+			if (entry !== null) {
+				cursor.moveTo(entry);
+				return;
+			}
+		}
+		cursor._clearNodeSelection();
+		cursor.selectionKind = "caret";
+		cursor.moveTo(originOffset);
+	}
+}
+
+export { CursorSelection };
+
 // Project: structural.js
 // Author:  Sébastien Pierre
 // License: Revised BSD License
@@ -6,11 +661,6 @@
 // Module: cursor
 // Implements the logical navigation cursor.
 
-import { TextSelection } from "./selection.js";
-import Caret from "./rendering/caret.js";
-import { CursorEditing } from "./cursor/editing.js";
-import { CursorNavigation } from "./cursor/navigation.js";
-import { CursorSelection } from "./cursor/selection.js";
 
 // ----------------------------------------------------------------------------
 //

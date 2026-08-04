@@ -2,17 +2,10 @@
 // Author: Sébastien Pierre
 // License: Revised BSD License
 
-// Public entrypoint for the bundled distribution.
+// Public compatibility entrypoint. Implementation modules are intentionally private.
 
-export { TextAdapter } from "./text.js";
-export { EditorRangeController } from "./range.js";
-export { Caret, Cursor } from "./cursor.js";
-export { EditorSelectionController, SelectionOverlay, TextSelection } from "./selection.js";
-export { Modification } from "./modification.js";
-export { EditorCommand } from "./core/command.js";
-export { EditorTransaction } from "./core/transaction.js";
-export { EditorPluginHost } from "./core/plugin-host.js";
 export {
+	TextAdapter,
 	asElement,
 	blockSelectorFromSchema,
 	firstTextNode,
@@ -20,14 +13,6 @@ export {
 	wordBoundsInData,
 	wordRangeAtIndex,
 	DEFAULT_BLOCK_SELECTOR,
-} from "./dom.js";
-export {
-	blockWhenDomain,
-	matchInputRuleKey,
-	matchInputRuleWhen,
-} from "./rules.js";
-export { HISTORY_SKIP } from "./keymap.js";
-export {
 	isLegacyAtom,
 	isLegacyContainer,
 	isLegacySkipped,
@@ -35,8 +20,11 @@ export {
 	LEGACY_CONTAINER_SELECTOR,
 	LEGACY_SKIPPED_SELECTOR,
 	LEGACY_STRUCTURAL_SELECTOR,
-} from "./compat.js";
-// Schema/history/session/keymap symbols also re-exported from editor for deep-import compat.
+} from "./foundation/document.js";
+export { Caret, Cursor } from "./interaction/cursor.js";
+export { EditorSelectionController, SelectionOverlay, TextSelection } from "./interaction/selection.js";
+export { Modification } from "./features/richtext.js";
+export { EditorPluginHost, HISTORY_SKIP, blockWhenDomain, matchInputRuleKey, matchInputRuleWhen } from "./runtime/editor.js";
 export {
 	Editor,
 	EditorClassController,
@@ -45,11 +33,12 @@ export {
 	EditorHistory,
 	editorKeymap,
 	EditorNormalizer,
+	EditorRangeController,
 	EditorSchema,
 	EditorSession,
 	EditorTextInput,
 	EditorTransaction,
-} from "./editor.js";
+} from "./runtime/editor.js";
 export {
 	RichText,
 	richTextClasses,
@@ -57,9 +46,9 @@ export {
 	richTextNormalizer,
 	richTextRules,
 	richTextSchema,
-} from "./richtext.js";
+} from "./features/richtext.js";
 
-export { default as richtext } from "./richtext.js";
+export { default as richtext } from "./features/richtext.js";
 
 export {
 	BlockMenus,
@@ -70,6 +59,6 @@ export {
 	blockEl,
 	blockKeymap,
 	blockSchema,
-} from "./blocks.js";
+} from "./features/blocks.js";
 
-export { default as blocks } from "./blocks.js";
+export { default as blocks } from "./features/blocks.js";

@@ -5,13 +5,7 @@
   <title>Blockquote Toggle Test</title>
   <script type="importmap">
   { "imports": {
-    "structural/editor": "/src/js/structural/editor.js",
-    "structural/cursor": "/src/js/structural/cursor.js",
-    "structural/text": "/src/js/structural/text.js",
-    "structural/selection": "/src/js/structural/selection.js",
-    "structural/range": "/src/js/structural/range.js",
-    "structural/modification": "/src/js/structural/modification.js",
-    "structural/richtext": "/src/js/structural/richtext.js"
+    "structural": "/src/js/structural/index.js"
   }}
   </script>
 </head>
@@ -21,9 +15,9 @@
   </div>
   <div id="editor"><h1>Collaborative document</h1><p>Body</p></div>
   <script type="module">
-    import { Editor } from "structural/editor";
-    import { Modification } from "structural/modification";
-    import { richTextSchema } from "structural/richtext";
+    import { Editor } from "structural";
+    import { Modification } from "structural";
+    import { richTextSchema } from "structural";
 
     const editor = new Editor(document.getElementById("editor"), {
       schema: richTextSchema(),

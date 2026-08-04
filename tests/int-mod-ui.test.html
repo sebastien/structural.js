@@ -5,12 +5,7 @@
   <title>UI Modification Test</title>
   <script type="importmap">
   { "imports": {
-    "structural/editor": "/src/js/structural/editor.js",
-    "structural/cursor": "/src/js/structural/cursor.js",
-    "structural/text": "/src/js/structural/text.js",
-    "structural/selection": "/src/js/structural/selection.js",
-    "structural/range": "/src/js/structural/range.js",
-    "structural/modification": "/src/js/structural/modification.js"
+    "structural": "/src/js/structural/index.js"
   }}
   </script>
 </head>
@@ -22,8 +17,8 @@
   <div id="selection" style="position:absolute;visibility:hidden;pointer-events:none;"></div>
   <div id="caret" style="position:absolute;height:1lh;width:1px;background:red;visibility:hidden;pointer-events:none;"></div>
   <script type="module">
-    import { Editor } from "structural/editor";
-    import { Modification } from "structural/modification";
+    import { Editor } from "structural";
+    import { Modification } from "structural";
 
     const editor = new Editor(document.getElementById("editor"));
     const mod = new Modification(editor);

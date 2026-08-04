@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { TextAdapter } from "../src/js/structural/text.js";
+import { TextAdapter } from "../src/js/structural/index.js";
 
 if (!globalThis.Node) {
 	globalThis.Node = { TEXT_NODE: 3 };

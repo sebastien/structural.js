@@ -22,15 +22,14 @@ Key features are:
 - **Structural Blocks**: Declarative slot/block schema, contextual input rules, and unit transforms for expression-like editors.
 - **Framework Agnostic**: Zero runtime dependencies; works with plain DOM or any framework that can host a content tree.
 
-The public entrypoint for bundlers is [`src/js/structural/index.js`](src/js/structural/index.js). In the browser, the examples import the source modules directly through an import map.
+The public entrypoint for bundlers is [`src/js/structural/index.js`](src/js/structural/index.js). In the browser, examples map the `structural` specifier to that entrypoint.
 
 You can learn more about each component:
 
-- **Editor**: Main orchestrator, commands, transactions, schema helpers ― [source](src/js/structural/editor.js)
-- **TextAdapter**: DOM-backed coordinate mapping and positions index ― [source](src/js/structural/text.js)
-- **Cursor & Caret**: Navigation, selection, and mutation tracking ― [source](src/js/structural/cursor.js)
-- **TextSelection**: Range boundary normalization and overlays ― [source](src/js/structural/selection.js)
-- **Modification**: Rich text and block structure mutations ― [source](src/js/structural/modification.js)
+- **Runtime**: Main editor orchestration, commands, transactions, sessions, and rules ― [source](src/js/structural/runtime/editor.js)
+- **Foundation**: DOM-backed text coordinates, schema, normalization, and history ― [source](src/js/structural/foundation/)
+- **Interaction**: Cursor, selection, caret rendering, and input handling ― [source](src/js/structural/interaction/)
+- **Features**: Rich-text and structural block editing ― [source](src/js/structural/features/)
 
 ## In a nutshell
 
@@ -51,7 +50,7 @@ You can learn more about each component:
   <script type="importmap">
   {
     "imports": {
-      "structural/editor": "./src/js/structural/editor.js"
+      "structural": "./src/js/structural/index.js"
     }
   }
   </script>
@@ -68,7 +67,7 @@ You can learn more about each component:
 </div>
 
 <script type="module">
-import { Editor } from "structural/editor";
+import { Editor } from "structural";
 
 const editor = new Editor(document.getElementById("editor"), {
   // Use Structural's rendered overlays instead of the browser's native caret/selection.
@@ -134,14 +133,12 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 
 ### Modules
 
-- [`src/js/structural/index.js`](src/js/structural/index.js): Public re-export surface.
-- [`src/js/structural/editor.js`](src/js/structural/editor.js): `Editor`, `EditorSession`, `Command`, `Transaction`, `Normalizer`, `ClassTracker`, `Schema`, `Adapter`, and rich text helpers.
-- [`src/js/structural/range.js`](src/js/structural/range.js): `EditorRangeController`.
-- [`src/js/structural/text.js`](src/js/structural/text.js): `TextAdapter`.
-- [`src/js/structural/cursor.js`](src/js/structural/cursor.js): `Caret` and `Cursor`.
-- [`src/js/structural/selection.js`](src/js/structural/selection.js): `EditorSelectionController`, `SelectionOverlay`, and `TextSelection`.
-- [`src/js/structural/modification.js`](src/js/structural/modification.js): `Modification`.
-- [`src/js/structural/blocks.js`](src/js/structural/blocks.js): `BlockSchema`, `Blocks`, `BlockMenus`, block keymap/input helpers.
+- [`src/js/structural/index.js`](src/js/structural/index.js): Sole public re-export surface.
+- [`src/js/structural/foundation/document.js`](src/js/structural/foundation/document.js): `TextAdapter` and DOM semantics.
+- [`src/js/structural/foundation/schema.js`](src/js/structural/foundation/schema.js): Schema, normalization, commands, and transactions.
+- [`src/js/structural/runtime/editor.js`](src/js/structural/runtime/editor.js): Editor orchestration, sessions, ranges, plugins, rules, and keymaps.
+- [`src/js/structural/interaction/`](src/js/structural/interaction/): Cursor, selection/caret rendering, and input.
+- [`src/js/structural/features/`](src/js/structural/features/): Rich-text and block-editing features.
 
 ### Notable examples
 

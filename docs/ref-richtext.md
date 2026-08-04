@@ -1,6 +1,6 @@
 # Rich Text Reference
 
-`structural/richtext` provides a rich-text schema, keymap, class configuration,
+`structural` provides a rich-text schema, keymap, class configuration,
 normalizer, and `RichText` plugin. It edits the document DOM directly and does
 not create an AST or serialization format.
 

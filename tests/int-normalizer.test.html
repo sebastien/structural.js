@@ -5,12 +5,7 @@
     <script type="importmap">
     {
       "imports": {
-        "structural/editor": "/src/js/structural/editor.js",
-        "structural/richtext": "/src/js/structural/richtext.js",
-        "structural/cursor": "/src/js/structural/cursor.js",
-        "structural/text": "/src/js/structural/text.js",
-        "structural/selection": "/src/js/structural/selection.js",
-        "structural/range": "/src/js/structural/range.js"
+        "structural": "/src/js/structural/index.js"
       }
     }
     </script>
@@ -24,8 +19,8 @@
       <blockquote></blockquote>
     </div>
     <script type="module">
-      import { EditorNormalizer } from "structural/editor";
-      import { richTextSchema } from "structural/richtext";
+      import { EditorNormalizer } from "structural";
+      import { richTextSchema } from "structural";
 
       const schema = richTextSchema();
       const empty = document.getElementById("empty");

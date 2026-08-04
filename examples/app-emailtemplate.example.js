@@ -1,6 +1,4 @@
-import { Editor } from "structural/editor";
-import { RichText, richTextClasses, richTextKeymap, richTextSchema } from "structural/richtext";
-import { Modification } from "structural/modification";
+import { Editor, Modification, RichText, richTextClasses, richTextKeymap, richTextSchema } from "structural";
 
 const EDITABLE_SELECTOR = ".EDITABLE";
 const TEXT_SELECTOR = ".TEXT, .text";

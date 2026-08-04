@@ -1,3 +1,4 @@
+
 // Project: structural.js
 // Author:  Sébastien Pierre
 // License: Revised BSD License

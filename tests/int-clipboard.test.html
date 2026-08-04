@@ -5,13 +5,7 @@
     <script type="importmap">
     {
       "imports": {
-        "structural/editor": "/src/js/structural/editor.js",
-        "structural/richtext": "/src/js/structural/richtext.js",
-        "structural/cursor": "/src/js/structural/cursor.js",
-        "structural/text": "/src/js/structural/text.js",
-        "structural/selection": "/src/js/structural/selection.js",
-        "structural/range": "/src/js/structural/range.js",
-        "structural/modification": "/src/js/structural/modification.js"
+        "structural": "/src/js/structural/index.js"
       }
     }
     </script>
@@ -20,8 +14,8 @@
     <div id="editor" tabindex="0"><p>hello world</p></div>
     <textarea id="foreign">chat</textarea>
     <script type="module">
-      import { Editor } from "structural/editor";
-      import { richTextKeymap, richTextSchema, RichText } from "structural/richtext";
+      import { Editor } from "structural";
+      import { richTextKeymap, richTextSchema, RichText } from "structural";
 
       const root = document.getElementById("editor");
       const foreign = document.getElementById("foreign");

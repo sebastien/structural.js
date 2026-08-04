@@ -346,12 +346,7 @@
     <script type="importmap">
     {
       "imports": {
-        "structural/editor": "../src/js/structural/editor.js",
-        "structural/cursor": "../src/js/structural/cursor.js",
-        "structural/text": "../src/js/structural/text.js",
-        "structural/selection": "../src/js/structural/selection.js",
-        "structural/range": "../src/js/structural/range.js",
-        "structural/blocks": "../src/js/structural/blocks.js"
+        "structural": "../src/js/structural/index.js"
       }
     }
     </script>
@@ -397,7 +392,7 @@
     <div id="op-menu" class="menu" role="listbox" aria-label="Operator"></div>
 
     <script type="module">
-      import { Editor } from "structural/editor";
+      import { Editor } from "structural";
       import {
         Blocks,
         BlockMenus,
@@ -405,7 +400,7 @@
         blockKeymap,
         blockEl as el,
         defaultBlockInput,
-      } from "structural/blocks";
+      } from "structural";
 
       // ---------------------------------------------------------------------------
       // Domain
