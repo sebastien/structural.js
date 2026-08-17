@@ -1047,6 +1047,7 @@ class Blocks {
 		this.editor = null;
 		this._onCursorMove = this.onCursorMove.bind(this);
 		this._selectedClass = options.selectedClass ?? this.schema.token("selected");
+		this._inputRules = [];
 	}
 
 	// Method: attach
@@ -1070,6 +1071,7 @@ class Blocks {
 		});
 
 		const compiled = this.compileInputRules(this.input);
+		this._inputRules = compiled;
 		if (compiled.length) editor.addInputRules(compiled);
 
 		editor.root.addEventListener("CursorMove", this._onCursorMove);
@@ -1079,6 +1081,8 @@ class Blocks {
 	// Method: detach
 	detach() {
 		if (!this.editor) return this;
+		this.editor.removeInputRules(this._inputRules);
+		this._inputRules = [];
 		this.editor.root.removeEventListener("CursorMove", this._onCursorMove);
 		if (this.editor.scopeProvider === this) this.editor.scopeProvider = null;
 		if (this.editor.blocks === this) delete this.editor.blocks;

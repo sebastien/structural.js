@@ -220,8 +220,7 @@ class CursorNavigation {
 		cursor._desiredX = next.desiredX;
 		return cursor._resolveMoveOffset(next.index, {
 			skipBoundaryCollapse: true,
-			preserveVisibleEquivalent: true,
-			visibleDirection: direction,
+			skipFormattingWhitespace: true,
 		});
 	}
 
@@ -451,6 +450,7 @@ class CursorSelection {
 	select(target, focusOrOptions) {
 		const cursor = this.cursor;
 		if (typeof target === "number") {
+			cursor._input._editorActive = true;
 			const anchorOffset = target;
 			const focusOffset = focusOrOptions;
 			if (typeof focusOffset !== "number") {
@@ -765,6 +765,15 @@ class Cursor {
 	// Inserts the specified `text` at the current cursor position or replaces selected content.
 	insertText(text) {
 		return this.editing.insertText(text);
+	}
+
+	// Method: moveAfterNode
+	// Places the caret at the structural boundary immediately after a node.
+	moveAfterNode(node, options = {}) {
+		if (!node) return false;
+		const index = this._boundaryIndexForNode(node, "after", this.offset ?? 0);
+		this.moveTo(index, { skipBoundaryCollapse: true, ...options });
+		return true;
 	}
 
 	// Method: backspace

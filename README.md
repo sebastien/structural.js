@@ -130,6 +130,7 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - `TextSelection(cursor, options?)`: Selection coordinator mapping ranges to structural boundaries.
 - `SelectionOverlay(overlayNode)`: Helper drawing virtual highlighting rectangles.
 - `Modification(editor, options?)`: High-level utility for rich-text styling and block transforms.
+- `Shorthands(options?)`: Configurable `#tag`, `@mention`, `+task`, date, and topic recognition with popup events.
 
 ### Modules
 
@@ -148,4 +149,5 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - [`examples/app-annotation.example.html`](examples/app-annotation.example.html): DOM-backed feedback and annotations alongside primary text.
 - [`examples/app-template.example.html`](examples/app-template.example.html): Structured email template editing with conditional blocks and placeholders.
 - [`examples/app-emailtemplate.example.html`](examples/app-emailtemplate.example.html): Full email template editor example with toolbar, selection, and caret rendering.
+- [`examples/app-shorthands.example.html`](examples/app-shorthands.example.html): Configurable tags, mentions, tasks, topics, popup selection, and automatic dates.
 - [`examples/app-expr.example.html`](examples/app-expr.example.html): Nested arithmetic expression editor with slot chooser, variable autocomplete, and live evaluation.

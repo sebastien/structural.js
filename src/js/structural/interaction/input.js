@@ -21,7 +21,10 @@ class EditorKeyboardInput {
 		const root = input.editor?.root;
 		if (!root?.isConnected) return;
 		const documentEvent = event.target === document && !input._isForeignEditable(document.activeElement);
-		if (!input._eventInRoot(event) && !input._editorActive && !documentEvent) {
+		const nativeSelection = window.getSelection?.();
+		const selectionInRoot = nativeSelection?.rangeCount > 0 &&
+			input.editor.range.within(root, nativeSelection.getRangeAt(0));
+		if (!input._eventInRoot(event) && !input._editorActive && !documentEvent && !selectionInRoot) {
 			return;
 		}
 		// Ignore keys meant for other form controls (chat fields, search, ...).

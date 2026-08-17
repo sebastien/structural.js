@@ -116,6 +116,38 @@ Cursor moves emit `CursorMove` on the editor root. `event.detail.previous` and
 `event.detail.current` are snapshots; current includes requested/resolved
 offsets, slot/boundary data, and virtual-caret state.
 
+## `Shorthands`
+
+`Shorthands` recognizes configurable trigger/query pairs and emits popup and
+document events. Install it with schema atom rules for custom elements:
+
+```js
+import { Editor, RichText, Shorthands, richTextSchema } from "structural";
+
+const editor = new Editor(root, {
+  schema: richTextSchema({}, { atoms: ["structural-date"] }),
+  plugins: [RichText, new Shorthands({
+    definitions: [
+      { id: "tag", trigger: "#", source: findTags },
+      { id: "mention", trigger: "@", source: findPeople },
+      { id: "task", trigger: "+", source: findTasks },
+      {
+        id: "date", trigger: "@", pattern: /^\d{4}-\d{2}-\d{2}$/,
+        auto: "delimiter", element: "structural-date",
+      },
+      { id: "topic", trigger: "!", source: findTopics },
+    ],
+  })],
+});
+```
+
+Date shorthands are committed automatically before whitespace or punctuation.
+Other definitions are committed with `editor.shorthands.pick(item)` from an
+application popup, or with Enter/Tab when source items are available. The
+plugin emits `ShorthandOpen`, `ShorthandChange`, `ShorthandCommit`, and
+`ShorthandDismiss` on the editor root. A commit also emits `DocumentChange`
+with `detail.kind === "shorthand-commit"`.
+
 ## `TextSelection` and `SelectionOverlay`
 
 `TextSelection` stores logical anchor and focus offsets. Its default mode is

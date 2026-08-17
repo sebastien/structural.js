@@ -248,7 +248,10 @@ test("richtext: enter and shift-enter keep block structure", async () => {
 		const paragraph = Array.from(document.querySelectorAll("#editor p")).find(node =>
 			node.innerHTML.includes("<br>") && node.textContent.includes("heading levels.")
 		);
-		return paragraph?.innerHTML ?? null;
+		return {
+			html: paragraph?.innerHTML ?? null,
+			text: paragraph?.textContent ?? null,
+		};
 	});
 
 	point = await pointForText(page, "#editor h1", "Rich Text Editor", "Rich Text Editor".length);
@@ -297,7 +300,8 @@ test("richtext: enter and shift-enter keep block structure", async () => {
 
 	expect(splitState.first).toBe("Use the heading buttons to promote");
 	expect(splitState.second).toBe("paragraphs into heading levels. Create bullet lists for structured content.");
-	expect(lineBreakState).toContain("<br>");
+	expect(lineBreakState.html).toContain("<br>");
+	expect(lineBreakState.text).toContain("heading levels.");
 	expect(headingSplitState.headingTag).toBe("H1");
 	expect(headingSplitState.nextTag).toBe("P");
 	expect(headingSplitState.nextText).toBe("");

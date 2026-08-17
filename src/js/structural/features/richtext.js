@@ -66,7 +66,7 @@ class Modification {
 		const el = anchor?.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor;
 		if (!el || !this.editor.root.contains(el)) {
 			return {
-				strong: false, em: false, code: false,
+				strong: false, em: false, u: false, code: false, link: false,
 				h1: false, h2: false, h3: false,
 				ul: false, ol: false, blockquote: false,
 			};
@@ -74,7 +74,9 @@ class Modification {
 		return {
 			strong:     !!el.closest('strong, b'),
 			em:         !!el.closest('em, i'),
+			u:          !!el.closest('u'),
 			code:       !!el.closest('code'),
+			link:       !!el.closest('a'),
 			h1:         !!el.closest('h1'),
 			h2:         !!el.closest('h2'),
 			h3:         !!el.closest('h3'),
@@ -160,6 +162,31 @@ class Modification {
 		return true;
 	}
 
+	// Method: toggleLink
+	// Applies a URL to the selected text, or removes the current link.
+	toggleLink(target) {
+		if (!this.allowsInline("a")) return false;
+		const range = this.rangeFromCursor();
+		if (!range || range.collapsed) return false;
+		this._savePoint();
+		const container = range.commonAncestorContainer;
+		const el = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
+		const wrapper = el?.closest("a");
+		if (wrapper?.contains(range.startContainer) && wrapper.contains(range.endContainer)) {
+			this.coalesceText(this.unwrapElement(wrapper));
+		} else {
+			const created = this.wrapRange(range, "a");
+			created.href = target;
+			this._savedPoint = this._endPoint(created);
+			this._savedWrapper = created;
+		}
+		this._restoreCursor();
+		try {
+			this.editor.selection?.syncToNative(this.session ?? this.editor.localSession);
+		} catch (_) {}
+		return true;
+	}
+
 	// Method: _overlappingTags
 	// Internal helper to find tags of type `tag` overlapping with the given `range`.
 	_overlappingTags(range, tag) {
@@ -222,6 +249,20 @@ class Modification {
 	// Method: toggleBlock
 	// Toggles block tag style (e.g. `ul`, `ol`, `blockquote`, headings) on the current block.
 	toggleBlock(tag) {
+		this.editor.selection.syncFromNative(this.editor.root, this.session);
+		const selected = this.editor.range.selected(this.editor.root, this.session);
+		const selectedBlocks = tag === "ul" || tag === "ol" ? this._blocksInRange(selected) : [];
+		if (selectedBlocks.length > 0) {
+			this._savePoint();
+			const allInList = selectedBlocks.every((block) =>
+				block.tagName.toLowerCase() === "li" && block.closest(tag),
+			);
+			if (allInList) this._unwrapListItems(selectedBlocks);
+			else this._toggleListBlocks(tag, selectedBlocks);
+			this._restoreCursor();
+			this.editor.selection.syncToNative(this.session);
+			return true;
+		}
 		const richText = this.editor.capability?.("richtext") ?? this.editor.richText;
 		const remembered = richText?.currentEditableBlock?.(
 			this.session ?? this.editor.localSession,
@@ -508,7 +549,71 @@ class Modification {
 			while (block.firstChild) li.appendChild(block.firstChild);
 			wrapper.appendChild(li);
 			block.parentNode.replaceChild(wrapper, block);
+			this._mergeAdjacentLists(wrapper);
 		}
+	}
+
+	// Returns leaf blocks touched by a text range, preserving document order.
+	_blocksInRange(range) {
+		if (!range || range.collapsed) return [];
+		const blocks = [...this.editor.root.querySelectorAll(this.editor.blockSelector())].filter((block) => {
+			try {
+				return range.intersectsNode(block);
+			} catch (_) {
+				return false;
+			}
+		});
+		return blocks.filter((block) => !blocks.some((other) => other !== block && other.contains(block)));
+	}
+
+	// Applies a list toggle to every block touched by the active selection.
+	_toggleListBlocks(tag, blocks) {
+		for (const block of blocks) {
+			if (!block.isConnected) continue;
+			const list = block.closest("ul, ol");
+			if (block.tagName.toLowerCase() === "li" && list) {
+				if (list.tagName.toLowerCase() !== tag) this.changeTagName(list, tag);
+				continue;
+			}
+			const li = document.createElement("li");
+			const wrapper = document.createElement(tag);
+			while (block.firstChild) li.appendChild(block.firstChild);
+			wrapper.appendChild(li);
+			block.parentNode.replaceChild(wrapper, block);
+			this._mergeAdjacentLists(wrapper);
+		}
+	}
+
+	// Removes only the selected items from their lists, preserving unselected items.
+	_unwrapListItems(blocks) {
+		for (const item of blocks) {
+			if (!item.isConnected || item.tagName.toLowerCase() !== "li") continue;
+			const list = item.parentElement;
+			if (!list || !/^(ul|ol)$/.test(list.tagName.toLowerCase())) continue;
+			const paragraph = document.createElement("p");
+			while (item.firstChild) paragraph.appendChild(item.firstChild);
+			list.parentNode.insertBefore(paragraph, list);
+			item.remove();
+			if (!list.querySelector(":scope > li")) list.remove();
+		}
+	}
+
+	// Coalesces directly adjacent lists of the same type after a block conversion.
+	_mergeAdjacentLists(list) {
+		if (!list?.isConnected) return null;
+		const absorb = (target, source) => {
+			while (source.firstChild) target.appendChild(source.firstChild);
+			source.remove();
+		};
+		let current = list;
+		const previous = current.previousElementSibling;
+		if (previous?.tagName === current.tagName) {
+			absorb(previous, current);
+			current = previous;
+		}
+		const next = current.nextElementSibling;
+		if (next?.tagName === current.tagName) absorb(current, next);
+		return current;
 	}
 
 	// Method: _toggleBbq
@@ -819,7 +924,7 @@ export { RichTextClipboard };
 // Standard CSS class selectors and states for styling focus and selections.
 function richTextClasses(options = {}) {
 	return {
-		selector: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "li", "blockquote", "strong", "em", "code"],
+		selector: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "li", "blockquote", "strong", "em", "u", "a", "code"],
 		focus: "focus",
 		focusWithin: "focus-within",
 		selected: "selected",
@@ -842,6 +947,8 @@ function richTextKeymap(overrides = {}) {
 	return editorKeymap({
 		"Mod+B": { type: "toggleInline", args: { tag: "strong" } },
 		"Mod+I": { type: "toggleInline", args: { tag: "em" } },
+		"Mod+U": { type: "toggleInline", args: { tag: "u" } },
+		"Mod+L": { type: "link" },
 		"Mod+`": { type: "toggleInline", args: { tag: "code" } },
 		"Mod+1": { type: "toggleBlock", args: { tag: "h1" } },
 		"Mod+2": { type: "toggleBlock", args: { tag: "h2" } },
@@ -886,7 +993,7 @@ const richTextRules = {
 		default: "p",
 		normalize: { empty: "fill", text: "wrap", invalidChild: "lift" },
 	},
-	"@inline": ["strong", "em", "code"],
+	"@inline": ["strong", "em", "u", "code", "a"],
 	section: { type: "block", contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
 	nav: { type: "block", contains: ["header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
 	header: { type: "block", contains: ["h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
@@ -901,7 +1008,9 @@ const richTextRules = {
 	h3: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
 	strong: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	em: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
+	u: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	code: { type: "inline", contains: ["#text"], normalize: { empty: "unwrap", invalidChild: "lift" } },
+	a: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 };
 
 // Function: richTextSchema
@@ -966,6 +1075,17 @@ class RichText {
 				new Modification(context.session, { schema: editor.schema }).toggleInline(command.args.tag),
 			toggleBlock: (command, context) =>
 				new Modification(context.session, { schema: editor.schema }).toggleBlock(command.args.tag),
+			link: (_command, context) => {
+				const target = window.prompt("Link URL", "https://");
+				if (!target) return false;
+				try {
+					const url = new URL(target, document.baseURI);
+					if (!["http:", "https:", "mailto:"].includes(url.protocol)) return false;
+				} catch (_) {
+					return false;
+				}
+				return new Modification(context.session, { schema: editor.schema }).toggleLink(target);
+			},
 			beforeTextInput: (_command, context) => this.removePlaceholderInCurrentBlock(context.session),
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
 			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
@@ -1443,10 +1563,9 @@ class RichText {
 		if (!block) return false;
 		this.editor.range.split(range);
 		const br = document.createElement("br");
-		const tail = document.createTextNode("");
-		range.insertNode(tail);
 		range.insertNode(br);
-		this.editor.setContent(undefined, { session, selection: { node: tail, offset: 0 } });
+		// Position after the break without adding a zero-width character to document text.
+		this.editor.setContent(undefined, { session, selection: { node: br, position: "after" } });
 		return true;
 	}
 

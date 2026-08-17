@@ -47,6 +47,7 @@ export {
 	richTextRules,
 	richTextSchema,
 } from "./features/richtext.js";
+export { Shorthands, normalizeDefinition } from "./features/shorthands.js";
 
 export { default as richtext } from "./features/richtext.js";
 

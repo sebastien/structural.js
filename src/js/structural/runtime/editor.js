@@ -1222,6 +1222,15 @@ class Editor {
 		return this;
 	}
 
+	// Method: removeInputRules
+	// Removes the exact rule instances previously registered by a plugin.
+	removeInputRules(rules = []) {
+		if (!Array.isArray(rules) || !rules.length) return this;
+		const remove = new Set(rules);
+		this.inputRules = this.inputRules.filter((rule) => !remove.has(rule));
+		return this;
+	}
+
 	// Method: contextAt
 	// Builds a cursor/selection context object. Plugins may enrich via enrichContext().
 	contextAt(session = null) {

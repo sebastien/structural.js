@@ -1220,13 +1220,17 @@ class TextAdapter {
 		let best = null;
 		let bestLineDistance = Infinity;
 		let bestHorizontalDistance = Infinity;
+		const isLineCandidate = (position, positionIndex) => {
+			if (!this.acceptsText(position) || this.isFormattingWhitespaceSlot(positionIndex)) return false;
+			return position?.point?.node?.nodeType === Node.TEXT_NODE;
+		};
 
 		// Walk from current in the movement direction, collect the first different line
 		let i = clamped + dir;
 		const targetLine = [];
 		while (i >= 0 && i < this._positions.length) {
 			const pos = this._positions[i];
-			if (!this.acceptsText(pos) || this.isFormattingWhitespaceSlot(i)) {
+			if (!isLineCandidate(pos, i)) {
 				i += dir;
 				continue;
 			}
@@ -1246,7 +1250,7 @@ class TextAdapter {
 			let j = i + dir;
 			while (j >= 0 && j < this._positions.length) {
 				const p2 = this._positions[j];
-				if (!this.acceptsText(p2) || this.isFormattingWhitespaceSlot(j)) {
+				if (!isLineCandidate(p2, j)) {
 					j += dir;
 					continue;
 				}

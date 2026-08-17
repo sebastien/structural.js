@@ -366,6 +366,19 @@ test("editing: enter then type creates new block with text", async () => {
 	expect(state.html.match(/<p/g)?.length || 0).toBeGreaterThanOrEqual(2);
 });
 
+test("selection: Shift+ArrowUp reaches the first of three blocks", async () => {
+	const page = await loadHarness(null, "<p>One</p><p>Two</p><p>Three</p>");
+	await clickAtText(page, "Three", "Three".length);
+	const selected = [];
+	for (let i = 0; i < 3; i++) {
+		await press(page, "Shift+ArrowUp");
+		selected.push(await getSelectedText(page));
+	}
+	await closePage(page);
+
+	expect(selected.map((text) => text.replace(/\s/g, ""))).toEqual(["TwoThree", "OneTwoThree", "OneTwoThree"]);
+});
+
 test("editing: arrow right then type after block boundary", async () => {
 	const page = await loadHarness(null, "<p>one</p><p>two</p>");
 	await clickAtText(page, "one", "one".length);
@@ -1626,6 +1639,51 @@ test("selection: select paragraph, toggle blockquote", async () => {
 		if (!/blockquote/i.test(state.html || "")) {
 			throw new Error(`toggle blockquote failed: ${state.html}`);
 		}
+	});
+});
+
+test("selection: toggle list across blocks and join adjacent lists", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<ul><li>one</li></ul><p>two</p><ul><li>three</li></ul>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("two", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("two", 3));
+		await directSelect(page, s, e);
+		await toggleBlock(page, "ul");
+		const state = await page.evaluate(() => ({
+			lists: document.querySelectorAll("#editor > ul").length,
+			items: [...document.querySelectorAll("#editor > ul > li")].map((item) => item.textContent.trim()),
+		}));
+		expect(state).toEqual({ lists: 1, items: ["one", "two", "three"] });
+	});
+});
+
+test("selection: toggle list applies to every touched block", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>one</p><p>two</p><p>three</p>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("one", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("three", 5));
+		await directSelect(page, s, e);
+		await toggleBlock(page, "ul");
+		const state = await page.evaluate(() => ({
+			lists: document.querySelectorAll("#editor > ul").length,
+			items: [...document.querySelectorAll("#editor > ul > li")].map((item) => item.textContent.trim()),
+		}));
+		expect(state).toEqual({ lists: 1, items: ["one", "two", "three"] });
+	});
+});
+
+test("selection: toggle list off unwraps selected items", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<ul><li>one</li><li>two</li></ul>"));
+		const s = await page.evaluate(() => window.__test.indexOfText("one", 0));
+		const e = await page.evaluate(() => window.__test.indexOfText("two", 3));
+		await directSelect(page, s, e);
+		await toggleBlock(page, "ul");
+		const state = await page.evaluate(() => ({
+			lists: document.querySelectorAll("#editor > ul").length,
+			paragraphs: [...document.querySelectorAll("#editor > p")].map((item) => item.textContent.trim()),
+		}));
+		expect(state).toEqual({ lists: 0, paragraphs: ["one", "two"] });
 	});
 });
 
