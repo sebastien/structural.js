@@ -60,13 +60,33 @@
         align-self: stretch;
         flex-shrink: 0;
       }
-      .editor {
+      .editor-shell {
+        position: relative;
         max-width: 680px;
         margin: 32px auto;
         padding: 0 24px;
+      }
+      .editor {
         color: var(--editor-fg);
         line-height: 1.6;
         font-size: 16px;
+        cursor: text;
+        outline: none;
+      }
+      #caret {
+        position: absolute;
+        width: 2px;
+        height: 1lh;
+        background: #ff8800;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 9999;
+      }
+      #selection {
+        position: absolute;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 9998;
       }
       .editor h1 { font-size: 2em; margin: 0.67em 0; }
       .editor h2 { font-size: 1.5em; margin: 0.75em 0; }
@@ -163,21 +183,22 @@
       </label>
     </div>
 
-    <div class="editor" id="editor">
-      <h1>Rich Text Editor</h1>
-      <p>This is a <strong>rich text</strong> editor built with <em>Structural.js</em>. Try formatting text using the toolbar above or keyboard shortcuts.</p>
-      <p>Select some text and toggle <strong>bold</strong>, <em>italic</em>, or <code>monospace</code> inline styles. You can also click a word to format it without selecting.</p>
-      <h2>Block Formatting</h2>
-      <p>Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.</p>
-      <blockquote>
-        <p>Blockquotes are great for highlighting quotes, citations, or callout content. Toggle the button again to remove.</p>
-      </blockquote>
-      <h3>Try It Out</h3>
-      <p>Place your cursor anywhere and click the toolbar buttons. The active format is highlighted in blue. Keyboard shortcuts work too: <code>Ctrl+B</code> for bold, <code>Ctrl+I</code> for italic, <code>Ctrl+\`</code> for monospace, and <code>Ctrl+1/2/3</code> for headings.</p>
+    <div class="editor-shell">
+      <div class="editor" id="editor" tabindex="0">
+        <h1>Rich Text Editor</h1>
+        <p>This is a <strong>rich text</strong> editor built with <em>Structural.js</em>. Try formatting text using the toolbar above or keyboard shortcuts.</p>
+        <p>Select some text and toggle <strong>bold</strong>, <em>italic</em>, or <code>monospace</code> inline styles. You can also click a word to format it without selecting.</p>
+        <h2>Block Formatting</h2>
+        <p>Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.</p>
+        <blockquote>
+          <p>Blockquotes are great for highlighting quotes, citations, or callout content. Toggle the button again to remove.</p>
+        </blockquote>
+        <h3>Try It Out</h3>
+        <p>Place your cursor anywhere and click the toolbar buttons. The active format is highlighted in blue. Keyboard shortcuts work too: <code>Ctrl+B</code> for bold, <code>Ctrl+I</code> for italic, <code>Ctrl+\`</code> for monospace, and <code>Ctrl+1/2/3</code> for headings.</p>
+      </div>
+      <div id="selection" aria-hidden="true"></div>
+      <div id="caret" aria-hidden="true"></div>
     </div>
-
-    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
-    <div id="caret" style="position:absolute;height:1lh;width:2px;visibility:hidden;pointer-events:none;"></div>
 
     <script type="module">
       import { Editor } from "structural";
@@ -189,6 +210,7 @@
         keymap: richTextKeymap(),
         classes: richTextClasses(),
         plugins: [RichText],
+        text: { eagerBlockCount: 32 },
         caret: {
           mode: "virtual",
           node: document.getElementById("caret"),
@@ -214,6 +236,7 @@
         toggleInline: command => mod.toggleInline(command.args.tag ?? command.args.value),
         toggleBlock: command => mod.toggleBlock(command.args.tag ?? command.args.value),
       });
+      editor.input.cursor.moveTo(0);
 
       const toolbar = document.getElementById("toolbar");
 

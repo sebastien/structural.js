@@ -1220,9 +1220,14 @@ class TextAdapter {
 		let best = null;
 		let bestLineDistance = Infinity;
 		let bestHorizontalDistance = Infinity;
+		const originBlock = this._blockForSlot(this._positions[clamped]);
 		const isLineCandidate = (position, positionIndex) => {
 			if (!this.acceptsText(position) || this.isFormattingWhitespaceSlot(positionIndex)) return false;
-			return position?.point?.node?.nodeType === Node.TEXT_NODE;
+			const node = position?.point?.node;
+			if (node?.nodeType === Node.TEXT_NODE) return true;
+			if (node?.nodeType !== Node.ELEMENT_NODE) return false;
+			if (node.tagName === "BR") return this._isEmptyEditableBlock(node.parentElement);
+			return this._isEmptyEditableBlock(node);
 		};
 
 		// Walk from current in the movement direction, collect the first different line
@@ -1241,7 +1246,8 @@ class TextAdapter {
 			}
 			const y = cand.rect.top;
 			const ld = Math.abs(y - currentTop);
-			if (ld <= lineEpsilon) {
+			const candBlock = this._blockForSlot(pos);
+			if (ld <= lineEpsilon && (!candBlock || candBlock === originBlock)) {
 				i += dir;
 				continue;
 			}
@@ -1250,6 +1256,8 @@ class TextAdapter {
 			let j = i + dir;
 			while (j >= 0 && j < this._positions.length) {
 				const p2 = this._positions[j];
+				const c2Block = this._blockForSlot(p2);
+				if (c2Block && candBlock && c2Block !== candBlock) break;
 				if (!isLineCandidate(p2, j)) {
 					j += dir;
 					continue;
@@ -1684,6 +1692,21 @@ class TextAdapter {
 	// INTERNALS
 	//
 	// ----------------------------------------------------------------------------
+
+	_blockForSlot(position) {
+		const el = asElement(position?.point?.node);
+		if (!el) return null;
+		const selector = blockSelectorFromSchema(this._schema);
+		const block = el.closest(selector);
+		return block && this.root.contains(block) ? block : null;
+	}
+
+	_isEmptyEditableBlock(el) {
+		if (!el || el.nodeType !== Node.ELEMENT_NODE || el === this.root) return false;
+		const selector = blockSelectorFromSchema(this._schema);
+		if (!el.matches(selector)) return false;
+		return !(el.textContent ?? "").replace(/\u200b/g, "").trim();
+	}
 
 	// Method: _shouldEmitBoundary
 	// Internal helper to determine if caret boundaries should be emitted for `parent` child.

@@ -1,0 +1,15 @@
+SOURCES_JS=(wildcard ./src/js/**/*.js)
+
+TESTS_JS=(wildcard ./tests/*.js)
+EXAMPLES_JS=(wildcard ./examples/*.js)
+EXAMPLES_HTML=(wildcard ./examples/*.html)
+EXAMPLES_CSS=(wildcard ./examples/*.css)
+EXAMPLES_ALL=(concat EXAMPLES_JS EXAMPLES_HTML EXAMPLES_CSS)
+
+service run:
+	PORT=@(? PORT 8000) extra
+
+task test: SOURCES_JS TESTS_JS
+	@(cmd bun) test
+
+# EOF

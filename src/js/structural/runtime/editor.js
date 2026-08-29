@@ -711,6 +711,7 @@ class Editor {
 	// Initializes and configures the parent Editor environment.
 	constructor(node, options = {}) {
 		this.root = node;
+		if (this.root && this.root.tabIndex < 0) this.root.tabIndex = 0;
 		this.schema =
 			options.schema instanceof EditorSchema
 				? options.schema

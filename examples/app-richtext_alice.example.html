@@ -92,17 +92,37 @@
         margin: 0;
         line-height: 1.5;
       }
-      .editor {
+      .editor-shell {
+        position: relative;
         max-width: 760px;
         margin: 0 auto 64px;
         padding: 28px 32px 48px;
         background: #ffffff;
-        color: var(--editor-fg);
         border: 1px solid #e4dbcf;
         border-radius: 16px;
         box-shadow: 0 18px 48px rgba(60, 42, 18, 0.08);
+      }
+      .editor {
+        color: var(--editor-fg);
         line-height: 1.65;
         font-size: 16px;
+        cursor: text;
+        outline: none;
+      }
+      #caret {
+        position: absolute;
+        width: 2px;
+        height: 1lh;
+        background: #ff8800;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 9999;
+      }
+      #selection {
+        position: absolute;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 9998;
       }
       .editor h1 { font-size: 2.25em; margin: 0 0 0.6em; }
       .editor h2 { font-size: 1.45em; margin: 1.5em 0 0.6em; }
@@ -182,7 +202,7 @@
       }
       @media (max-width: 720px) {
         .page { padding: 12px; }
-        .editor {
+        .editor-shell {
           padding: 20px 18px 32px;
           border-radius: 12px;
         }
@@ -249,11 +269,12 @@
 
       <div class="status" id="stats"></div>
       <div class="status" id="perf" style="font-family: ui-monospace, monospace; font-size: 12px; color:#6c5e51;"></div>
-      <div class="editor" id="editor"></div>
+      <div class="editor-shell">
+        <div class="editor" id="editor" tabindex="0"></div>
+        <div id="selection" aria-hidden="true"></div>
+        <div id="caret" aria-hidden="true"></div>
+      </div>
     </div>
-
-    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
-    <div id="caret" style="position:absolute;height:1lh;width:2px;visibility:hidden;pointer-events:none;"></div>
 
     <script type="module">
       import { Editor } from "structural";
@@ -415,6 +436,7 @@
         editor.lastNormalization = editor.normalize(editor.root, { session: editor.localSession });
         editor.text.refresh();
         editor.classes?.update();
+        try { editor.input.cursor.moveTo(0); } catch (_) {}
       } catch (error) {
         docStatus.textContent = "Failed to load reference HTML";
         stats.textContent = String(error);

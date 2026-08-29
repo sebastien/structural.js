@@ -137,7 +137,7 @@ class Modification {
 			: container.parentElement;
 		const wrapper = el?.closest(tag);
 		if (wrapper?.contains(range.startContainer) && wrapper.contains(range.endContainer)) {
-			this.coalesceText(this.unwrapElement(wrapper));
+			this._unwrapRangeIn(wrapper, range);
 		} else {
 			const overlapping = this._overlappingTags(range, tag);
 			if (overlapping.length > 0) {
@@ -149,8 +149,16 @@ class Modification {
 				if (!range || range.collapsed) return true;
 			}
 			const created = this.wrapRange(range, tag);
-			this._savedPoint = this._endPoint(created);
-			this._savedWrapper = created;
+			if (Array.isArray(created)) {
+				const last = created[created.length - 1];
+				this._savedWrapper = null;
+				this._savedRangeStart = null;
+				this._savedRangeEnd = null;
+				this._savedPoint = last ? this._pointAfter(last) : null;
+			} else {
+				this._savedPoint = this._endPoint(created);
+				this._savedWrapper = created;
+			}
 		}
 
 		this._restoreCursor();
@@ -176,9 +184,11 @@ class Modification {
 			this.coalesceText(this.unwrapElement(wrapper));
 		} else {
 			const created = this.wrapRange(range, "a");
-			created.href = target;
-			this._savedPoint = this._endPoint(created);
-			this._savedWrapper = created;
+			const links = Array.isArray(created) ? created : created ? [created] : [];
+			for (const link of links) link.href = target;
+			const last = links[links.length - 1];
+			this._savedPoint = last ? this._endPoint(last) : null;
+			this._savedWrapper = links.length === 1 ? last : null;
 		}
 		this._restoreCursor();
 		try {
@@ -230,6 +240,15 @@ class Modification {
 		return r;
 	}
 
+	_pointAfter(node) {
+		const parent = node?.parentNode;
+		if (!parent) return this._endPoint(node);
+		const next = node.nextSibling;
+		if (next?.nodeType === Node.TEXT_NODE) return { node: next, offset: 0 };
+		const offset = [...parent.childNodes].indexOf(node) + 1;
+		return { node: parent, offset };
+	}
+
 	// Method: _endPoint
 	// Internal helper to find the last valid text point inside element `el`.
 	_endPoint(el) {
@@ -251,14 +270,24 @@ class Modification {
 	toggleBlock(tag) {
 		this.editor.selection.syncFromNative(this.editor.root, this.session);
 		const selected = this.editor.range.selected(this.editor.root, this.session);
-		const selectedBlocks = tag === "ul" || tag === "ol" ? this._blocksInRange(selected) : [];
-		if (selectedBlocks.length > 0) {
+		const selectedBlocks = this._blocksInRange(selected);
+		if (selectedBlocks.length > 0 && (tag === "ul" || tag === "ol")) {
 			this._savePoint();
 			const allInList = selectedBlocks.every((block) =>
 				block.tagName.toLowerCase() === "li" && block.closest(tag),
 			);
 			if (allInList) this._unwrapListItems(selectedBlocks);
 			else this._toggleListBlocks(tag, selectedBlocks);
+			this._restoreCursor();
+			this.editor.selection.syncToNative(this.session);
+			return true;
+		}
+		if (selectedBlocks.length > 0 && tag !== "ul" && tag !== "ol" && tag !== "blockquote") {
+			this._savePoint();
+			for (const block of selectedBlocks) {
+				if (!block.isConnected) continue;
+				this._heading(tag, block);
+			}
 			this._restoreCursor();
 			this.editor.selection.syncToNative(this.session);
 			return true;
@@ -332,10 +361,85 @@ class Modification {
 	// Method: wrapRange
 	// Wraps the specified DOM `range` in a new element of type `tag`.
 	wrapRange(range, tag) {
+		const blocks = this._blocksInRange(range);
+		if (blocks.length > 1) {
+			const slices = [];
+			for (const block of blocks) {
+				const sub = this._intersectRange(range, block);
+				if (!sub || sub.collapsed) continue;
+				slices.push({
+					start: { node: sub.startContainer, offset: sub.startOffset },
+					end: { node: sub.endContainer, offset: sub.endOffset },
+				});
+			}
+			const created = [];
+			for (let i = slices.length - 1; i >= 0; i -= 1) {
+				const slice = document.createRange();
+				slice.setStart(slices[i].start.node, slices[i].start.offset);
+				slice.setEnd(slices[i].end.node, slices[i].end.offset);
+				if (slice.collapsed) continue;
+				const wrapper = document.createElement(tag);
+				wrapper.appendChild(slice.extractContents());
+				slice.insertNode(wrapper);
+				created.unshift(wrapper);
+			}
+			return created;
+		}
 		const wrapper = document.createElement(tag);
 		wrapper.appendChild(range.extractContents());
 		range.insertNode(wrapper);
 		return wrapper;
+	}
+
+	_intersectRange(range, node) {
+		const bounds = document.createRange();
+		bounds.selectNodeContents(node);
+		const sub = range.cloneRange();
+		if (sub.compareBoundaryPoints(Range.START_TO_START, bounds) < 0) {
+			sub.setStart(bounds.startContainer, bounds.startOffset);
+		}
+		if (sub.compareBoundaryPoints(Range.END_TO_END, bounds) > 0) {
+			sub.setEnd(bounds.endContainer, bounds.endOffset);
+		}
+		return sub.collapsed ? null : sub;
+	}
+
+	_unwrapRangeIn(wrapper, range) {
+		const before = document.createRange();
+		before.selectNodeContents(wrapper);
+		before.setEnd(range.startContainer, range.startOffset);
+		const after = document.createRange();
+		after.selectNodeContents(wrapper);
+		after.setStart(range.endContainer, range.endOffset);
+		if (before.toString() === "" && after.toString() === "") {
+			this.coalesceText(this.unwrapElement(wrapper));
+			return;
+		}
+		const afterContents = after.extractContents();
+		const mid = range.extractContents();
+		const parent = wrapper.parentNode;
+		const midNodes = [...mid.childNodes];
+		if (afterContents.hasChildNodes()) {
+			const tail = wrapper.cloneNode(false);
+			tail.appendChild(afterContents);
+			parent.insertBefore(tail, wrapper.nextSibling);
+		}
+		parent.insertBefore(mid, wrapper.nextSibling);
+		if (!wrapper.hasChildNodes()) wrapper.remove();
+		this.coalesceText(parent);
+		this._savedWrapper = null;
+		if (midNodes.length > 0) {
+			const startNode = midNodes[0];
+			const endNode = midNodes[midNodes.length - 1];
+			this._savedRangeStart =
+				startNode.nodeType === Node.TEXT_NODE
+					? { node: startNode, offset: 0 }
+					: { node: startNode, offset: 0 };
+			this._savedRangeEnd =
+				endNode.nodeType === Node.TEXT_NODE
+					? { node: endNode, offset: endNode.data.length }
+					: { node: endNode, offset: endNode.childNodes.length };
+		}
 	}
 
 	// Method: unwrapElement
@@ -1091,16 +1195,27 @@ class RichText {
 			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
 			deleteSmart: (_command, context) =>
 				this.editor.history.run("delete", () => {
+					const native = window.getSelection?.();
+					const nativeRange = native?.rangeCount ? native.getRangeAt(0) : null;
+					if (
+						nativeRange &&
+						!nativeRange.collapsed &&
+						this.editor.range.within(this.editor.root, nativeRange)
+					) {
+						this.editor.selection.syncFromNative(this.editor.root, context.session);
+					}
 					if (
 						this.deleteSelectedBlocks(context.session) ||
 						this.deleteEmptyBlock(context.session) ||
-						this.mergeBlockBackward(context.session, context.event)
+						this.mergeBlockBackward(context.session, context.event) ||
+						this.mergeBlockForward(context.session, context.event)
 					) {
 						return true;
 					}
 					// Character-level delete when no block merge/empty-block path matched.
 					if (context.event?.key === "Delete") context.session.cursor.delete();
 					else context.session.cursor.backspace();
+					this.unwrapEmptyInlines(context.session);
 					return true;
 				}, context.session),
 			indent: (_command, context) => this.indentCurrentListItem(context.session),
@@ -1364,6 +1479,12 @@ class RichText {
 
 	isFullySelectedBlock(range, block) {
 		if (!range || !block) return false;
+		try {
+			const selected = range.toString();
+			if (selected.length > 0 && selected === (block.textContent ?? "") && range.intersectsNode(block)) {
+				return true;
+			}
+		} catch (_) {}
 		const covers = (blockRange) => {
 			try {
 				return (
@@ -1402,8 +1523,9 @@ class RichText {
 	fullySelectedBlocks(session = null) {
 		const cursor = this.editor.activeSession(session).cursor;
 		if (cursor.selectionKind === "node" && cursor.selectedNode) {
-			const block = this.blockFor(cursor.selectedNode);
-			return block ? [block] : [];
+			const node = cursor.selectedNode;
+			const block = this.blockFor(node);
+			if (block && block === node) return [block];
 		}
 		const range = this.editor.range.selected(this.editor.root, session);
 		if (!range) return [];
@@ -1438,7 +1560,14 @@ class RichText {
 		const afterBlock = blocks.map(block => this.firstBlockIn(block.nextElementSibling)).find(Boolean);
 		const beforeBlock = [...blocks].reverse().map(block => this.lastBlockIn(block.previousElementSibling)).find(Boolean);
 		for (const block of blocks) this.removeBlock(block);
-		this.editor.setContent(undefined, { session, selection: afterBlock ? { node: afterBlock, position: "start" } : beforeBlock ? { node: beforeBlock, position: "end" } : undefined });
+		this.editor.setContent(undefined, {
+			session,
+			selection: afterBlock
+				? { node: afterBlock, position: "start" }
+				: beforeBlock
+					? { node: beforeBlock, position: "end" }
+					: { node: this.editor.root, position: "start" },
+		});
 		return true;
 	}
 
@@ -1454,7 +1583,14 @@ class RichText {
 		const afterBlock = this.firstBlockIn(block.nextElementSibling);
 		const beforeBlock = this.lastBlockIn(block.previousElementSibling);
 		this.removeBlock(block);
-		this.editor.setContent(undefined, { session, selection: afterBlock ? { node: afterBlock, position: "start" } : beforeBlock ? { node: beforeBlock, position: "end" } : undefined });
+		this.editor.setContent(undefined, {
+			session,
+			selection: afterBlock
+				? { node: afterBlock, position: "start" }
+				: beforeBlock
+					? { node: beforeBlock, position: "end" }
+					: { node: this.editor.root, position: "start" },
+		});
 		return true;
 	}
 
@@ -1464,6 +1600,16 @@ class RichText {
 			const previous = this.lastBlockIn(sibling);
 			if (previous) return previous;
 			sibling = sibling.previousElementSibling;
+		}
+		return null;
+	}
+
+	nextEditableBlock(block) {
+		let sibling = block?.nextElementSibling ?? null;
+		while (sibling) {
+			const next = this.firstBlockIn(sibling);
+			if (next) return next;
+			sibling = sibling.nextElementSibling;
 		}
 		return null;
 	}
@@ -1493,6 +1639,62 @@ class RichText {
 		block.remove();
 		this.editor.setContent(undefined, { session, selection: { node: markerNode, offset: markerOffset } });
 		return true;
+	}
+
+	mergeBlockForward(session = null, event = null) {
+		if (event && event.key !== "Delete") return false;
+		const range = this.editor.range.current(this.editor.root, session);
+		if (!range?.collapsed) return false;
+		const block = this.blockFor(range.startContainer);
+		if (!block || !this.editor.range.atBlockEnd(range, block)) return false;
+		const next = this.nextEditableBlock(block);
+		if (!next) return false;
+
+		for (const child of [...block.childNodes]) {
+			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") child.remove();
+		}
+		const markerText = this.lastTextNode(block);
+		const markerNode = markerText ?? block;
+		const markerOffset = markerText ? markerText.data.length : block.childNodes.length;
+		for (const child of [...next.childNodes]) {
+			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") {
+				child.remove();
+			} else {
+				block.appendChild(child);
+			}
+		}
+		this.removeBlock(next);
+		this.editor.setContent(undefined, { session, selection: { node: markerNode, offset: markerOffset } });
+		return true;
+	}
+
+	unwrapEmptyInlines(session = null) {
+		const cursor = this.editor.activeSession(session).cursor;
+		const point = this.editor.text.pointAt(cursor.offset);
+		let el = point?.node;
+		if (el?.nodeType === Node.TEXT_NODE) el = el.parentElement;
+		const normalizer = this.editor.normalizer;
+		if (!normalizer || !el) return false;
+		let changed = false;
+		while (el && el !== this.editor.root) {
+			const parent = el.parentElement;
+			const tag = this.editor.schema?.tag?.(el) ?? el.tagName?.toLowerCase?.();
+			const action = this.editor.schema?.normalizeAction?.(tag, "empty", "preserve");
+			if (action === "unwrap" && normalizer.isEmpty(el)) {
+				normalizer.unwrapElement(el);
+				changed = true;
+				el = parent;
+				continue;
+			}
+			break;
+		}
+		if (changed) {
+			this.editor.text.refresh();
+			cursor.moveTo(this.editor.text.clampIndex(cursor.offset), {
+				skipBoundaryCollapse: true,
+			});
+		}
+		return changed;
 	}
 
 	exitEmptyBlock(block, session = null) {
@@ -1564,12 +1766,17 @@ class RichText {
 		this.editor.range.split(range);
 		const br = document.createElement("br");
 		range.insertNode(br);
-		// Position after the break without adding a zero-width character to document text.
-		this.editor.setContent(undefined, { session, selection: { node: br, position: "after" } });
+		let after = br.nextSibling;
+		if (!after || after.nodeType !== Node.TEXT_NODE) {
+			after = document.createTextNode("");
+			br.parentNode.insertBefore(after, br.nextSibling);
+		}
+		this.editor.setContent(undefined, { session, selection: { node: after, offset: 0 } });
 		return true;
 	}
 
 	splitCurrentBlock(session = null) {
+		this.editor.selection.syncFromNative(this.editor.root, session);
 		const range = this.editor.range.current(this.editor.root, session);
 		if (!range) return false;
 		const block = this.blockFor(range.startContainer);

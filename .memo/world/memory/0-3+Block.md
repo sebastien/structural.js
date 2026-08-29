@@ -1,0 +1,1 @@
+Richtext gold-standard contract (101 cases) + editor fixes; example uses relative editor-shell, tabindex 0, initial caret; virtual caret stays visible in-editor.

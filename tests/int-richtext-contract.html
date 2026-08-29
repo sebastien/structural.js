@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rich Text Contract Harness</title>
+  <style>
+    body { margin: 0; font: 16px/1.6 system-ui, sans-serif; }
+    .editor-shell {
+      position: relative;
+      max-width: 640px;
+      margin: 24px auto;
+    }
+    #editor {
+      padding: 16px;
+      border: 1px solid #ccc;
+      min-height: 120px;
+    }
+    #editor p { margin: 0.5em 0; min-height: 1lh; }
+    #editor :is(h1,h2,h3,li) { margin: 0.4em 0; }
+    #caret {
+      position: absolute;
+      width: 2px;
+      height: 1lh;
+      background: #000;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 9999;
+    }
+    #selection {
+      position: absolute;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 9998;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "structural": "/src/js/structural/index.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="editor-shell">
+    <div id="editor"><p>Hello world.</p></div>
+    <div id="caret"></div>
+    <div id="selection"></div>
+  </div>
+
+  <script type="module">
+    import { Editor, Modification, richTextSchema, richTextKeymap, richTextClasses, RichText } from "structural";
+    import { createContractApi } from "/tests/richtext-contract-runner.js";
+
+    const root = document.getElementById("editor");
+    const caret = document.getElementById("caret");
+    const selection = document.getElementById("selection");
+
+    const editor = new Editor(root, {
+      schema: richTextSchema(),
+      keymap: richTextKeymap(),
+      classes: richTextClasses(),
+      plugins: [RichText],
+      text: { eagerBlockCount: 32, maxCacheBytes: 100 * 1024 * 1024 },
+      caret: {
+        mode: "virtual",
+        node: caret,
+        className: "test-caret",
+        styles: { default: { background: "#cc0000", width: "2px" } },
+      },
+      selection: {
+        mode: "virtual",
+        node: selection,
+      },
+    });
+
+    const mod = new Modification(editor);
+    editor.configureActions({
+      toggleInline: (command) => mod.toggleInline(command.args.tag ?? command.args.value),
+      toggleBlock: (command) => mod.toggleBlock(command.args.tag ?? command.args.value),
+    });
+
+    window.__editor = editor;
+    window.__mod = mod;
+    window.__root = root;
+    window.__caret = caret;
+    window.__test = createContractApi({ editor, mod, root });
+  </script>
+</body>
+</html>

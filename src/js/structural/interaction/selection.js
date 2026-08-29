@@ -155,7 +155,11 @@ class Caret {
 	}
 	_onSelectionChange() {
 		const sel = window.getSelection()
-		if (sel && !sel.isCollapsed) this._hide()
+		if (!sel || sel.isCollapsed) return
+		const host = this._container ?? this.node?.parentNode
+		const anchor = sel.anchorNode
+		if (host && anchor && (host === anchor || host.contains(anchor))) return
+		this._hide()
 	}
 	_pointRect(node, offset) {
 		const range = document.createRange()
@@ -868,11 +872,46 @@ class TextSelection {
 			return null;
 		}
 		const adapter = this.cursor.text;
+		const editor = this.cursor?.editor;
+		const startBlock = editor?.blockFor?.(domRange.startContainer);
+		const endBlock = editor?.blockFor?.(domRange.endContainer);
+		const crosses = !!(startBlock && endBlock && startBlock !== endBlock);
+		let spanned = 1;
+		if (crosses && editor?.root) {
+			const selector = editor.blockSelector?.() ?? "p, h1, h2, h3, li, pre, blockquote";
+			const blocks = [...editor.root.querySelectorAll(selector)].filter((block) => {
+				try {
+					return domRange.intersectsNode(block);
+				} catch (_) {
+					return false;
+				}
+			});
+			spanned = blocks.filter(
+				(block) => !blocks.some((other) => other !== block && other.contains(block)),
+			).length;
+		}
 		adapter._beginEdit();
 		try {
 			let point = null;
 			domRange.deleteContents();
-			if (text.length > 0) {
+			if (crosses && startBlock?.isConnected) {
+				if (text.length > 0) {
+					const node = document.createTextNode(text);
+					startBlock.appendChild(node);
+					point = { node, offset: text.length };
+				} else {
+					const last = lastTextNode(startBlock);
+					point = last
+						? { node: last, offset: last.data.length }
+						: { node: startBlock, offset: startBlock.childNodes.length };
+				}
+				for (let i = 1; i < spanned; i += 1) {
+					const following = startBlock.nextElementSibling;
+					if (!following) break;
+					while (following.firstChild) startBlock.appendChild(following.firstChild);
+					following.remove();
+				}
+			} else if (text.length > 0) {
 				const node = document.createTextNode(text);
 				domRange.insertNode(node);
 				point = { node, offset: text.length };
@@ -971,8 +1010,20 @@ class EditorSelectionController {
 		if (textNode) {
 			return this.setCaret(textNode, placement === "end" ? textNode.data.length : 0, session);
 		}
-		if (root.nodeType !== Node.ELEMENT_NODE) return false;
-		return this.setCaret(root, placement === "end" ? root.childNodes.length : 0, session);
+		if (root?.nodeType === Node.ELEMENT_NODE) {
+			const offset = placement === "end" ? root.childNodes.length : 0;
+			if (this.setCaret(root, offset, session)) return true;
+			const child = placement === "end" ? root.lastElementChild : root.firstElementChild;
+			if (child) {
+				const childOffset = placement === "end" ? child.childNodes.length : 0;
+				if (this.setCaret(child, childOffset, session)) return true;
+			}
+		}
+		const active = this.editor.activeSession(session);
+		const index = placement === "end" ? this.editor.text.clampIndex(0x7fffffff) : 0;
+		active.cursor.moveTo(index, { skipBoundaryCollapse: true });
+		this._syncSessionBlock(active);
+		return this.syncToNative(active);
 	}
 
 	// Method: setCaret

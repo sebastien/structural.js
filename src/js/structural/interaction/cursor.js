@@ -47,10 +47,8 @@ class CursorEditing {
 		if (cursor.selectionKind === "range") {
 			cursor.editor?.noteEdit?.("delete", cursor.session);
 			const next = cursor.selection.replaceWithText("");
-			if (next) {
-				cursor._desiredX = null;
-				cursor.moveTo(next.index);
-			}
+			cursor._desiredX = null;
+			cursor.moveTo(next?.index ?? 0);
 			return;
 		}
 		if (cursor.selectionKind === "node") {
@@ -76,10 +74,8 @@ class CursorEditing {
 		if (cursor.selectionKind === "range") {
 			cursor.editor?.noteEdit?.("delete", cursor.session);
 			const next = cursor.selection.replaceWithText("");
-			if (next) {
-				cursor._desiredX = null;
-				cursor.moveTo(next.index);
-			}
+			cursor._desiredX = null;
+			cursor.moveTo(next?.index ?? 0);
 			return;
 		}
 		if (cursor.selectionKind === "node") {
@@ -176,34 +172,57 @@ class CursorNavigation {
 
 	// Method: _advanceHorizontalOffset
 	// Moves caret position horizontally, skipping whitespace according to configuration.
-	_advanceHorizontalOffset(origin, direction) {
+	_advanceHorizontalOffset(origin, direction, options = {}) {
 		const cursor = this.cursor;
-		const current = cursor._canonicalOffset(origin, direction);
-		let next = cursor.text.moveIndex(current, direction, {
-			skipWhitespace: cursor.skipWhitespace,
-		});
-		next = cursor._remapFormattingWhitespace(next, direction).offset;
-		let canonical = cursor._canonicalOffset(next, direction);
-		const movesForward = value =>
-			direction > 0 ? value > current : value < current;
-		while (canonical === current) {
-			const advanced = cursor.text.moveIndex(next, direction, {
+		const movesForward = (from, to) =>
+			direction > 0 ? to > from : to < from;
+		const stepFrom = from => {
+			let next = cursor.text.moveIndex(from, direction, {
 				skipWhitespace: cursor.skipWhitespace,
 			});
-			if (advanced === next) {
-				break;
+			next = cursor._remapFormattingWhitespace(next, direction).offset;
+			let canonical = cursor._canonicalOffset(next, direction);
+			while (canonical === from) {
+				const advanced = cursor.text.moveIndex(next, direction, {
+					skipWhitespace: cursor.skipWhitespace,
+				});
+				if (advanced === next) break;
+				const remapped = cursor._remapFormattingWhitespace(advanced, direction).offset;
+				if (!movesForward(from, remapped)) break;
+				next = remapped;
+				canonical = cursor._canonicalOffset(next, direction);
+				if (!movesForward(from, canonical)) break;
 			}
-			const remapped = cursor._remapFormattingWhitespace(advanced, direction).offset;
-			if (!movesForward(remapped)) {
-				break;
-			}
-			next = remapped;
-			canonical = cursor._canonicalOffset(next, direction);
-			if (!movesForward(canonical)) {
-				break;
+			return canonical;
+		};
+		let current = cursor._canonicalOffset(origin, direction);
+		let target = stepFrom(current);
+		if (options.requireText) {
+			while (target !== current) {
+				if (this._spanHasText(origin, target)) break;
+				const next = stepFrom(target);
+				if (next === target) break;
+				current = target;
+				target = next;
 			}
 		}
-		return canonical;
+		return target;
+	}
+
+	_spanHasText(from, to) {
+		const cursor = this.cursor;
+		const a = cursor.text.pointAt(Math.min(from, to));
+		const b = cursor.text.pointAt(Math.max(from, to));
+		if (!a?.node || !b?.node) return from !== to;
+		if (a.node === b.node && a.node.nodeType === Node.TEXT_NODE) return a.offset !== b.offset;
+		try {
+			const range = document.createRange();
+			range.setStart(a.node, a.offset);
+			range.setEnd(b.node, b.offset);
+			return range.toString().length > 0;
+		} catch (_) {
+			return from !== to;
+		}
 	}
 
 	// Method: _verticalTarget
@@ -240,7 +259,9 @@ class CursorNavigation {
 				anchorOffset = direction < 0 ? range.end : range.start;
 				focusOffset = direction < 0 ? range.start : range.end;
 			}
-			const target = this._advanceHorizontalOffset(focusOffset, direction);
+			const target = this._advanceHorizontalOffset(focusOffset, direction, {
+				requireText: true,
+			});
 			const move = cursor._resolveMoveOffset(target);
 			if (!move) {
 				return;
@@ -273,6 +294,15 @@ class CursorNavigation {
 				offset: structuralSelection.offset,
 				direction: structuralSelection.direction,
 				behavior: structuralSelection.behavior,
+			});
+			return;
+		}
+		const exit = cursor._containerExitAt(cursor.offset, direction);
+		if (exit) {
+			cursor.select(exit.node, {
+				offset: exit.offset,
+				direction: exit.direction,
+				behavior: exit.behavior,
 			});
 			return;
 		}
@@ -637,6 +667,15 @@ class CursorSelection {
 				cursor.moveTo(exitIndex);
 				return;
 			}
+			const inner = cursor._firstStructuralChild(selectedNode, direction);
+			if (inner) {
+				cursor.select(inner.node, {
+					offset: originOffset,
+					direction,
+					behavior: inner.behavior,
+				});
+				return;
+			}
 			const entry = cursor._entryIndexForNode(selectedNode, direction);
 			cursor._clearNodeSelection();
 			cursor.selectionKind = "caret";
@@ -909,6 +948,9 @@ class Cursor {
 	// Method: _isEquivalentBoundary
 	// Determines if two position slots refer to structurally equivalent visual boundaries.
 	_isEquivalentBoundary(a, b) {
+		const blockA = this.editor?.blockFor?.(a?.point?.node);
+		const blockB = this.editor?.blockFor?.(b?.point?.node);
+		if (blockA && blockB && blockA !== blockB) return false;
 		return (
 			a?.boundary?.leftNode === b?.boundary?.leftNode &&
 			b?.boundary?.rightNode === a?.boundary?.rightNode &&
@@ -1203,6 +1245,51 @@ class Cursor {
 		};
 	}
 
+	// Method: _firstStructuralChild
+	// First atom/container child at the near edge of `node` in `direction`, or null if text comes first.
+	_firstStructuralChild(node, direction) {
+		if (!node) return null;
+		const kids = [...node.childNodes];
+		const ordered = direction < 0 ? kids.reverse() : kids;
+		for (const child of ordered) {
+			if (child.nodeType === Node.TEXT_NODE) {
+				if (child.data.length > 0) return null;
+				continue;
+			}
+			if (child.nodeType !== Node.ELEMENT_NODE) continue;
+			if (this.text.isSkipped(child)) continue;
+			if (this.text.isAtom(child)) return { node: child, behavior: "skip" };
+			if (this.text.isContainer(child)) return { node: child, behavior: "enter" };
+		}
+		return null;
+	}
+
+	// Method: _containerExitAt
+	// If `index` is the near-edge text of a container in `direction`, select that container on the way out.
+	_containerExitAt(index, direction) {
+		if (!direction) return null;
+		this.text.ensureIndex(index);
+		const slot = this.text.positionSlotAt(index);
+		if (!this.text.acceptsText(slot)) return null;
+		let el = slot.point?.node;
+		if (el?.nodeType === Node.TEXT_NODE) el = el.parentElement;
+		while (el && el !== this.editor.root) {
+			if (this.text.isContainer(el)) {
+				const first = this._entryIndexForNode(el, 1);
+				const last = this._entryIndexForNode(el, -1);
+				if (direction < 0 && first != null && index === first) {
+					return { node: el, offset: index, direction, behavior: "skip" };
+				}
+				if (direction > 0 && last != null && index === last) {
+					return { node: el, offset: index, direction, behavior: "skip" };
+				}
+				return null;
+			}
+			el = el.parentElement;
+		}
+		return null;
+	}
+
 	// Method: _entryIndexForNode
 	// Computes correct entry caret position when moving cursor into container `node`.
 	_entryIndexForNode(node, direction) {
@@ -1433,6 +1520,7 @@ class Cursor {
 	// Method: moveTo
 	// Sets the cursor location to specified position `offset`.
 	moveTo(offset, options = {}) {
+		this._desiredX = null;
 		this.text.ensureIndex(offset);
 		const previous = this._snapshot();
 		// Any explicit caret movement begins a new structural-scope selection

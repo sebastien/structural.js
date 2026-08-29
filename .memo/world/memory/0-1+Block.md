@@ -1,0 +1,1 @@
+Richtext gold-standard contract: tests/int-richtext-contract.test.js (marked HTML + structural ladder); 101 cases, intended reds allowed; keep existing editing tests.
