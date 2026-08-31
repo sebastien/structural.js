@@ -71,7 +71,7 @@ test("shorthands emit popup changes and replace picked items", async () => {
 test("shorthand example keeps virtual overlays and input active", async () => {
 	const page = await loadPath("/examples/app-shorthands.example.html");
 	try {
-		await page.locator("#editor").click();
+		await page.locator("#editor").click({ position: { x: 4, y: 8 } });
 		await page.keyboard.type(" #");
 		await page.waitForTimeout(20);
 		const state = await page.evaluate(() => ({
@@ -84,6 +84,79 @@ test("shorthand example keeps virtual overlays and input active", async () => {
 		expect(state.menu).toContain("open");
 		expect(state.caret).toBe("visible");
 		expect(state.selection).toBe("hidden");
+	} finally {
+		await closePage(page);
+	}
+});
+
+test("shorthand example hydrates @alice as a mention", async () => {
+	const page = await loadPath("/examples/app-shorthands.example.html");
+	try {
+		const html = await page.evaluate(() => document.querySelector("#editor")?.innerHTML ?? "");
+		expect(html).toContain('data-shorthand="mention"');
+		expect(html).toContain('data-id="alice"');
+		expect(html).toContain("@alice");
+		expect(html).toMatch(/@alice<\/span>\./);
+		expect(html).toContain('data-shorthand="task"');
+		expect(html).toContain('data-id="review"');
+	} finally {
+		await closePage(page);
+	}
+});
+
+test("shorthands detect @alice. as mention query alice", async () => {
+	const page = await loadPath("/tests/int-richtext-harness.html");
+	try {
+		const result = await page.evaluate(async () => {
+			const { Shorthands } = await import("/src/js/structural/index.js");
+			const editor = window.__editor;
+			window.__test.setHTML("<p>Plan the launch with @alice.</p>");
+			const plugin = editor.installPlugin(new Shorthands({
+				definitions: [{
+					id: "mention",
+					trigger: "@",
+					source: (query) => query === "alice" ? [{ id: "alice", label: "alice" }] : [],
+				}],
+			}));
+			const text = editor.root.querySelector("p")?.firstChild;
+			editor.input.cursor.moveTo(editor.text.indexOfPoint({ node: text, offset: text.data.length }));
+			editor.input._editorActive = true;
+			const next = await plugin.update();
+			return { query: next?.query ?? null, id: next?.definition?.id ?? null, html: editor.root.innerHTML };
+		});
+		expect(result.query).toBe("alice");
+		expect(result.id).toBe("mention");
+		expect(result.html).not.toContain("data-shorthand");
+	} finally {
+		await closePage(page);
+	}
+});
+
+test("shorthands auto-commit an exact mention before a delimiter", async () => {
+	const page = await loadPath("/tests/int-richtext-harness.html");
+	try {
+		const result = await page.evaluate(async () => {
+			const { Shorthands } = await import("/src/js/structural/index.js");
+			const editor = window.__editor;
+			window.__test.setHTML("<p></p>");
+			editor.installPlugin(new Shorthands({
+				definitions: [
+					{ id: "mention", trigger: "@", source: (query) => [{ id: "alice", label: "alice" }].filter((item) => item.label.includes(query)) },
+					{ id: "date", trigger: "@", pattern: /^\d{4}-\d{2}-\d{2}$/, auto: "delimiter", element: "structural-date" },
+				],
+			}));
+			editor.input.cursor.moveTo(0);
+			editor.input._editorActive = true;
+			for (const key of ["@", "a", "l", "i", "c", "e", "."]) {
+				editor.input.onKeyDown(new KeyboardEvent("keydown", { key, cancelable: true, target: editor.root }));
+			}
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			return editor.root.innerHTML;
+		});
+		expect(result).toContain('data-shorthand="mention"');
+		expect(result).toContain("@alice");
+		expect(result).toMatch(/@alice<\/span>\./);
+		expect(result).not.toContain("structural-date");
 	} finally {
 		await closePage(page);
 	}

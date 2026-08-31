@@ -1,0 +1,1 @@
+Empty paras are real lines (same-block collapse). Select-all delete leaves caret in remaining empty block. Example overhaul: 1px black blinking pixel-snapped caret, gray selection, shared example.css + lucide/iconify.

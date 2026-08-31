@@ -7,17 +7,10 @@ function ensureStyles(doc = document) {
   if (doc.getElementById(STYLE_ID)) return;
   const style = doc.createElement("style");
   style.id = STYLE_ID;
-  style.textContent = `
+    style.textContent = `
     .collab-shell {
-      --collab-bg: #f5f5f5;
-      --collab-panel: #ffffff;
-      --collab-border: #d9d9d9;
-      --collab-fg: #1e1e1e;
-      --collab-muted: #666666;
-      --collab-accent: #0e639c;
-      --collab-header: #1e1e1e;
-      background: var(--collab-bg);
-      color: var(--collab-fg);
+      background: var(--page, #fafafa);
+      color: var(--ink, #111);
       font-family: system-ui, -apple-system, sans-serif;
     }
     .collab-shell, .collab-shell * { box-sizing: border-box; }
@@ -26,48 +19,50 @@ function ensureStyles(doc = document) {
       align-items: center;
       gap: 12px;
       padding: 10px 16px;
-      background: var(--collab-header);
-      color: #fff;
-      border-bottom: 1px solid #2f2f2f;
+      background: var(--paper, #fff);
+      border-bottom: 1px solid var(--line, #e6e6e6);
     }
     .collab-status {
       padding: 2px 8px;
-      border-radius: 999px;
+      border: 1px solid var(--line, #e6e6e6);
       font-size: 12px;
-      background: #3a3a3a;
+      color: var(--muted, #5c5c5c);
     }
     .collab-toolbar {
       display: flex;
-      gap: 8px;
+      flex-wrap: wrap;
+      gap: 2px;
       align-items: center;
-      padding: 10px 16px;
-      background: #f0f0f0;
-      border-bottom: 1px solid var(--collab-border);
+      padding: 6px 10px;
+      background: var(--paper, #fff);
+      border-bottom: 1px solid var(--line, #e6e6e6);
     }
     .collab-toolbar button {
-      border: 1px solid #c8c8c8;
-      border-radius: 6px;
-      padding: 6px 10px;
-      background: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
       cursor: pointer;
-      font: inherit;
     }
-    .collab-toolbar button:hover { border-color: var(--collab-accent); }
+    .collab-toolbar button:hover { background: var(--fill, #f4f4f4); }
     .collab-toolbar button.active {
-      background: var(--collab-accent);
-      border-color: var(--collab-accent);
-      color: #fff;
+      background: var(--ink, #111);
+      color: var(--paper, #fff);
     }
-    .collab-editor-wrap { padding: 24px; }
+    .collab-toolbar iconify-icon { font-size: 16px; pointer-events: none; }
+    .collab-editor-wrap { position: relative; padding: 24px; }
     .collab-editor {
       min-height: 420px;
       max-width: 720px;
       margin: 0 auto;
       padding: 24px;
-      background: var(--collab-panel);
-      border: 1px solid var(--collab-border);
-      border-radius: 10px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      background: var(--paper, #fff);
+      border: 1px solid var(--line, #e6e6e6);
       outline: none;
       overflow-wrap: anywhere;
       line-height: 1.6;
@@ -78,42 +73,19 @@ function ensureStyles(doc = document) {
     .collab-editor h1,
     .collab-editor h2,
     .collab-editor h3 { margin: 0 0 0.75em; }
-    .collab-editor:focus {
-      border-color: var(--collab-accent);
-      box-shadow: 0 0 0 3px rgba(14, 99, 156, 0.15);
-    }
     .collab-info {
       max-width: 720px;
       margin: 12px auto 0;
-      color: var(--collab-muted);
+      color: var(--muted, #5c5c5c);
       font-size: 13px;
     }
-    .collab-selection {
-      position: absolute;
-      left: 0;
-      top: 0;
-      visibility: hidden;
-      pointer-events: none;
-      z-index: 9998;
-    }
-    .collab-caret {
-      position: absolute;
-      width: 2px;
-      height: 1lh;
-      background: #ff0044;
-      opacity: 0.9;
-      visibility: hidden;
-      pointer-events: none;
-      z-index: 9999;
-      box-shadow: 0 0 0 1px rgba(255,255,255,0.45);
-    }
     .collab-editor .focus {
-      outline: 2px solid rgba(14, 99, 156, 0.9);
+      outline: 1px solid var(--ink, #111);
       outline-offset: 2px;
     }
-    .collab-editor .focus-within { background: rgba(14, 99, 156, 0.08); }
-    .collab-editor .selected { background: rgba(14, 99, 156, 0.16); }
-    .collab-editor .selected-within { background: rgba(14, 99, 156, 0.1); }
+    .collab-editor .focus-within { background: var(--fill, #f4f4f4); }
+    .collab-editor .selected { background: var(--fill-2, #ececec); }
+    .collab-editor .selected-within { background: var(--fill, #f4f4f4); }
   `;
   doc.head.appendChild(style);
 }
@@ -127,18 +99,26 @@ function shellMarkup(infoText) {
         <span style="margin-left:auto;font-size:12px;opacity:0.75;">Yjs + BroadcastChannel</span>
       </div>
       <div class="collab-toolbar">
-        <button type="button" data-kind="inline" data-tag="strong"><strong>B</strong></button>
-        <button type="button" data-kind="inline" data-tag="em"><em>I</em></button>
-        <button type="button" data-kind="block" data-tag="h1">H1</button>
-        <button type="button" data-kind="block" data-tag="blockquote">Quote</button>
-        <span style="margin-left:auto;color:#666;font-size:12px;">Structural editor backed by shared Y.XmlFragment</span>
+        <button type="button" data-kind="inline" data-tag="strong" title="Bold">
+          <iconify-icon icon="lucide:bold"></iconify-icon>
+        </button>
+        <button type="button" data-kind="inline" data-tag="em" title="Italic">
+          <iconify-icon icon="lucide:italic"></iconify-icon>
+        </button>
+        <button type="button" data-kind="block" data-tag="h1" title="Heading 1">
+          <iconify-icon icon="lucide:heading-1"></iconify-icon>
+        </button>
+        <button type="button" data-kind="block" data-tag="blockquote" title="Blockquote">
+          <iconify-icon icon="lucide:quote"></iconify-icon>
+        </button>
+        <span style="margin-left:auto;color:var(--muted,#5c5c5c);font-size:12px;">Structural editor backed by shared Y.XmlFragment</span>
       </div>
       <div class="collab-editor-wrap">
         <div class="collab-editor" contenteditable="true" spellcheck="false"></div>
+        <div id="selection"></div>
+        <div id="caret"></div>
         <div class="collab-info">${infoText}</div>
       </div>
-      <div id="selection" class="collab-selection"></div>
-      <div id="caret" class="collab-caret"></div>
     </div>
   `;
 }
@@ -178,9 +158,17 @@ export function createCollaborationEditor(mount, options = {}) {
     keymap: richTextKeymap(),
     classes: richTextClasses(),
     plugins: [RichText],
+    caret: {
+      mode: "virtual",
+      node: shell.querySelector("#caret"),
+      focused: true,
+    },
+    selection: {
+      mode: "virtual",
+      node: shell.querySelector("#selection"),
+    },
   });
   editor.localSession.nativeSelection = "sync";
-  editor.localSession.cursor.selection.mode = "native";
   const mod = new Modification(editor);
 
   editor.configureActions({
@@ -214,9 +202,8 @@ export function createCollaborationEditor(mount, options = {}) {
     }
   }
 
-  function setStatus(text, color = "#0e639c") {
+  function setStatus(text) {
     statusEl.textContent = text;
-    statusEl.style.background = color;
   }
 
   function normalizeMarkup(markup) {

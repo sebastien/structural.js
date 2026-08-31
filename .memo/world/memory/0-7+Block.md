@@ -1,0 +1,1 @@
+Richtext contract closed (200 green). Empty paras are real lines; select-all delete keeps caret. Virtual caret stays on in-editor native selection. Examples: 1px black blinking pixel-snapped caret, gray selection, example.css + lucide/iconify.

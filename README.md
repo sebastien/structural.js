@@ -39,13 +39,13 @@ You can learn more about each component:
 <head>
   <style>
     .editor { max-width: 600px; margin: 2rem auto; line-height: 1.6; }
-    .focus { outline: 2px solid #0056cc; }
-    .atom { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }
+    .focus { outline: 1px solid #111; }
+    .atom { background: #ececec; padding: 2px 6px; }
     /* Virtual selection/caret hosts sit beside the editor and scroll with it. */
     .editor-shell { position: relative; }
     #selection, #caret { position: absolute; left: 0; top: 0; pointer-events: none; }
     #selection { visibility: hidden; z-index: 10; }
-    #caret { width: 2px; height: 1lh; background: #0056cc; visibility: hidden; z-index: 11; }
+    #caret { width: 1px; height: 1lh; background: #000; visibility: hidden; z-index: 11; }
   </style>
   <script type="importmap">
   {

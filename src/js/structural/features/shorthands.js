@@ -1,12 +1,32 @@
 // Project: structural.js
 // Configurable inline shorthands such as #tags, @mentions, +tasks, and dates.
 
+const QUERY_BODY = "[^\\s#@+!.,;:!?)]*";
+const TRAILING_DELIM = "[.,;:!?)]*";
+const DELIMITER_KEY = /^[\s.,;:!?)]$/u;
+const TOKEN_AFTER = /[\s.,;:!?)]|$/;
+const DEFAULT_QUERY_PATTERN = /^[^\s#@+!.,;:!?)]*$/u;
+
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function shorthandEvent(editor, type, detail) {
 	editor.root.dispatchEvent(new CustomEvent(type, { bubbles: true, detail }));
+}
+
+function patternBody(pattern) {
+	if (!pattern) return null;
+	let source = pattern.source;
+	if (source.startsWith("^")) source = source.slice(1);
+	if (source.endsWith("$")) source = source.slice(0, -1);
+	return source || null;
+}
+
+function itemLabel(item) {
+	if (item == null) return "";
+	if (typeof item === "string") return item;
+	return String(item.label ?? item.name ?? item.id ?? "");
 }
 
 function normalizeDefinition(input, index) {
@@ -18,7 +38,7 @@ function normalizeDefinition(input, index) {
 		id: definition.id ?? `shorthand-${index}`,
 		trigger: String(definition.trigger),
 		pattern: definition.pattern ?? null,
-		queryPattern: definition.queryPattern ?? /^[^\s#@+!]*$/u,
+		queryPattern: definition.queryPattern ?? DEFAULT_QUERY_PATTERN,
 		boundary: definition.boundary ?? /(?:^|\s)$/u,
 		element: definition.element ?? "span",
 		className: definition.className ?? "atom shorthand",
@@ -29,6 +49,7 @@ function normalizeDefinition(input, index) {
 		auto: definition.auto ?? false,
 		create: definition.create,
 		...definition,
+		queryPattern: definition.queryPattern ?? DEFAULT_QUERY_PATTERN,
 	};
 }
 
@@ -52,6 +73,7 @@ class Shorthands {
 		this._rule = { match: /.*/, do: (args) => this._input(args) };
 		editor.addInputRules([this._rule], { prepend: true });
 		editor.root.addEventListener("CursorMove", this._onCursorMove);
+		this.hydrate();
 		return this;
 	}
 
@@ -66,24 +88,55 @@ class Shorthands {
 		return this;
 	}
 
+	_matches(definition, query, context, automatic = false) {
+		if (automatic && !definition.auto) return false;
+		if (definition.pattern && !definition.pattern.test(query)) return false;
+		if (definition.queryPattern && !definition.queryPattern.test(query)) return false;
+		return definition.match ? definition.match(query, context) !== false : true;
+	}
+
 	_definitionFor(trigger, query, context, automatic = false) {
 		return this.definitions.find((definition) => {
 			if (definition.trigger !== trigger) return false;
-			if (automatic && !definition.auto) return false;
-			if (definition.pattern && !definition.pattern.test(query)) return false;
-			if (definition.queryPattern && !definition.queryPattern.test(query)) return false;
-			return definition.match ? definition.match(query, context) !== false : true;
+			return this._matches(definition, query, context, automatic);
 		}) ?? null;
 	}
 
+	_sourceItemsSync(definition, query) {
+		if (typeof definition.source === "function") {
+			const result = definition.source(query, { editor: this.editor });
+			if (result != null && typeof result.then === "function") return null;
+			return Array.isArray(result) ? result : [];
+		}
+		return Array.isArray(definition.items) ? definition.items : [];
+	}
+
+	_exactItem(definition, query) {
+		const items = this._sourceItemsSync(definition, query);
+		if (!items) return null;
+		const needle = String(query);
+		return items.find((item) => itemLabel(item) === needle) ?? null;
+	}
+
+	_betterQuery(candidate, found) {
+		if (!found) return true;
+		if (candidate.start > found.start) return true;
+		if (candidate.start < found.start) return false;
+		return Boolean(candidate.definition.pattern) && !found.definition.pattern;
+	}
+
 	_queryAt(context) {
-		const end = context.offset;
-		const text = this.editor.text.textBetween(Math.max(0, end - 160), end);
+		const caret = context.offset;
+		const text = this.editor.text.textBetween(Math.max(0, caret - 160), caret);
 		let found = null;
 		for (const definition of this.definitions) {
-			const re = new RegExp(`(?:^|\\s)(${escapeRegExp(definition.trigger)})([^\\s#@+!]*$)`, "u");
+			const re = new RegExp(`(?:^|\\s)(${escapeRegExp(definition.trigger)})(${QUERY_BODY})(${TRAILING_DELIM})$`, "u");
 			const match = re.exec(text);
 			if (!match) continue;
+			const query = match[2];
+			const trailing = match[3] ?? "";
+			if (!query && trailing) continue;
+			if (!this._matches(definition, query, context)) continue;
 			const triggerIndex = match.index + match[0].indexOf(match[1]);
 			const before = text.slice(0, triggerIndex);
 			if (typeof definition.boundary === "function") {
@@ -92,11 +145,18 @@ class Shorthands {
 				definition.boundary.lastIndex = 0;
 				if (!definition.boundary.test(before)) continue;
 			}
-			const prefixLength = match[0].length - match[1].length - match[2].length;
-			const start = end - match[0].length + prefixLength;
-			const query = match[2];
-			if (!this._definitionFor(definition.trigger, query, context)) continue;
-			if (!found || start > found.start) found = { definition, trigger: match[1], query, start, end };
+			const prefixLength = match[0].length - match[1].length - query.length - trailing.length;
+			const start = caret - match[0].length + prefixLength;
+			const end = start + match[1].length + query.length;
+			const candidate = {
+				definition,
+				trigger: match[1],
+				query,
+				start,
+				end,
+				limit: caret,
+			};
+			if (this._betterQuery(candidate, found)) found = candidate;
 		}
 		return found;
 	}
@@ -117,11 +177,17 @@ class Shorthands {
 				return true;
 			}
 		}
-		const delimiter = typeof event.key === "string" && /^[\s.,;:!?)]$/u.test(event.key);
+		const delimiter = typeof event.key === "string" && DELIMITER_KEY.test(event.key);
 		if (current && delimiter) {
 			const automatic = this._definitionFor(current.trigger, current.query, context, true);
+			const exact = automatic ? null : this._exactItem(current.definition, current.query);
 			if (automatic) {
 				this.commit({ ...current, definition: automatic }, { session, delimiter: event.key });
+				session.cursor.insertText(event.key);
+				return true;
+			}
+			if (exact) {
+				this.commit({ ...current, item: exact }, { session, delimiter: event.key });
 				session.cursor.insertText(event.key);
 				return true;
 			}
@@ -203,6 +269,92 @@ class Shorthands {
 		return this.commit({ ...shorthand, item }, { session });
 	}
 
+	// Method: hydrate
+	// Commits exact catalog/pattern tokens already present in the document.
+	hydrate() {
+		if (!this.editor) return this;
+		let guard = 0;
+		while (guard++ < 100 && this._hydrateOnce()) {}
+		return this;
+	}
+
+	_hydrateOnce() {
+		const found = this._findHydrateMatch();
+		if (!found) return false;
+		return this.commit(found);
+	}
+
+	_findHydrateMatch() {
+		let best = null;
+		for (const p of this.editor.text.iwalk(this.editor.root, { mode: "text" })) {
+			if (p.node?.nodeType !== Node.TEXT_NODE) continue;
+			for (const candidate of this._candidatesInText(p.node.data)) {
+				const start = this.editor.text.indexOfPoint({ node: p.node, offset: candidate.from });
+				const end = this.editor.text.indexOfPoint({ node: p.node, offset: candidate.to });
+				if (start < 0 || end < 0) continue;
+				if (!best || start > best.start) {
+					best = {
+						definition: candidate.definition,
+						trigger: candidate.trigger,
+						query: candidate.query,
+						start,
+						end,
+						item: candidate.item,
+					};
+				}
+			}
+		}
+		return best;
+	}
+
+	_candidatesInText(data) {
+		const out = [];
+		for (const definition of this.definitions) {
+			const items = this._sourceItemsSync(definition, "") ?? [];
+			const labels = items
+				.map((item) => ({ item, label: itemLabel(item) }))
+				.filter((entry) => entry.label)
+				.sort((a, b) => b.label.length - a.label.length);
+			for (const { item, label } of labels) {
+				const re = new RegExp(`(?:^|\\s)(${escapeRegExp(definition.trigger)})(${escapeRegExp(label)})(?=${TOKEN_AFTER.source})`, "gu");
+				let match = re.exec(data);
+				while (match) {
+					const trigger = match[1];
+					const query = match[2];
+					const from = match.index + match[0].indexOf(trigger);
+					out.push({
+						definition,
+						trigger,
+						query,
+						from,
+						to: from + trigger.length + query.length,
+						item,
+					});
+					match = re.exec(data);
+				}
+			}
+			const body = patternBody(definition.pattern);
+			if (!body) continue;
+			const re = new RegExp(`(?:^|\\s)(${escapeRegExp(definition.trigger)})(${body})(?=${TOKEN_AFTER.source})`, "gu");
+			let match = re.exec(data);
+			while (match) {
+				const trigger = match[1];
+				const query = match[2];
+				const from = match.index + match[0].indexOf(trigger);
+				out.push({
+					definition,
+					trigger,
+					query,
+					from,
+					to: from + trigger.length + query.length,
+					item: { id: query, label: query },
+				});
+				match = re.exec(data);
+			}
+		}
+		return out;
+	}
+
 	dismiss(reason = "dismiss") {
 		if (!this.editor || !this.active) return false;
 		const detail = { ...this.active, reason };
@@ -217,7 +369,8 @@ class Shorthands {
 			return;
 		}
 		const offset = event.detail.current?.offset;
-		if (offset == null || offset < this.active.start || offset > this.active.end) this.dismiss("cursor-move");
+		const limit = this.active.limit ?? this.active.end;
+		if (offset == null || offset < this.active.start || offset > limit) this.dismiss("cursor-move");
 	}
 }
 

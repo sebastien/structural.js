@@ -4,214 +4,32 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alice Rich Text Stress Test — Structural.js</title>
+    <link rel="stylesheet" href="./example.css">
     <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
     <style>
-      :root {
-        --toolbar-bg: #171717;
-        --button-hover: #2f2f2f;
-        --button-active: #0e639c;
-        --fg: #d4d4d4;
-        --fg-hover: #ffffff;
-        --editor-bg: #fffdf8;
-        --editor-fg: #201b17;
-        --border: #303030;
-        --panel: #f4eee6;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, sans-serif;
-        background: var(--editor-bg);
-        color: var(--editor-fg);
-      }
-      .toolbar {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 2px;
-        padding: 6px 8px;
-        background: var(--toolbar-bg);
-        border-bottom: 1px solid var(--border);
-      }
-      .toolbar button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        border: none;
-        border-radius: 4px;
-        background: transparent;
-        color: var(--fg);
-        cursor: pointer;
-        font-size: 20px;
-        transition: background 0.15s, color 0.15s;
-      }
-      .toolbar button:hover {
-        background: var(--button-hover);
-        color: var(--fg-hover);
-      }
-      .toolbar button.active {
-        background: var(--button-active);
-        color: var(--fg-hover);
-      }
-      .toolbar .sep {
-        width: 1px;
-        margin: 4px 4px;
-        background: var(--border);
-        align-self: stretch;
-        flex-shrink: 0;
-      }
-      .toolbar .info {
-        display: flex;
-        align-items: center;
-        margin-left: auto;
-        color: #c7c7c7;
-        font-size: 12px;
-        gap: 10px;
-      }
-      .page {
-        max-width: 980px;
-        margin: 0 auto;
-        padding: 24px;
-      }
-      .intro {
-        margin: 0 0 20px;
-        padding: 16px 18px;
-        background: var(--panel);
-        border: 1px solid #e1d6c8;
-        border-radius: 12px;
-      }
-      .intro h1 {
-        margin: 0 0 8px;
-        font-size: 20px;
-      }
-      .intro p {
-        margin: 0;
-        line-height: 1.5;
-      }
+      .example-page.wide { max-width: 48rem; }
+      .status { margin: 0 0 1rem; color: var(--muted); font-size: 13px; }
       .editor-shell {
-        position: relative;
-        max-width: 760px;
-        margin: 0 auto 64px;
-        padding: 28px 32px 48px;
-        background: #ffffff;
-        border: 1px solid #e4dbcf;
-        border-radius: 16px;
-        box-shadow: 0 18px 48px rgba(60, 42, 18, 0.08);
+        padding: 1.5rem 0 3rem;
       }
-      .editor {
-        color: var(--editor-fg);
-        line-height: 1.65;
-        font-size: 16px;
-        cursor: text;
-        outline: none;
-      }
-      #caret {
-        position: absolute;
-        width: 2px;
-        height: 1lh;
-        background: #ff8800;
-        visibility: hidden;
-        pointer-events: none;
-        z-index: 9999;
-      }
-      #selection {
-        position: absolute;
-        visibility: hidden;
-        pointer-events: none;
-        z-index: 9998;
-      }
-      .editor h1 { font-size: 2.25em; margin: 0 0 0.6em; }
-      .editor h2 { font-size: 1.45em; margin: 1.5em 0 0.6em; }
-      .editor h3 { font-size: 1.15em; margin: 1.15em 0 0.45em; letter-spacing: 0.04em; text-transform: uppercase; }
-      .editor p { margin: 0.45em 0; }
-      .editor section {
-        margin: 1.25em 0;
-      }
-      .editor header {
-        margin: 0 0 1em;
-      }
-      .editor nav {
+      #editor nav {
         margin: 1.75em 0;
         padding: 1em 1.15em;
-        background: #faf6ef;
-        border: 1px solid #eadfce;
-        border-radius: 10px;
+        background: var(--fill);
+        border: 1px solid var(--line);
       }
-      .editor ul, .editor ol { margin: 0.5em 0 0.75em; padding-left: 2em; }
-      .editor li { margin: 0.25em 0; }
-      .editor pre {
+      #editor pre {
         margin: 0.9em 0;
         padding: 0.8em 1em;
-        border-radius: 10px;
-        background: #f6f8fb;
-        border: 1px solid #d9e1ed;
+        background: var(--fill);
+        border: 1px solid var(--line);
         white-space: pre-wrap;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.95em;
         line-height: 1.55;
       }
-      .editor :is(h1, h2, h3, p, pre, li) { min-height: 1lh; }
-      .editor :is(section, nav, header, h1, h2, h3, p, pre, li, blockquote, strong, em, code) {
-        transition: background-color 0.15s, outline-color 0.15s;
-      }
-      .editor .focus {
-        outline: 2px solid rgba(14, 99, 156, 0.9);
-        outline-offset: 2px;
-      }
-      .editor .focus-within {
-        background: rgba(14, 99, 156, 0.08);
-      }
-      .editor .selected {
-        background: rgba(14, 99, 156, 0.16);
-      }
-      .editor .selected-within {
-        background: rgba(14, 99, 156, 0.1);
-      }
-      .editor blockquote {
-        margin: 0.9em 0;
-        padding: 0.6em 1em;
-        border-left: 3px solid #0e639c;
-        background: #f6f8fb;
-      }
-      .editor code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        background: #f2eee8;
-        padding: 0.08em 0.28em;
-        border-radius: 3px;
-        font-size: 0.92em;
-      }
-      .editor strong { font-weight: 650; }
-      .editor em { font-style: italic; }
-      .status {
-        max-width: 760px;
-        margin: 0 auto 16px;
-        color: #6c5e51;
-        font-size: 13px;
-      }
-      .my-caret {
-        box-shadow: 0 0 0 1px #ffffff;
-        border-radius: 1px;
-      }
-      .my-sel {
-        outline: 1px solid rgba(255,255,255,0.35);
-        outline-offset: -1px;
-      }
-      @media (max-width: 720px) {
-        .page { padding: 12px; }
-        .editor-shell {
-          padding: 20px 18px 32px;
-          border-radius: 12px;
-        }
-        .toolbar .info {
-          width: 100%;
-          margin-left: 0;
-          justify-content: space-between;
-        }
-      }
+      #editor section { margin: 1.25em 0; }
+      #editor h3 { letter-spacing: 0.04em; text-transform: uppercase; }
     </style>
     <script type="importmap">
     {
@@ -222,55 +40,54 @@
     </script>
   </head>
   <body>
-    <div class="toolbar" id="toolbar">
+    <div class="example-toolbar" id="toolbar">
       <button data-kind="inline" data-tag="strong" title="Bold (Ctrl+B)">
-        <iconify-icon icon="mdi:format-bold"></iconify-icon>
+        <iconify-icon icon="lucide:bold"></iconify-icon>
       </button>
       <button data-kind="inline" data-tag="em" title="Italic (Ctrl+I)">
-        <iconify-icon icon="mdi:format-italic"></iconify-icon>
+        <iconify-icon icon="lucide:italic"></iconify-icon>
       </button>
       <button data-kind="inline" data-tag="code" title="Monospace (Ctrl+`)">
-        <iconify-icon icon="mdi:code-tags"></iconify-icon>
+        <iconify-icon icon="lucide:code"></iconify-icon>
       </button>
       <span class="sep"></span>
       <button data-kind="block" data-tag="h1" title="Heading 1 (Ctrl+1)">
-        <iconify-icon icon="mdi:format-header-1"></iconify-icon>
+        <iconify-icon icon="lucide:heading-1"></iconify-icon>
       </button>
       <button data-kind="block" data-tag="h2" title="Heading 2 (Ctrl+2)">
-        <iconify-icon icon="mdi:format-header-2"></iconify-icon>
+        <iconify-icon icon="lucide:heading-2"></iconify-icon>
       </button>
       <button data-kind="block" data-tag="h3" title="Heading 3 (Ctrl+3)">
-        <iconify-icon icon="mdi:format-header-3"></iconify-icon>
+        <iconify-icon icon="lucide:heading-3"></iconify-icon>
       </button>
       <span class="sep"></span>
       <button data-kind="block" data-tag="ul" title="Bullet List">
-        <iconify-icon icon="mdi:format-list-bulleted"></iconify-icon>
+        <iconify-icon icon="lucide:list"></iconify-icon>
       </button>
       <button data-kind="block" data-tag="ol" title="Numbered List">
-        <iconify-icon icon="mdi:format-list-numbered"></iconify-icon>
+        <iconify-icon icon="lucide:list-ordered"></iconify-icon>
       </button>
       <span class="sep"></span>
       <button data-kind="block" data-tag="blockquote" title="Blockquote">
-        <iconify-icon icon="mdi:format-quote-open"></iconify-icon>
+        <iconify-icon icon="lucide:quote"></iconify-icon>
       </button>
       <div class="info">
         <span id="docStatus">Loading Alice from reference HTML…</span>
-        <label style="display:flex;align-items:center;gap:6px;">
+        <label>
           <input type="checkbox" id="nativeCaretToggle"> Native caret / selection
         </label>
       </div>
     </div>
 
-    <div class="page">
-      <section class="intro">
+    <div class="example-page wide">
+      <header class="example-header">
         <h1>Alice Rich Text Stress Test</h1>
         <p>This example loads the full text from <code>examples/ref-alice_in_wonderland.html</code>, converts it into Structural.js rich-text blocks, and leaves it fully editable.</p>
-      </section>
-
+      </header>
       <div class="status" id="stats"></div>
-      <div class="status" id="perf" style="font-family: ui-monospace, monospace; font-size: 12px; color:#6c5e51;"></div>
+      <div class="status" id="perf" style="font-family: ui-monospace, monospace; font-size: 12px;"></div>
       <div class="editor-shell">
-        <div class="editor" id="editor" tabindex="0"></div>
+        <div class="example-editor" id="editor" tabindex="0"></div>
         <div id="selection" aria-hidden="true"></div>
         <div id="caret" aria-hidden="true"></div>
       </div>
@@ -325,26 +142,15 @@
           keymap: richTextKeymap(),
           classes: richTextClasses(),
           plugins: [RichText],
-          // Windowing/perf tuning exposed for the stress test
           text: { eagerBlockCount: 12, maxCacheBytes: 100 * 1024 * 1024 },
           caret: {
             mode: "virtual",
             node: document.getElementById("caret"),
-            className: "my-caret",
-            styles: {
-              default: { background: "#ff8800", width: "2px" },
-              focus: { background: "#ff0000", width: "2px" }
-            },
             focused: true
           },
           selection: {
             mode: "virtual",
-            node: document.getElementById("selection"),
-            className: "my-sel",
-            styles: {
-              default: { background: "rgba(255, 136, 0, 0.22)" },
-              focus: { background: "rgba(255, 0, 0, 0.22)" }
-            }
+            node: document.getElementById("selection")
           }
         });
 
@@ -402,7 +208,6 @@
         editor.classes?.update();
         updateToolbar();
 
-        // Simple perf HUD: poll text adapter stats every 500ms
         const perfEl = document.getElementById("perf");
         function updatePerf() {
           if (!editor || !editor.text || !perfEl) return;
@@ -424,7 +229,6 @@
         const navCount = editorNode.querySelectorAll("nav").length;
         stats.textContent = `${blockCount.toLocaleString()} editable blocks loaded across ${sectionCount.toLocaleString()} sections and ${navCount.toLocaleString()} navigation regions.`;
         docStatus.textContent = "Loaded from ref-alice_in_wonderland.html";
-        // Optional: expose stats for console inspection
         window.__aliceStats = () => editor && editor.text && editor.text.stats;
       }
 

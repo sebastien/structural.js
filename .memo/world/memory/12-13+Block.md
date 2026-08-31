@@ -1,0 +1,1 @@
+CursorMove previous.anchor undefined on first moveTo (optional-chain classList). Uncommitted tree: example.css, shorthands hydrate/delimiter, caret blink/snap; skip .memo, shorthands-alice.png, deps/. Detached HEAD de34157.

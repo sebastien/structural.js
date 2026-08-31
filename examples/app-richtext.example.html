@@ -4,139 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rich Text Editor — Structural.js</title>
+    <link rel="stylesheet" href="./example.css">
     <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
-    <style>
-      :root {
-        --toolbar-bg: #1e1e1e;
-        --button-hover: #3a3a3a;
-        --button-active: #0e639c;
-        --fg: #cccccc;
-        --fg-hover: #ffffff;
-        --editor-bg: #ffffff;
-        --editor-fg: #1e1e1e;
-        --border: #3a3a3a;
-      }
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, sans-serif;
-      }
-      .toolbar {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 2px;
-        padding: 6px 8px;
-        background: var(--toolbar-bg);
-        border-bottom: 1px solid var(--border);
-      }
-      .toolbar button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        border: none;
-        border-radius: 4px;
-        background: transparent;
-        color: var(--fg);
-        cursor: pointer;
-        font-size: 20px;
-        transition: background 0.15s, color 0.15s;
-      }
-      .toolbar button:hover {
-        background: var(--button-hover);
-        color: var(--fg-hover);
-      }
-      .toolbar button.active {
-        background: var(--button-active);
-        color: var(--fg-hover);
-      }
-      .toolbar .sep {
-        width: 1px;
-        margin: 4px 4px;
-        background: var(--border);
-        align-self: stretch;
-        flex-shrink: 0;
-      }
-      .editor-shell {
-        position: relative;
-        max-width: 680px;
-        margin: 32px auto;
-        padding: 0 24px;
-      }
-      .editor {
-        color: var(--editor-fg);
-        line-height: 1.6;
-        font-size: 16px;
-        cursor: text;
-        outline: none;
-      }
-      #caret {
-        position: absolute;
-        width: 2px;
-        height: 1lh;
-        background: #ff8800;
-        visibility: hidden;
-        pointer-events: none;
-        z-index: 9999;
-      }
-      #selection {
-        position: absolute;
-        visibility: hidden;
-        pointer-events: none;
-        z-index: 9998;
-      }
-      .editor h1 { font-size: 2em; margin: 0.67em 0; }
-      .editor h2 { font-size: 1.5em; margin: 0.75em 0; }
-      .editor h3 { font-size: 1.17em; margin: 0.83em 0; }
-      .editor p { margin: 0.5em 0; }
-      .editor ul, .editor ol { margin: 0.5em 0; padding-left: 2em; }
-      .editor li { margin: 0.25em 0; }
-      .editor :is(h1, h2, h3, p, li) { min-height: 1lh; }
-      .editor :is(h1, h2, h3, p, li, blockquote, strong, em, code) {
-        transition: background-color 0.15s, outline-color 0.15s;
-      }
-      .editor .focus {
-        outline: 2px solid rgba(14, 99, 156, 0.9);
-        outline-offset: 2px;
-      }
-      .editor .focus-within {
-        background: rgba(14, 99, 156, 0.08);
-      }
-      .editor .selected {
-        background: rgba(14, 99, 156, 0.16);
-      }
-      .editor .selected-within {
-        background: rgba(14, 99, 156, 0.1);
-      }
-      .editor blockquote {
-        margin: 0.5em 0;
-        padding: 0.25em 1em;
-        border-left: 3px solid #0e639c;
-        background: #f5f8fc;
-      }
-      .editor code {
-        font-family: monospace;
-        background: #f0f0f0;
-        padding: 0.1em 0.3em;
-        border-radius: 3px;
-        font-size: 0.9em;
-      }
-      .editor strong { font-weight: 600; }
-      .editor em { font-style: italic; }
-
-      /* Demo styles for virtual caret & selection (configured via Editor options) */
-      .my-caret {
-        box-shadow: 0 0 0 1px #ffffff;
-        border-radius: 1px;
-      }
-      .my-sel {
-        outline: 1px solid rgba(255,255,255,0.35);
-        outline-offset: -1px;
-      }
-    </style>
     <script type="importmap">
     {
       "imports": {
@@ -146,58 +15,59 @@
     </script>
   </head>
   <body>
-    <div class="toolbar" id="toolbar">
+    <div class="example-toolbar" id="toolbar">
       <button data-kind="inline" data-tag="strong" title="Bold (Ctrl+B)">
-        <iconify-icon icon="mdi:format-bold"></iconify-icon>
+        <iconify-icon icon="lucide:bold"></iconify-icon>
       </button>
       <button data-kind="inline" data-tag="em" title="Italic (Ctrl+I)">
-        <iconify-icon icon="mdi:format-italic"></iconify-icon>
+        <iconify-icon icon="lucide:italic"></iconify-icon>
       </button>
-      <button data-kind="inline" data-tag="code" title="Monospace (Ctrl+\`)">
-        <iconify-icon icon="mdi:code-tags"></iconify-icon>
+      <button data-kind="inline" data-tag="code" title="Monospace (Ctrl+`)">
+        <iconify-icon icon="lucide:code"></iconify-icon>
       </button>
       <span class="sep"></span>
       <button data-kind="block" data-tag="h1" title="Heading 1 (Ctrl+1)">
-        <iconify-icon icon="mdi:format-header-1"></iconify-icon>
+        <iconify-icon icon="lucide:heading-1"></iconify-icon>
       </button>
       <button data-kind="block" data-tag="h2" title="Heading 2 (Ctrl+2)">
-        <iconify-icon icon="mdi:format-header-2"></iconify-icon>
+        <iconify-icon icon="lucide:heading-2"></iconify-icon>
       </button>
       <button data-kind="block" data-tag="h3" title="Heading 3 (Ctrl+3)">
-        <iconify-icon icon="mdi:format-header-3"></iconify-icon>
+        <iconify-icon icon="lucide:heading-3"></iconify-icon>
       </button>
       <span class="sep"></span>
       <button data-kind="block" data-tag="ul" title="Bullet List">
-        <iconify-icon icon="mdi:format-list-bulleted"></iconify-icon>
+        <iconify-icon icon="lucide:list"></iconify-icon>
       </button>
       <button data-kind="block" data-tag="ol" title="Numbered List">
-        <iconify-icon icon="mdi:format-list-numbered"></iconify-icon>
+        <iconify-icon icon="lucide:list-ordered"></iconify-icon>
       </button>
       <span class="sep"></span>
       <button data-kind="block" data-tag="blockquote" title="Blockquote">
-        <iconify-icon icon="mdi:format-quote-open"></iconify-icon>
+        <iconify-icon icon="lucide:quote"></iconify-icon>
       </button>
-      <span class="sep"></span>
-      <label style="display:flex;align-items:center;gap:6px;color:#ccc;font-size:12px;margin-left:6px;">
+      <label>
         <input type="checkbox" id="nativeCaretToggle"> Native caret / selection
       </label>
     </div>
 
-    <div class="editor-shell">
-      <div class="editor" id="editor" tabindex="0">
-        <h1>Rich Text Editor</h1>
-        <p>This is a <strong>rich text</strong> editor built with <em>Structural.js</em>. Try formatting text using the toolbar above or keyboard shortcuts.</p>
-        <p>Select some text and toggle <strong>bold</strong>, <em>italic</em>, or <code>monospace</code> inline styles. You can also click a word to format it without selecting.</p>
-        <h2>Block Formatting</h2>
-        <p>Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.</p>
-        <blockquote>
-          <p>Blockquotes are great for highlighting quotes, citations, or callout content. Toggle the button again to remove.</p>
-        </blockquote>
-        <h3>Try It Out</h3>
-        <p>Place your cursor anywhere and click the toolbar buttons. The active format is highlighted in blue. Keyboard shortcuts work too: <code>Ctrl+B</code> for bold, <code>Ctrl+I</code> for italic, <code>Ctrl+\`</code> for monospace, and <code>Ctrl+1/2/3</code> for headings.</p>
+    <div class="example-page">
+      <div class="editor-shell">
+        <div class="example-editor" id="editor" tabindex="0">
+          <h1>Rich Text Editor</h1>
+          <p>This is a <strong>rich text</strong> editor built with <em>Structural.js</em>. Try formatting text using the toolbar above or keyboard shortcuts.</p>
+          <p>Select some text and toggle <strong>bold</strong>, <em>italic</em>, or <code>monospace</code> inline styles. You can also click a word to format it without selecting.</p>
+          <h2>Block Formatting</h2>
+          <p>Use the heading buttons to promote paragraphs into heading levels. Create bullet lists for structured content.</p>
+          <blockquote>
+            <p>Blockquotes are great for highlighting quotes, citations, or callout content. Toggle the button again to remove.</p>
+          </blockquote>
+          <h3>Try It Out</h3>
+          <p>Place your cursor anywhere and click the toolbar buttons. The active format is highlighted. Keyboard shortcuts work too: <code>Ctrl+B</code> for bold, <code>Ctrl+I</code> for italic, <code>Ctrl+`</code> for monospace, and <code>Ctrl+1/2/3</code> for headings.</p>
+        </div>
+        <div id="selection" aria-hidden="true"></div>
+        <div id="caret" aria-hidden="true"></div>
       </div>
-      <div id="selection" aria-hidden="true"></div>
-      <div id="caret" aria-hidden="true"></div>
     </div>
 
     <script type="module">
@@ -214,21 +84,11 @@
         caret: {
           mode: "virtual",
           node: document.getElementById("caret"),
-          className: "my-caret",
-          styles: {
-            default: { background: "#ff8800", width: "2px" },
-            focus: { background: "#ff0000", width: "2px" },
-          },
           focused: true,
         },
         selection: {
           mode: "virtual",
           node: document.getElementById("selection"),
-          className: "my-sel",
-          styles: {
-            default: { background: "rgba(255, 136, 0, 0.22)" },
-            focus: { background: "rgba(255, 0, 0, 0.22)" },
-          },
         },
       });
       const mod = new Modification(editor);
@@ -293,7 +153,6 @@
       const nativeToggle = document.getElementById('nativeCaretToggle');
       nativeToggle.addEventListener('change', () => {
         const useNative = nativeToggle.checked;
-        // Configure session + cursor modes to switch between virtual (custom) and native (browser) caret/selection.
         editor.localSession.nativeSelection = "sync";
         const cur = editor.localSession.cursor;
         if (cur) {
@@ -306,7 +165,6 @@
               if (cur.selection.overlay.node) cur.selection.overlay.node.style.visibility = "hidden";
             }
           }
-          // Force a visual refresh at current position so the switch is immediate.
           editor.text.refresh?.();
           const off = (cur.offset ?? 0);
           try { cur.moveTo(off); } catch (_) {}

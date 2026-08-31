@@ -4,39 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Structural shorthand editor</title>
+    <link rel="stylesheet" href="./example.css">
     <style>
-      :root { color-scheme: light; font: 16px/1.6 system-ui, sans-serif; }
-      body { max-width: 760px; margin: 3rem auto; padding: 0 1rem; color: #20242a; }
-      h1 { margin-bottom: .25rem; font-size: 1.8rem; }
-      .hint { color: #68717d; margin-top: 0; }
-      .editor-shell { position: relative; }
-      #editor { min-height: 12rem; padding: 1rem 1.1rem; border: 1px solid #cbd2da; border-radius: 10px; outline: none; }
-      #editor:focus { border-color: #356ae6; box-shadow: 0 0 0 3px #356ae622; }
-      #caret { position: absolute; width: 2px; height: 1lh; background: #356ae6; pointer-events: none; visibility: hidden; z-index: 3; }
-      #selection { position: absolute; pointer-events: none; visibility: hidden; z-index: 2; }
-      #editor .atom { display: inline-block; padding: 0 .4em; border-radius: .45em; background: #e9eefc; color: #254eaa; }
-      #editor .shorthand[data-shorthand="task"] { background: #e7f5ed; color: #17643b; }
-      #editor .shorthand[data-shorthand="topic"] { background: #fff0d9; color: #8b5200; }
-      #suggestions { display: none; position: absolute; z-index: 2; width: 15rem; margin-top: .4rem; padding: .35rem; border: 1px solid #cbd2da; border-radius: 8px; background: white; box-shadow: 0 8px 24px #20242a22; }
-      #suggestions.open { display: grid; gap: .2rem; }
-      #suggestions button { padding: .45rem .6rem; border: 0; border-radius: 5px; background: transparent; text-align: left; cursor: pointer; }
-      #suggestions button:hover { background: #edf2ff; }
-      #events { min-height: 1.5em; margin-top: 1rem; color: #68717d; font: .8rem ui-monospace, monospace; }
+      #editor .atom { display: inline-block; }
+      #editor .shorthand[data-shorthand="task"] { background: var(--paper); border: 1px solid var(--ink); }
+      #editor .shorthand[data-shorthand="topic"] { background: var(--paper); border-bottom: 2px solid var(--ink); border-radius: 0; padding-left: 0; padding-right: 0; }
     </style>
     <script type="importmap">
       { "imports": { "structural": "../src/js/structural/index.js" } }
     </script>
   </head>
   <body>
-    <h1>Configurable shorthands</h1>
-    <p class="hint">Try <code>#</code>, <code>@</code>, <code>+</code>, or <code>!</code>. Type a date such as <code>@2026-08-23 </code> to convert it automatically.</p>
-    <div class="editor-shell">
-      <div id="editor" tabindex="0"><p>Plan the launch with @alice.</p><p>Remember to +review the release notes.</p></div>
-      <div id="selection" aria-hidden="true"></div>
-      <div id="caret" aria-hidden="true"></div>
-      <div id="suggestions" role="listbox" aria-label="Shorthand suggestions"></div>
+    <div class="example-page">
+      <header class="example-header">
+        <h1>Configurable shorthands</h1>
+        <p class="hint">Try <code>#</code>, <code>@</code>, <code>+</code>, or <code>!</code>. Type a date such as <code>@2026-08-23 </code> to convert it automatically.</p>
+      </header>
+      <div class="editor-shell">
+        <div id="editor" class="example-editor" tabindex="0"><p>Plan the launch with @alice.</p><p>Remember to +review the release notes.</p></div>
+        <div id="selection" aria-hidden="true"></div>
+        <div id="caret" aria-hidden="true"></div>
+        <div id="suggestions" role="listbox" aria-label="Shorthand suggestions"></div>
+      </div>
+      <div id="events" aria-live="polite"></div>
     </div>
-    <div id="events" aria-live="polite"></div>
 
     <script type="module">
       import {
@@ -60,14 +51,13 @@
         schema: richTextSchema(),
         keymap: richTextKeymap(),
         classes: richTextClasses(),
-        // Keep distinct structural boundaries addressable, including empty blocks.
         cursor: { preserveSemanticBoundaries: true, collapseBoundary: false },
         caret: { node: caret, mode: "virtual", focused: true },
         selection: { node: selection, mode: "virtual" },
         plugins: [RichText, new Shorthands({
           definitions: [
             { id: "tag", trigger: "#", source: (query) => filter("tag", query) },
-            { id: "mention", trigger: "@", source: (query) => filter("mention", query) },
+            { id: "mention", trigger: "@", className: "atom shorthand mention", source: (query) => filter("mention", query) },
             { id: "task", trigger: "+", source: (query) => filter("task", query) },
             { id: "topic", trigger: "!", source: (query) => filter("topic", query) },
             { id: "date", trigger: "@", pattern: /^\d{4}-\d{2}-\d{2}$/, auto: "delimiter" },

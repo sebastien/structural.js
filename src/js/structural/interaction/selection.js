@@ -3,6 +3,25 @@ import { LEGACY_STRUCTURAL_SELECTOR, firstTextNode, lastTextNode } from "../foun
 // Author: Sebastien Pierre
 // License: Revised BSD License
 
+const CARET_STYLE_ID = "structural-caret-style";
+const DEFAULT_CARET_STYLE = { width: "1px", background: "#000" };
+const DEFAULT_SELECTION_FILL = "rgba(0, 0, 0, 0.18)";
+
+// Snaps a CSS length onto the device pixel grid.
+export function snapCssPx(value, dpr = window.devicePixelRatio || 1) {
+	return Math.round(value * dpr) / dpr;
+}
+
+// Injects the default caret blink keyframes once per document.
+export function ensureCaretStylesheet(doc = document) {
+	if (!doc?.getElementById || doc.getElementById(CARET_STYLE_ID)) return;
+	const style = doc.createElement("style");
+	style.id = CARET_STYLE_ID;
+	style.textContent =
+		"@keyframes structural-caret-blink{0%,49%{opacity:1}50%,100%{opacity:0}}.caret-blink{animation:structural-caret-blink 1s step-end infinite}";
+	doc.head.appendChild(style);
+}
+
 // Prepares a virtual overlay host and optionally mounts it under `container`.
 export function prepareOverlayHost(node, container = null) {
 	if (!node) return null;
@@ -12,10 +31,10 @@ export function prepareOverlayHost(node, container = null) {
 	if (!node.style.visibility) node.style.visibility = "hidden";
 	node.setAttribute("aria-hidden", "true");
 	node.style.pointerEvents = "none";
-	if (container && container.nodeType === Node.ELEMENT_NODE) {
+		if (container && container.nodeType === Node.ELEMENT_NODE) {
 		const containerPos = container.style.position || getComputedStyle(container).position;
 		if (!containerPos || containerPos === "static") container.style.position = "relative";
-		if (node.parentNode !== container) container.appendChild(node);
+		if (node.parentNode !== container || container.lastElementChild !== node) container.appendChild(node);
 	}
 	return node;
 }
@@ -56,6 +75,7 @@ class Caret {
 		this._container = this._config.container ?? null
 		if (this.mode === "virtual" && this.node) prepareOverlayHost(this.node, this._container)
 		this.focused = !!this._config.focused
+		this._blink = this._config.blink !== false
 		this._className = this._config.className || null
 		this._classes = this._config.classes || null
 		this._style = this._config.style || null
@@ -66,6 +86,7 @@ class Caret {
 		this._measureCanvas = document.createElement("canvas")
 		this._onSelectionChange = this._onSelectionChange.bind(this)
 		if (this.mode !== "native") document.addEventListener("selectionchange", this._onSelectionChange)
+		if (this.mode === "virtual" && this.node && this._blink) ensureCaretStylesheet(this.node.ownerDocument)
 		this._applyInitialVisual()
 	}
 
@@ -106,6 +127,7 @@ class Caret {
 					})
 		}
 		add(this._className)
+		if (this._blink) add("caret-blink")
 		if (stateCfg?.classes) add(stateCfg.classes[state] || stateCfg.classes.default || null)
 		for (const c of this._managedClasses) if (!toAdd.has(c)) this.node.classList.remove(c)
 		for (const c of toAdd) if (!this.node.classList.contains(c)) this.node.classList.add(c)
@@ -113,7 +135,7 @@ class Caret {
 	}
 	_applyInlineStyles(stateCfg) {
 		if (!this.node) return
-		const next = {}
+		const next = { ...DEFAULT_CARET_STYLE }
 		const merge = (obj) => {
 			if (obj && typeof obj === "object") Object.assign(next, obj)
 		}
@@ -244,12 +266,12 @@ class Caret {
 	}
 	_showAt(x, y, height) {
 		if (this.node) {
-			this.node.style.left = `${Math.floor(x)}px`
-			this.node.style.top = `${Math.round(y)}px`
-			if (height !== undefined) this.node.style.height = `${Math.max(1, Math.round(height))}px`
+			this.node.style.left = `${snapCssPx(x)}px`
+			this.node.style.top = `${snapCssPx(y)}px`
+			if (height !== undefined) this.node.style.height = `${Math.max(1, snapCssPx(height))}px`
 			this.node.style.visibility = "visible"
 			this._applyState(this.focused ? "focus" : "default")
-			if (this.node.classList?.contains("caret-blink")) {
+			if (this._blink) {
 				this.node.classList.remove("caret-blink")
 				void this.node.offsetWidth
 				this.node.classList.add("caret-blink")
@@ -469,15 +491,14 @@ class SelectionOverlay {
 				const local = clientToHostLocal(rect.left, rect.top, this.node);
 				const block = document.createElement("div");
 				block.style.position = "absolute";
-				block.style.left = `${local.x}px`;
-				block.style.top = `${local.y}px`;
-				block.style.width = `${rect.width}px`;
-				block.style.height = `${rect.height}px`;
+				block.style.left = `${snapCssPx(local.x)}px`;
+				block.style.top = `${snapCssPx(local.y)}px`;
+				block.style.width = `${snapCssPx(rect.width)}px`;
+				block.style.height = `${snapCssPx(rect.height)}px`;
 				block.style.boxSizing = "border-box";
 				block.style.pointerEvents = "none";
-				// default fallback only if no style provided
 				if (!cfg.direct && !cfg.byKey) {
-					block.style.backgroundColor = "rgba(0, 120, 255, 0.22)";
+					block.style.backgroundColor = DEFAULT_SELECTION_FILL;
 				}
 				this._applyBlockVisual(block, cfg, state);
 				return block;

@@ -1,0 +1,366 @@
+:root {
+	--paper: #fff;
+	--ink: #111;
+	--muted: #5c5c5c;
+	--line: #e6e6e6;
+	--fill: #f4f4f4;
+	--fill-2: #ececec;
+	--page: #fafafa;
+	--sel: rgba(0, 0, 0, 0.18);
+	color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	min-height: 100%;
+	background: var(--page);
+	color: var(--ink);
+	font: 16px/1.55 system-ui, -apple-system, sans-serif;
+}
+
+body {
+	padding: 0;
+}
+
+.example-page {
+	max-width: 42rem;
+	margin: 0 auto;
+	padding: 2.5rem 1.25rem 4rem;
+}
+
+.example-page.wide {
+	max-width: 64rem;
+}
+
+.example-header {
+	margin: 0 0 1.5rem;
+}
+
+.example-header h1 {
+	margin: 0 0 0.35rem;
+	font-size: 1.35rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.example-lead,
+.example-header p {
+	margin: 0;
+	max-width: 62ch;
+	color: var(--muted);
+	font-size: 0.95rem;
+	line-height: 1.5;
+}
+
+.example-toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	padding: 0.4rem 0.6rem;
+	background: var(--paper);
+	border-bottom: 1px solid var(--line);
+}
+
+.example-toolbar button,
+button.example-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--ink);
+	cursor: pointer;
+}
+
+.example-toolbar button:hover,
+button.example-icon:hover {
+	background: var(--fill);
+}
+
+.example-toolbar button.active,
+button.example-icon.active {
+	background: var(--ink);
+	color: var(--paper);
+}
+
+.example-toolbar button:disabled,
+button.example-icon:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
+}
+
+.example-toolbar iconify-icon,
+button.example-icon iconify-icon {
+	font-size: 16px;
+	pointer-events: none;
+}
+
+.example-toolbar .sep {
+	width: 1px;
+	align-self: stretch;
+	margin: 4px 6px;
+	background: var(--line);
+	flex-shrink: 0;
+}
+
+.example-toolbar .info,
+.example-toolbar label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.example-toolbar input[type="checkbox"] {
+	margin: 0;
+	accent-color: var(--ink);
+}
+
+.editor-shell {
+	position: relative;
+}
+
+.example-editor,
+.editor-shell > #editor {
+	outline: none;
+	cursor: text;
+	color: var(--ink);
+	line-height: 1.6;
+}
+
+.example-page .editor-shell {
+	padding: 0;
+}
+
+.example-editor h1,
+#editor h1 { font-size: 2em; margin: 0.67em 0; }
+.example-editor h2,
+#editor h2 { font-size: 1.5em; margin: 0.75em 0; }
+.example-editor h3,
+#editor h3 { font-size: 1.17em; margin: 0.83em 0; }
+.example-editor p,
+#editor p { margin: 0.5em 0; }
+.example-editor ul,
+.example-editor ol,
+#editor ul,
+#editor ol { margin: 0.5em 0; padding-left: 2em; }
+.example-editor li,
+#editor li { margin: 0.25em 0; }
+.example-editor :is(h1, h2, h3, p, li, pre),
+#editor :is(h1, h2, h3, p, li, pre) { min-height: 1lh; }
+
+.example-editor blockquote,
+#editor blockquote {
+	margin: 0.5em 0;
+	padding: 0.25em 1em;
+	border-left: 2px solid var(--ink);
+	background: var(--fill);
+}
+
+.example-editor code,
+#editor code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	background: var(--fill);
+	padding: 0.1em 0.3em;
+	font-size: 0.9em;
+}
+
+.example-editor strong,
+#editor strong { font-weight: 600; }
+.example-editor em,
+#editor em { font-style: italic; }
+
+.focus {
+	outline: 1px solid var(--ink);
+	outline-offset: 2px;
+}
+
+.focus-within {
+	background: var(--fill);
+}
+
+.selected {
+	background: var(--fill-2);
+}
+
+.selected-within {
+	background: var(--fill);
+}
+
+.atom {
+	border-radius: 0.25em;
+	padding: 0.1em 0.45em;
+	background: var(--fill-2);
+}
+
+.mention {
+	border-radius: 1.25em;
+	padding: 0.15em 0.65em;
+	background: var(--fill);
+}
+
+ins.placeholder,
+.placeholder {
+	border-radius: 0.25em;
+	padding: 0.1em 0.45em;
+	background: var(--fill);
+	color: var(--muted);
+	font-size: 0.85em;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+ins.placeholder {
+	text-decoration: none;
+}
+
+ins.placeholder::before { content: "{ "; }
+ins.placeholder::after { content: " }"; }
+
+.comment {
+	display: inline;
+	background: var(--fill);
+	color: var(--muted);
+	padding: 0.1em 0.4em;
+	border-radius: 0.25em;
+	user-select: none;
+}
+
+.comment iconify-icon {
+	margin-right: 0.3em;
+	vertical-align: -0.15em;
+	font-size: 0.9em;
+}
+
+.comment.suggestion { border-bottom: 1px dashed var(--ink); }
+.comment.missing-info { border-bottom: 1px dotted var(--muted); }
+.comment.risk { border-bottom: 2px solid var(--ink); }
+
+.comment.collapsed {
+	width: 2ch;
+	display: inline-block;
+	text-overflow: ellipsis;
+	overflow: hidden;
+	height: 1lh;
+}
+
+details[data-block] {
+	margin: 1em 0;
+	border: 1px solid var(--line);
+	background: var(--paper);
+}
+
+details[data-block] summary {
+	padding: 0.35em 0.75em;
+	background: var(--fill);
+	color: var(--muted);
+	font-size: 12px;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	cursor: pointer;
+}
+
+details[data-block] [data-block-content],
+details[data-block] [data-repeat-item] {
+	padding: 0.5em 0.75em;
+}
+
+#caret,
+#selection {
+	position: absolute;
+	left: 0;
+	top: 0;
+	visibility: hidden;
+	pointer-events: none;
+}
+
+#selection { z-index: 10; }
+
+#caret {
+	z-index: 11;
+	width: 1px;
+	height: 1lh;
+	background: #000;
+}
+
+.example-menu,
+#suggestions {
+	position: absolute;
+	z-index: 30;
+	min-width: 12rem;
+	margin-top: 0.35rem;
+	padding: 0.25rem;
+	border: 1px solid var(--line);
+	background: var(--paper);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+#suggestions {
+	display: none;
+	width: 15rem;
+}
+
+#suggestions.open { display: grid; gap: 0.15rem; }
+
+.example-menu button,
+#suggestions button {
+	display: block;
+	width: 100%;
+	padding: 0.4rem 0.55rem;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	font: inherit;
+	cursor: pointer;
+}
+
+.example-menu button:hover,
+.example-menu button.active,
+#suggestions button:hover {
+	background: var(--fill);
+}
+
+.example-hint,
+.hint {
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+
+.example-events,
+#events {
+	min-height: 1.5em;
+	margin-top: 1rem;
+	color: var(--muted);
+	font: 0.8rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.example-panel {
+	background: var(--paper);
+	border: 1px solid var(--line);
+}
+
+.example-tag {
+	padding: 2px 8px;
+	border: 1px solid var(--line);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--muted);
+}

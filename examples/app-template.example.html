@@ -3,39 +3,8 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Editor</title>
-    <style>
-      .focus {
-        outline: 1px solid #0000FF;
-      }
-      ins.placeholder {
-        border-radius: 1.25em;
-        padding: 0.25em 0.75em;
-        background-color: #00bfff10;
-        color: #04789c;
-        font-size: 12px;
-        font-family: monospace;
-        user-select: none;
-        &:before { content:"{ "; }
-        &:after { content:" }"; }
-      }
-      details[data-block] {
-        border-radius: 1.25em;
-        margin-top: 1em;
-        margin-bottom: 1em;
-          border: 10px solid #00bfff20;
-            padding: 10px;
-          summary {
-            margin: -10px;
-            border-radius: 0em;
-            background: #00bfff20;
-            padding: 0.25em 0.75em;
-            color: #04789c;
-            font-size: 12px;
-            font-family: monospace;
-          }
-      }
-    </style>
+    <title>Email Template Editor — Structural.js</title>
+    <link rel="stylesheet" href="./example.css">
     <script type="importmap">
     {
       "imports": {
@@ -45,8 +14,13 @@
     </script>
   </head>
   <body>
-    <h1>Email Template Editor</h1>
-    <main
+    <div class="example-page">
+    <header class="example-header">
+      <h1>Email Template Editor</h1>
+      <p>Structured email template with conditional blocks and placeholders.</p>
+    </header>
+    <div class="editor-shell">
+    <main class="example-editor"
     data-template="order-confirmation"
     data-template-version="1.0"
     data-editor-root
@@ -296,12 +270,16 @@
         </p>
       </footer>
     </main>
-    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
-    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+    <div id="selection"></div>
+    <div id="caret"></div>
+    </div>
+    </div>
     <script type="module">
       import { Editor } from "structural";
-      const editor = new Editor(document.getElementById("editor"));
-      const cursor = editor.input.cursor;
+      const editor = new Editor(document.getElementById("editor"), {
+        caret: { mode: "virtual", node: document.getElementById("caret"), focused: true },
+        selection: { mode: "virtual", node: document.getElementById("selection") },
+      });
       editor.root.addEventListener("CursorMove", event => {
         const { current } = event.detail;
         console.log("CursorMove", {
@@ -313,10 +291,10 @@
           remap: current.remap,
           caretSource: current.caretSource,
         });
-        event.detail.previous.anchor.classList.remove("focus");
-        event.detail.current.anchor.classList.add("focus");
-        event.detail.current.anchor.classList.add("focus");
-      })
+        event.detail.previous.anchor?.classList?.remove("focus");
+        event.detail.current.anchor?.classList?.add("focus");
+      });
+      editor.input.cursor.moveTo(0);
     </script>
   </body>
 </html>

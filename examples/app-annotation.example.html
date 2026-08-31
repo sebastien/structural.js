@@ -3,35 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Annotations</title>
-    <style>
-      .focus {
-           outline: 1px solid #0000FF;
-         }
-
-         main {
-           font-family: system-ui, sans-serif;
-           padding: 2rem;
-         }
-         article {
-           max-width: 55ch;
-         }
-         .comment {
-           background-color: #fffae6;
-           user-select: none;
-           &:before {
-             content: "💬";
-             margin-right: 0.25rem;
-           }
-          &.collapsed {
-             width: 2ch;
-               display: inline-block;
-             text-overflow: ellipsis;
-               overflow: hidden;
-                 height: 1lh;
-           }
-         }
-    </style>
+    <title>Annotations — Structural.js</title>
+    <link rel="stylesheet" href="./example.css">
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
     <script type="importmap">
     {
       "imports": {
@@ -41,10 +15,13 @@
     </script>
   </head>
   <body>
-    <main class="page">
-      <h1 class="title">Annotations</h1>
-      <p class="subtitle">DOM-backed contentEditable editor with mentions and hashtags stored inline in HTML.</p>
-      <article id="editor">
+    <div class="example-page">
+      <header class="example-header">
+        <h1>Annotations</h1>
+        <p>DOM-backed feedback stored inline beside the primary text.</p>
+      </header>
+      <div class="editor-shell">
+      <article id="editor" class="example-editor" tabindex="0">
         <section class="diary-entry">
           <h2>4 May 2026 - Initial Client Meeting</h2>
           <p>
@@ -189,14 +166,23 @@
           </p>
         </section>
       </article>
-      <pre id="dump" class="dump"></pre>
-    </main>
-    <div id="selection" style="position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;"></div>
-    <div id="caret" style="position:absolute;height:1lh;width:1px;background-color:#FF0000;opacity:0.8;visibility:hidden;pointer-events:none;"></div>
+      <div id="selection"></div>
+      <div id="caret"></div>
+      </div>
+      <pre id="dump" class="example-events"></pre>
+    </div>
     <script type="module">
       import { Editor } from "structural";
-      const editor = new Editor(document.getElementById("editor"));
-      const cursor = editor.input.cursor;
+      for (const comment of document.querySelectorAll(".comment")) {
+        if (comment.querySelector("iconify-icon")) continue;
+        const icon = document.createElement("iconify-icon");
+        icon.setAttribute("icon", "lucide:message-square");
+        comment.prepend(icon);
+      }
+      const editor = new Editor(document.getElementById("editor"), {
+        caret: { mode: "virtual", node: document.getElementById("caret"), focused: true },
+        selection: { mode: "virtual", node: document.getElementById("selection") },
+      });
       editor.root.addEventListener("CursorMove", event => {
         const { current } = event.detail;
         console.log("CursorMove", {
@@ -204,10 +190,10 @@
           delta: current.delta,
           char: current.char,
         });
-        event.detail.previous.anchor.classList.remove("focus");
-        event.detail.current.anchor.classList.add("focus");
-        event.detail.current.anchor.classList.add("focus");
-      })
+        event.detail.previous.anchor?.classList?.remove("focus");
+        event.detail.current.anchor?.classList?.add("focus");
+      });
+      editor.input.cursor.moveTo(0);
     </script>
   </body>
 </html>

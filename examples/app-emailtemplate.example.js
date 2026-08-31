@@ -117,18 +117,14 @@ class SelectionController {
 		const block = this.app.blocks.current;
 		if (!block?.isConnected) return false;
 
-		const startNode = this.app.editor.firstTextNode(block);
-		const endNode = this.app.editor.lastTextNode(block);
-		const startPoint = startNode ? { node: startNode, offset: 0 } : { node: block, offset: 0 };
-		const endPoint = endNode
-			? { node: endNode, offset: endNode.data.length }
-			: { node: block, offset: block.childNodes.length };
-		const start = this.app.editor.text.indexOfPoint(startPoint);
-		const end = this.app.editor.text.indexOfPoint(endPoint);
+		this.app.editor.text.refresh();
+		const structural = this.app.editor.structuralRangeFor(block);
+		const start = structural?.start ?? -1;
+		const end = structural?.end ?? -1;
 		if (start < 0 || end < 0 || start === end) return false;
 
-		const cursor = this.app.editor.input.cursor;
-		cursor.select(start, end);
+		this.app.editor.input._editorActive = true;
+		this.app.editor.input.cursor.select(start, end);
 		this.app.editor.classes?.update();
 		this.app.toolbarUI.update();
 		return true;
@@ -231,6 +227,15 @@ class EmailTemplateApp {
 
 	createEditor() {
 		const editor = new Editor(this.template, {
+			caret: {
+				mode: "virtual",
+				node: document.getElementById("caret"),
+				focused: true,
+			},
+			selection: {
+				mode: "virtual",
+				node: document.getElementById("selection"),
+			},
 			schema: richTextSchema(),
 			keymap: richTextKeymap({
 				"Mod+A": { type: "selectCurrentEditable" },
@@ -354,6 +359,16 @@ class EmailTemplateApp {
 	}
 
 	onDocumentKeyDown(event) {
+		if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "a") {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			this.editor.input._editorActive = true;
+			if (!this.blocks.current?.isConnected) {
+				this.blocks.setCurrent(this.blocks.all()[0] ?? null, { place: "start" });
+			}
+			this.selection.selectCurrentEditable();
+			return;
+		}
 		if (this.allowStructuralInput(event)) return;
 		event.stopImmediatePropagation();
 	}
@@ -373,7 +388,6 @@ class EmailTemplateApp {
 		if (editable) {
 			this.blocks.setCurrent(editable, { place: false });
 			event.preventDefault();
-			event.stopPropagation();
 			this.selection.moveCursorInto(editable, event);
 			return;
 		}
@@ -382,7 +396,6 @@ class EmailTemplateApp {
 		this.blocks.setCurrent(null, { place: false });
 		if (text) this.blocks.setReadonly(text);
 		event.preventDefault();
-		event.stopPropagation();
 	}
 
 	onTemplateClick(event) {
