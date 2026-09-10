@@ -55,3 +55,36 @@ test("performance: long paragraph input processing stays within a 60 FPS frame",
 		);
 	}
 });
+
+const WRAPPING_THREAD_CHUNK =
+	"Name\u00a0\u00a0[11:28 AM]\nYup\n[11:28 AM]and the guides that ive been trying to use are jus slop\nOther\u00a0\u00a0[11:29 AM]\nYeah, that's the style.\n[11:33 AM]All these guides should not be necessary, and instead we should have thought about how to make the UX easy to discover and use... crazy.\nName\u00a0\u00a0[11:35 AM]\nno way\nOther\u00a0\u00a0[11:37 AM]\nI want to replace this tool\nName\u00a0\u00a0[11:37 AM]\ndo it\n";
+const HUGE_WRAPPING_PARAGRAPH = `sadasdas${WRAPPING_THREAD_CHUNK.repeat(36)}`;
+
+test("performance: huge wrapping paragraph input processing stays within a 60 FPS frame", () => {
+	const adapter = new TextAdapter(null);
+	const node = { nodeType: Node.TEXT_NODE, data: HUGE_WRAPPING_PARAGRAPH };
+	const midpoint = Math.floor(node.data.length / 2);
+	const samples = [];
+
+	for (let frame = 0; frame < 60; frame += 1) {
+		const started = performance.now();
+		node.data = `${node.data.slice(0, midpoint)}x${node.data.slice(midpoint)}`;
+		adapter._graphemeCache.delete(node);
+		adapter._positions = slotsFor(adapter, node);
+		adapter._blockOrder = [];
+		adapter._rebuildPrefixTextOffsets();
+		samples.push(performance.now() - started);
+	}
+
+	const expectedGraphemeCount = adapter._graphemeBoundaries(node.data, node).length - 1;
+	expect(HUGE_WRAPPING_PARAGRAPH.length).toBeGreaterThanOrEqual(12000);
+	expect(adapter._prefixTextOffsets).toHaveLength(expectedGraphemeCount + 1);
+	expect(adapter._prefixTextOffsets.at(-1)).toBe(expectedGraphemeCount);
+
+	const p95 = percentile95(samples);
+	if (p95 > FRAME_BUDGET_MS) {
+		throw new Error(
+			`huge-wrapping input processing p95=${p95.toFixed(2)}ms exceeds the ${FRAME_BUDGET_MS.toFixed(2)}ms 60 FPS frame budget; samples=${JSON.stringify(samples)}`,
+		);
+	}
+});

@@ -1,1 +1,0 @@
-Shorthands: query stops at delimiter punct; exact catalog match auto-commits; hydrate exact tokens on attach so @alice. is a mention.

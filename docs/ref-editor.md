@@ -116,6 +116,23 @@ Cursor moves emit `CursorMove` on the editor root. `event.detail.previous` and
 `event.detail.current` are snapshots; current includes requested/resolved
 offsets, slot/boundary data, and virtual-caret state.
 
+## Placeholder
+
+When the document is a single empty block, `Editor` paints an overlay from
+`data-placeholder` on the root (or `placeholder.text`) using inline styles so
+the hint sits on the first line and does not change editor height. Empty-block
+`<br>` carets stay before the break.
+
+```js
+const editor = new Editor(root, {
+  placeholder: { text: "Text", style: { color: "#999" } },
+});
+```
+
+`placeholder` accepts `false` to disable, a string, a node, or
+`{ text, node, style, styles, className, container }`. `style` / `styles.default`
+override the default inline styles (`position`, `pointerEvents`, `color`, …).
+
 ## `Shorthands`
 
 `Shorthands` recognizes configurable trigger/query pairs and emits popup and

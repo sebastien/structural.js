@@ -1,1 +1,0 @@
-Email template: overlays last, Ctrl/Cmd-A current editable. Shorthands: delimiter-punct queries, exact-match auto-commit, hydrate on attach (@alice.).

@@ -170,6 +170,7 @@ class EditorPointerInput {
 		input._suppressCollapsedNative = false;
 		input._dragAnchor = null;
 		input._dragFocus = null;
+		input._dragStartX = null;
 	}
 
 	// Method: onMouseMove
@@ -182,11 +183,16 @@ class EditorPointerInput {
 			if (input._dragAnchor != null && event && event.buttons === 0) {
 				input._dragAnchor = null;
 				input._dragFocus = null;
+				input._dragStartX = null;
 			}
 			return;
 		}
 		const root = input.editor?.root;
 		if (!root) return;
+		const affinity =
+			input._dragStartX != null && event.clientX < input._dragStartX
+				? "before"
+				: "after";
 		let focus = null;
 		if (
 			input.editor.selection &&
@@ -197,9 +203,19 @@ class EditorPointerInput {
 				event.clientX,
 				event.clientY,
 				input.session,
+				{ affinity },
 			);
 		} else if (input.session?.cursor) {
 			focus = input.session.cursor.offsetFromPointIn(root, event.clientX, event.clientY);
+		}
+		if (
+			affinity === "before" &&
+			focus != null &&
+			input._dragAnchor != null &&
+			focus >= input._dragAnchor &&
+			input._dragAnchor > 0
+		) {
+			focus = input._dragAnchor - 1;
 		}
 		if (focus == null || focus === input._dragFocus) return;
 		input._dragFocus = focus;
@@ -300,6 +316,7 @@ class EditorPointerInput {
 			input.editor.selection.select(anchor, focus, input.session);
 			input._dragAnchor = anchor;
 			input._dragFocus = focus;
+			input._dragStartX = event.clientX;
 			return;
 		}
 
@@ -364,6 +381,7 @@ class EditorPointerInput {
 		// Otherwise selectionchange/keydown pick up Chromium's post-click caret.
 		input._suppressCollapsedNative = true;
 		input._dragAnchor = placed && active?.cursor ? active.cursor.offset : null;
+		input._dragStartX = input._dragAnchor != null ? event.clientX : null;
 	}
 
 	// Method: _wordRangeAt
@@ -400,6 +418,7 @@ class EditorTextInput {
 		this._onSelectionChange = this.onSelectionChange.bind(this);
 		this._dragAnchor = null;
 		this._dragFocus = null;
+		this._dragStartX = null;
 		// True from an in-root mousedown until the matching mouseup (incl. drag-out).
 		this._mouseOwned = false;
 		// True after the user last interacted with this editor (survives mouseup).
@@ -467,6 +486,7 @@ class EditorTextInput {
 		this.editor = null;
 		this._dragAnchor = null;
 		this._dragFocus = null;
+		this._dragStartX = null;
 		this._mouseOwned = false;
 		this._editorActive = false;
 		return this;

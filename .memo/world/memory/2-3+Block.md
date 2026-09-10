@@ -1,1 +1,0 @@
-Closed richtext contract gaps (200 green). Example works: relative editor-shell, tabindex 0, initial caret; virtual caret stays visible for in-editor native selection.

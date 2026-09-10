@@ -252,11 +252,9 @@ class TextAdapter {
 		return boundaries.length - 1;
 	}
 
-	_graphemeBoundaryIndex(node, offset) {
-		if (!node || node.nodeType !== Node.TEXT_NODE) return -1;
-		const boundaries = this._graphemeBoundaries(node.data, node);
+	_boundaryIndexIn(boundaries, offset) {
 		let low = 0;
-		let high = boundaries.length - 1;
+		let high = (boundaries?.length ?? 0) - 1;
 		while (low <= high) {
 			const middle = (low + high) >> 1;
 			const value = boundaries[middle];
@@ -265,6 +263,11 @@ class TextAdapter {
 			else high = middle - 1;
 		}
 		return -1;
+	}
+
+	_graphemeBoundaryIndex(node, offset) {
+		if (!node || node.nodeType !== Node.TEXT_NODE) return -1;
+		return this._boundaryIndexIn(this._graphemeBoundaries(node.data, node), offset);
 	}
 
 	_graphemeDistance(node, fromOffset, toOffset) {
@@ -660,6 +663,209 @@ class TextAdapter {
 		this._windowGen += 1;
 		this._enforceMemoryCap();
 		return this._positions;
+	}
+
+	_makeTextSlot(node, offset, graphemeIndex, index) {
+		const point = { node, offset };
+		const boundary = this._boundaryAtPoint(point);
+		return {
+			point,
+			focusNode: node.parentNode || node,
+			kind: "text-point",
+			boundary,
+			char: this._charAroundPoint(point, boundary, graphemeIndex),
+			graphemeIndex,
+			index,
+		};
+	}
+
+	_retouchTextSlot(slot) {
+		if (!slot?.point) return;
+		slot.boundary = this._boundaryAtPoint(slot.point);
+		slot.char = this._charAroundPoint(slot.point, slot.boundary, slot.graphemeIndex);
+	}
+
+	_renumberSlots(from) {
+		for (let i = Math.max(0, from); i < this._positions.length; i++) {
+			this._positions[i].index = i;
+		}
+	}
+
+	_shiftBlockIndex(slotIndex, delta) {
+		if (!delta) return;
+		for (const b of this._blockOrder) {
+			const info = this._blockIndex.get(b);
+			if (!info) continue;
+			if (info.start <= slotIndex && slotIndex < info.end) {
+				info.end += delta;
+				info.length += delta;
+			} else if (info.start > slotIndex) {
+				info.start += delta;
+				info.end += delta;
+			}
+		}
+	}
+
+	_shiftPrefixInsert(slotIndex, n) {
+		const prefixes = this._prefixTextOffsets;
+		if (!prefixes || prefixes.length !== this._positions.length - n) {
+			this._rebuildPrefixTextOffsets();
+			return;
+		}
+		const base = prefixes[slotIndex] ?? 0;
+		if (n === 1) {
+			prefixes.splice(slotIndex + 1, 0, base + 1);
+		} else {
+			const added = new Array(n);
+			for (let i = 0; i < n; i++) added[i] = base + i + 1;
+			prefixes.splice(slotIndex + 1, 0, ...added);
+		}
+		for (let i = slotIndex + 1 + n; i < prefixes.length; i++) prefixes[i] += n;
+	}
+
+	_shiftPrefixDelete(removeFrom, n) {
+		const prefixes = this._prefixTextOffsets;
+		if (!prefixes || prefixes.length !== this._positions.length + n) {
+			this._rebuildPrefixTextOffsets();
+			return;
+		}
+		prefixes.splice(removeFrom, n);
+		for (let i = removeFrom; i < prefixes.length; i++) prefixes[i] -= n;
+	}
+
+	_patchGraphemeCacheInsert(node, insertOffset, text) {
+		const cached = this._graphemeCache?.get(node);
+		const oldLength = node.data.length - text.length;
+		if (!cached || cached[cached.length - 1] !== oldLength) {
+			this._graphemeCache?.delete(node);
+			return null;
+		}
+		const gi = this._boundaryIndexIn(cached, insertOffset);
+		if (gi < 0) {
+			this._graphemeCache.delete(node);
+			return null;
+		}
+		const inserted = this._graphemeBoundaries(text);
+		const extras = [];
+		for (let i = 1; i < inserted.length; i++) extras.push(insertOffset + inserted[i]);
+		for (let i = gi + 1; i < cached.length; i++) cached[i] += text.length;
+		if (extras.length === 1) cached.splice(gi + 1, 0, extras[0]);
+		else if (extras.length) cached.splice(gi + 1, 0, ...extras);
+		if (cached[cached.length - 1] !== node.data.length) {
+			this._graphemeCache.delete(node);
+			return null;
+		}
+		return extras.length;
+	}
+
+	_patchGraphemeCacheDelete(node, startOffset, endOffset) {
+		const cached = this._graphemeCache?.get(node);
+		const deletedUnits = endOffset - startOffset;
+		if (!cached || cached[cached.length - 1] !== node.data.length + deletedUnits) {
+			this._graphemeCache?.delete(node);
+			return null;
+		}
+		const giStart = this._boundaryIndexIn(cached, startOffset);
+		const giEnd = this._boundaryIndexIn(cached, endOffset);
+		if (giStart < 0 || giEnd < 0 || giEnd <= giStart) {
+			this._graphemeCache.delete(node);
+			return null;
+		}
+		const n = giEnd - giStart;
+		cached.splice(giStart + 1, n);
+		for (let i = giStart + 1; i < cached.length; i++) cached[i] -= deletedUnits;
+		if (cached[cached.length - 1] !== node.data.length) {
+			this._graphemeCache.delete(node);
+			return null;
+		}
+		return n;
+	}
+
+	_patchTextNodeInsert(node, slotIndex, insertOffset, text) {
+		if (!text || !node || this._positionsDirty) return null;
+		if (/\p{M}/u.test(text)) return null;
+		const slot = this._positions[slotIndex];
+		if (slot?.point?.node !== node || slot.point.offset !== insertOffset) return null;
+		if (!Number.isInteger(slot.graphemeIndex)) return null;
+		const insertedGraphemes = this._patchGraphemeCacheInsert(node, insertOffset, text);
+		if (insertedGraphemes == null || insertedGraphemes <= 0 || insertedGraphemes > 64) {
+			this._graphemeCache?.delete(node);
+			return null;
+		}
+		const boundaries = this._graphemeCache.get(node);
+		const newSlots = [];
+		for (let i = 1; i <= insertedGraphemes; i++) {
+			const gi = slot.graphemeIndex + i;
+			newSlots.push(this._makeTextSlot(node, boundaries[gi], gi, slotIndex + i));
+		}
+		this._positions.splice(slotIndex + 1, 0, ...newSlots);
+		const deltaUnits = text.length;
+		for (let i = slotIndex + 1 + insertedGraphemes; i < this._positions.length; i++) {
+			const pos = this._positions[i];
+			if (pos?.point?.node !== node) break;
+			pos.point.offset += deltaUnits;
+			if (Number.isInteger(pos.graphemeIndex)) pos.graphemeIndex += insertedGraphemes;
+		}
+		this._renumberSlots(slotIndex + 1);
+		this._shiftBlockIndex(slotIndex, insertedGraphemes);
+		this._shiftPrefixInsert(slotIndex, insertedGraphemes);
+		const retouchUntil = Math.min(this._positions.length - 1, slotIndex + insertedGraphemes + 1);
+		for (let i = slotIndex; i <= retouchUntil; i++) {
+			if (this._positions[i]?.point?.node === node) this._retouchTextSlot(this._positions[i]);
+		}
+		this._visualCache?.clear();
+		this._positionsDirty = false;
+		this._windowGen += 1;
+		return insertedGraphemes;
+	}
+
+	_patchTextNodeDelete(node, caretIndex, startOffset, endOffset) {
+		if (!node || this._positionsDirty || endOffset <= startOffset) return null;
+		const slot = this._positions[caretIndex];
+		if (slot?.point?.node !== node) return null;
+		const deletedGraphemes = this._patchGraphemeCacheDelete(node, startOffset, endOffset);
+		if (deletedGraphemes == null || deletedGraphemes <= 0 || deletedGraphemes > 64) {
+			this._graphemeCache?.delete(node);
+			return null;
+		}
+		const caretOffset = slot.point.offset;
+		let removeFrom;
+		let newCaret;
+		if (caretOffset === endOffset) {
+			removeFrom = caretIndex - deletedGraphemes + 1;
+			newCaret = caretIndex - deletedGraphemes;
+		} else if (caretOffset === startOffset) {
+			removeFrom = caretIndex + 1;
+			newCaret = caretIndex;
+		} else {
+			this._graphemeCache.delete(node);
+			return null;
+		}
+		if (removeFrom < 0 || removeFrom + deletedGraphemes > this._positions.length) {
+			this._graphemeCache.delete(node);
+			return null;
+		}
+		this._positions.splice(removeFrom, deletedGraphemes);
+		const deltaUnits = endOffset - startOffset;
+		for (let i = removeFrom; i < this._positions.length; i++) {
+			const pos = this._positions[i];
+			if (pos?.point?.node !== node) break;
+			pos.point.offset -= deltaUnits;
+			if (Number.isInteger(pos.graphemeIndex)) pos.graphemeIndex -= deletedGraphemes;
+		}
+		this._renumberSlots(removeFrom);
+		this._shiftBlockIndex(removeFrom, -deletedGraphemes);
+		this._shiftPrefixDelete(removeFrom, deletedGraphemes);
+		if (this._positions[removeFrom - 1]?.point?.node === node) {
+			this._retouchTextSlot(this._positions[removeFrom - 1]);
+		}
+		if (this._positions[removeFrom]?.point?.node === node) {
+			this._retouchTextSlot(this._positions[removeFrom]);
+		}
+		this._visualCache?.clear();
+		this._positionsDirty = false;
+		this._windowGen += 1;
+		return newCaret;
 	}
 
 	_expandWindowToCoverIndex(targetIndex) {
@@ -1425,10 +1631,20 @@ class TextAdapter {
 		if (!this.acceptsText(position)) {
 			return { index: clamped };
 		}
+		if (!text) {
+			return { index: clamped };
+		}
 		const point = this.pointAt(clamped);
 		this._beginEdit();
 		try {
+			const insertOffset = point?.offset ?? 0;
 			const insertedPoint = point ? this.insertAtPoint(point, text) : null;
+			if (point?.node?.nodeType === Node.TEXT_NODE) {
+				const inserted = this._patchTextNodeInsert(point.node, clamped, insertOffset, text);
+				if (inserted != null) {
+					return { index: this.clampIndex(clamped + inserted) };
+				}
+			}
 			this._refreshAfterPointEdit(point ?? insertedPoint);
 			const nextIndex = this.indexOfPoint(insertedPoint);
 			return {
@@ -1483,16 +1699,18 @@ class TextAdapter {
 			}
 			const point = this.pointAt(clamped);
 			if (point?.node?.nodeType === Node.TEXT_NODE && point.offset > 0) {
-				const boundaries = this._graphemeBoundaries(point.node.data);
-				const current = boundaries.indexOf(point.offset);
+				const node = point.node;
+				const boundaries = this._graphemeBoundaries(node.data, node);
+				const current = this._boundaryIndexIn(boundaries, point.offset);
 				const gIndex =
-					current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
+					current >= 0 ? current : this._graphemeIndexAtCodeUnit(node.data, point.offset);
 				const startOffset = boundaries[Math.max(0, gIndex - 1)] ?? 0;
 				const endOffset = boundaries[gIndex] ?? point.offset;
-				point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
-				this._refreshAfterPointEdit(point);
-				// Re-resolve via the post-edit DOM point for robustness across windowed rebuilds.
-				const afterPoint = { node: point.node, offset: startOffset };
+				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+				const patched = this._patchTextNodeDelete(node, clamped, startOffset, endOffset);
+				if (patched != null) return { index: this.clampIndex(patched) };
+				this._refreshAfterPointEdit({ node, offset: startOffset });
+				const afterPoint = { node, offset: startOffset };
 				const resolved = this.indexOfPoint(afterPoint);
 				if (resolved >= 0) return { index: resolved };
 				return { index: this.clampIndex(clamped - 1) };
@@ -1545,15 +1763,18 @@ class TextAdapter {
 			}
 			const point = this.pointAt(clamped);
 			if (point?.node?.nodeType === Node.TEXT_NODE && point.offset < point.node.data.length) {
-				const boundaries = this._graphemeBoundaries(point.node.data);
-				const current = boundaries.indexOf(point.offset);
+				const node = point.node;
+				const boundaries = this._graphemeBoundaries(node.data, node);
+				const current = this._boundaryIndexIn(boundaries, point.offset);
 				const gIndex =
-					current >= 0 ? current : this._graphemeIndexAtCodeUnit(point.node.data, point.offset);
+					current >= 0 ? current : this._graphemeIndexAtCodeUnit(node.data, point.offset);
 				const startOffset = boundaries[gIndex] ?? point.offset;
 				const endOffset = boundaries[Math.min(boundaries.length - 1, gIndex + 1)] ?? point.offset;
-				point.node.data = `${point.node.data.slice(0, startOffset)}${point.node.data.slice(endOffset)}`;
-				this._refreshAfterPointEdit(point);
-				const afterPoint = { node: point.node, offset: startOffset };
+				node.data = `${node.data.slice(0, startOffset)}${node.data.slice(endOffset)}`;
+				const patched = this._patchTextNodeDelete(node, clamped, startOffset, endOffset);
+				if (patched != null) return { index: this.clampIndex(patched) };
+				this._refreshAfterPointEdit({ node, offset: startOffset });
+				const afterPoint = { node, offset: startOffset };
 				const resolved = this.indexOfPoint(afterPoint);
 				if (resolved >= 0) return { index: resolved };
 				return { index: this.clampIndex(clamped) };
@@ -1706,6 +1927,19 @@ class TextAdapter {
 		const selector = blockSelectorFromSchema(this._schema);
 		if (!el.matches(selector)) return false;
 		return !(el.textContent ?? "").replace(/\u200b/g, "").trim();
+	}
+
+	_isEmptyBlockBreak(node, parent) {
+		if (!node || node.nodeType !== Node.ELEMENT_NODE || node.tagName !== "BR") return false;
+		if (!this._isEmptyEditableBlock(parent)) return false;
+		for (const child of parent.childNodes) {
+			if (child === node) continue;
+			if (child.nodeType === Node.TEXT_NODE && !(child.data ?? "").replace(/\u200b/g, "").trim()) {
+				continue;
+			}
+			return false;
+		}
+		return true;
 	}
 
 	// Method: _shouldEmitBoundary
@@ -1874,6 +2108,15 @@ class TextAdapter {
 				if (this.isAtom(current)) {
 					return;
 				}
+				if (this._isEmptyBlockBreak(current, parent)) {
+					if (parent && this._shouldEmitBoundary(parent, childIndex)) {
+						yield {
+							point: { node: parent, offset: childIndex },
+							focusNode: parent,
+						};
+					}
+					return;
+				}
 				if (parent && this._shouldEmitBoundary(parent, childIndex)) {
 					yield {
 						point: { node: parent, offset: childIndex },
@@ -1889,6 +2132,7 @@ class TextAdapter {
 				}
 				for (let i = 0; i < children.length; i += 1) {
 					yield* walk.call(this, children[i], current, i);
+					if (this._isEmptyBlockBreak(children[i], current)) continue;
 					if (this._shouldEmitBoundary(current, i)) {
 						yield {
 							point: { node: current, offset: i + 1 },

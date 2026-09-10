@@ -1,6 +1,6 @@
 import { Cursor as EditorCursor } from "../interaction/cursor.js";
 import { EditorTextInput } from "../interaction/input.js";
-import { EditorSelectionController } from "../interaction/selection.js";
+import { EditorSelectionController, PlaceholderOverlay } from "../interaction/selection.js";
 import { EditorHistory } from "../foundation/history.js";
 import { TextAdapter, asElement, blockSelectorFromSchema, firstTextNode as domFirstTextNode, lastTextNode as domLastTextNode } from "../foundation/document.js";
 import { EditorCommand, EditorNormalizer, EditorSchema, EditorTransaction } from "../foundation/schema.js";
@@ -596,15 +596,15 @@ class EditorRangeController {
 	// Returns the current DOM range or caret range within `root`.
 	current(root = this.editor.root, session = null) {
 		const active = this.editor.activeSession(session);
+		const cursor = active.cursor;
+		if (cursor.selectionKind === "range") {
+			const range = cursor.selection.toDomRange();
+			if (this.within(root, range) && !range.collapsed) return range;
+		}
 		const selection = window.getSelection();
 		if (active.nativeSelection !== "none" && selection?.rangeCount > 0) {
 			const range = selection.getRangeAt(0);
 			if (this.within(root, range)) return range.cloneRange();
-		}
-		const cursor = active.cursor;
-		if (cursor.selectionKind === "range") {
-			const range = cursor.selection.toDomRange();
-			return this.within(root, range) ? range : null;
 		}
 		const point = this.editor.text.pointAt(cursor.offset ?? 0);
 		if (!point?.node || !this._contains(root, point.node)) return null;
@@ -816,6 +816,8 @@ class Editor {
 		});
 		this.installPlugins(options.plugins ?? []);
 		this.classes = this.localSession.classes;
+		this.placeholder =
+			options.placeholder === false ? null : new PlaceholderOverlay(this, options.placeholder);
 		// Do not force an initial cursor position here; callers (or first interaction)
 		// should place the caret at a valid/visible slot. A previous moveTo(8) was a
 		// debug leftover that caused bad initial state on small/empty documents.
@@ -1184,6 +1186,8 @@ class Editor {
 	// Method: destroy
 	// Tears down sessions, normalizers, input events, and adapters.
 	destroy() {
+		this.placeholder?.destroy();
+		this.placeholder = null;
 		for (const plugin of this.plugins) plugin.detach?.(this);
 		this.pluginHost.clear();
 		for (const session of this.sessions.values()) session.destroy();

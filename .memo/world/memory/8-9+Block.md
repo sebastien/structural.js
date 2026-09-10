@@ -1,1 +1,0 @@
-Email template: drag-select works (no capture stopPropagation); Ctrl/Cmd-A selects the current editable via structuralRangeFor.

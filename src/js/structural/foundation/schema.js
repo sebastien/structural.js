@@ -207,7 +207,11 @@ class EditorNormalizer {
 				wrapper: wrapper.tagName.toLowerCase(),
 			});
 		} else if (action === "lift") {
-			parent.parentNode?.insertBefore(child, parent.nextSibling);
+			if (!parent.parentNode || parent === root) {
+				this.applyInvalidAction(parent, child, "wrap", root, transaction);
+				return;
+			}
+			parent.parentNode.insertBefore(child, parent.nextSibling);
 			transaction.steps.push({ type: "liftNode", tag: this.schema.tag(child) });
 		}
 	}

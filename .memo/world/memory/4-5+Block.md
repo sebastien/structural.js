@@ -1,1 +1,0 @@
-Empty paragraphs are real lines. Select-all+delete places a caret in the leftover empty block (no ghost selection).

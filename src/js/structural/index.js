@@ -22,7 +22,7 @@ export {
 	LEGACY_STRUCTURAL_SELECTOR,
 } from "./foundation/document.js";
 export { Caret, Cursor } from "./interaction/cursor.js";
-export { EditorSelectionController, SelectionOverlay, TextSelection } from "./interaction/selection.js";
+export { EditorSelectionController, PlaceholderOverlay, SelectionOverlay, TextSelection } from "./interaction/selection.js";
 export { Modification } from "./features/richtext.js";
 export { EditorPluginHost, HISTORY_SKIP, blockWhenDomain, matchInputRuleKey, matchInputRuleWhen } from "./runtime/editor.js";
 export {

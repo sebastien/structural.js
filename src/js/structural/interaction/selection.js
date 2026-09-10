@@ -14,12 +14,15 @@ export function snapCssPx(value, dpr = window.devicePixelRatio || 1) {
 
 // Injects the default caret blink keyframes once per document.
 export function ensureCaretStylesheet(doc = document) {
-	if (!doc?.getElementById || doc.getElementById(CARET_STYLE_ID)) return;
-	const style = doc.createElement("style");
+	const target = doc?.head ? doc : globalThis.document;
+	if (!target?.getElementById || target.getElementById(CARET_STYLE_ID)) return;
+	const parent = target.head || target.documentElement;
+	if (!parent?.appendChild) return;
+	const style = target.createElement("style");
 	style.id = CARET_STYLE_ID;
 	style.textContent =
 		"@keyframes structural-caret-blink{0%,49%{opacity:1}50%,100%{opacity:0}}.caret-blink{animation:structural-caret-blink 1s step-end infinite}";
-	doc.head.appendChild(style);
+	parent.appendChild(style);
 }
 
 // Prepares a virtual overlay host and optionally mounts it under `container`.
@@ -386,6 +389,194 @@ class Caret {
 }
 
 export { Caret };
+
+const PLACEHOLDER_STYLE_ID = "structural-placeholder-style";
+const DEFAULT_PLACEHOLDER_STYLE = {
+	position: "absolute",
+	pointerEvents: "none",
+	userSelect: "none",
+	color: "rgba(0, 0, 0, 0.35)",
+	whiteSpace: "nowrap",
+};
+
+export function ensurePlaceholderStylesheet(doc = document) {
+	const target = doc?.head ? doc : globalThis.document;
+	if (!target?.getElementById || target.getElementById(PLACEHOLDER_STYLE_ID)) return;
+	const parent = target.head || target.documentElement;
+	if (!parent?.appendChild) return;
+	const style = target.createElement("style");
+	style.id = PLACEHOLDER_STYLE_ID;
+	style.textContent =
+		"[data-structural-placeholder]::before{content:none!important;display:none!important}";
+	parent.appendChild(style);
+}
+
+class PlaceholderOverlay {
+	constructor(editor, config = {}) {
+		if (config === false) {
+			this.disabled = true;
+			this.editor = editor;
+			this.node = null;
+			return;
+		}
+		if (typeof config === "string") config = { text: config };
+		if (config && (config.nodeType === 1 || config instanceof HTMLElement)) config = { node: config };
+		this.disabled = false;
+		this.editor = editor;
+		this._config = config || {};
+		this._managedStyleProps = new Set();
+		this._raf = 0;
+		this._onMutations = () => this._schedule();
+		this._onCursorMove = () => this._schedule();
+		this._observer = null;
+		const root = editor?.root;
+		const host = this._config.node ?? document.createElement("div");
+		this.node = host;
+		host.setAttribute("aria-hidden", "true");
+		const container = this._config.container ?? root?.parentNode;
+		prepareOverlayHost(host, container?.nodeType === Node.ELEMENT_NODE ? container : null);
+		const caretNode = editor?.input?.cursor?.caret?.node;
+		if (host.parentNode && caretNode && caretNode.parentNode === host.parentNode) {
+			host.parentNode.insertBefore(host, caretNode);
+		}
+		if (root) {
+			root.setAttribute("data-structural-placeholder", "");
+			ensurePlaceholderStylesheet(root.ownerDocument);
+		}
+		this._applyStyles();
+		this.attach();
+		this.sync();
+	}
+
+	text() {
+		if (this._config.text != null) return String(this._config.text);
+		return this.editor?.root?.getAttribute?.("data-placeholder") ?? "";
+	}
+
+	attach() {
+		if (this.disabled || !this.editor?.root) return this;
+		const root = this.editor.root;
+		root.addEventListener("CursorMove", this._onCursorMove);
+		if (typeof MutationObserver === "function") {
+			this._observer = new MutationObserver(this._onMutations);
+			this._observer.observe(root, { subtree: true, childList: true, characterData: true });
+		}
+		return this;
+	}
+
+	detach() {
+		if (this.editor?.root) {
+			this.editor.root.removeEventListener("CursorMove", this._onCursorMove);
+			this.editor.root.removeAttribute("data-structural-placeholder");
+			this.editor.root.removeAttribute("data-empty");
+		}
+		this._observer?.disconnect();
+		this._observer = null;
+		if (this._raf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._raf);
+		this._raf = 0;
+		return this;
+	}
+
+	destroy() {
+		this.detach();
+		this.hide();
+		if (this.node && this.node.parentNode && !this._config.node) this.node.remove();
+		this.node = null;
+	}
+
+	_schedule() {
+		if (this.disabled || this._raf) return;
+		const run = () => {
+			this._raf = 0;
+			this.sync();
+		};
+		this._raf =
+			typeof requestAnimationFrame === "function" ? requestAnimationFrame(run) : (setTimeout(run, 0), 1);
+	}
+
+	_isEmptyBlock(block) {
+		if (!block) return true;
+		if ((block.textContent ?? "").replace(/\u200b/g, "").trim()) return false;
+		for (const child of block.childNodes) {
+			if (child.nodeType === Node.TEXT_NODE && !(child.data ?? "").replace(/\u200b/g, "").trim()) continue;
+			if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "BR") continue;
+			return false;
+		}
+		return true;
+	}
+
+	_isEmpty() {
+		const root = this.editor?.root;
+		if (!root) return true;
+		const blocks = [...root.children].filter((n) => n.nodeType === Node.ELEMENT_NODE);
+		if (blocks.length === 0) return !(root.textContent ?? "").replace(/\u200b/g, "").trim();
+		if (blocks.length !== 1) return false;
+		return this._isEmptyBlock(blocks[0]);
+	}
+
+	_emptyBlock() {
+		const root = this.editor?.root;
+		if (!root) return null;
+		const blocks = [...root.children].filter((n) => n.nodeType === Node.ELEMENT_NODE);
+		return blocks.length === 1 && this._isEmptyBlock(blocks[0]) ? blocks[0] : null;
+	}
+
+	hide() {
+		if (this.node) this.node.style.visibility = "hidden";
+	}
+
+	_applyStyles() {
+		if (!this.node) return;
+		const next = { ...DEFAULT_PLACEHOLDER_STYLE };
+		const merge = (obj) => {
+			if (obj && typeof obj === "object") Object.assign(next, obj);
+		};
+		merge(this._config.styles?.default);
+		merge(this._config.style);
+		for (const p of this._managedStyleProps) {
+			if (!(p in next)) this.node.style.removeProperty(p.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`));
+		}
+		const applied = new Set();
+		for (const [k, v] of Object.entries(next)) {
+			const css = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+			this.node.style.setProperty(css, String(v));
+			applied.add(k);
+		}
+		this._managedStyleProps = applied;
+		if (this._config.className) this.node.className = this._config.className;
+	}
+
+	sync() {
+		if (this.disabled || !this.node || !this.editor?.root) return;
+		const root = this.editor.root;
+		const empty = this._isEmpty();
+		root.toggleAttribute("data-empty", empty);
+		const label = this.text();
+		if (!empty || !label) {
+			this.hide();
+			return;
+		}
+		this.node.textContent = label;
+		this._applyStyles();
+		const target = this._emptyBlock() || root;
+		const cs = getComputedStyle(target);
+		const rect = target.getBoundingClientRect();
+		const x = rect.left + (Number.parseFloat(cs.paddingLeft) || 0);
+		const y = rect.top + (Number.parseFloat(cs.paddingTop) || 0);
+		const local = clientToOffsetParent(x, y, this.node);
+		this.node.style.left = `${snapCssPx(local.x)}px`;
+		this.node.style.top = `${snapCssPx(local.y)}px`;
+		this.node.style.visibility = "visible";
+		if (!this._config.style?.font && !this._config.styles?.default?.font && cs.font) {
+			this.node.style.font = cs.font;
+		}
+		if (!this._config.style?.lineHeight && !this._config.styles?.default?.lineHeight && cs.lineHeight) {
+			this.node.style.lineHeight = cs.lineHeight;
+		}
+	}
+}
+
+export { PlaceholderOverlay };
 
 // Project: structural.js
 // Author:  Sebastien Pierre
@@ -825,19 +1016,21 @@ class TextSelection {
 			normalized.end === this.end;
 		if (matchesNormalized && ap && fp && ap.node && fp.node && ap.node.isConnected && fp.node.isConnected && ap.node.ownerDocument === fp.node.ownerDocument) {
 			try {
-				const r = document.createRange();
-				// Order by document position
-				const cmp = ap.node.compareDocumentPosition(fp.node);
-				const apFirst = (cmp & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 ||
-					(cmp === 0 && ap.offset <= fp.offset);
-				if (apFirst) {
-					r.setStart(ap.node, ap.offset);
-					r.setEnd(fp.node, fp.offset);
-				} else {
-					r.setStart(fp.node, fp.offset);
-					r.setEnd(ap.node, ap.offset);
+				const build = (from, to) => {
+					const r = document.createRange();
+					r.setStart(from.node, from.offset);
+					r.setEnd(to.node, to.offset);
+					return r;
+				};
+				let r = build(ap, fp);
+				// Ancestor/descendant boundary points (an element at offset === childCount
+				// versus a point inside that same child) can collapse a non-collapsed
+				// selection when ordered by compareDocumentPosition alone. Retry swapped.
+				if (r.collapsed && !normalized.collapsed) {
+					const swapped = build(fp, ap);
+					r = swapped.collapsed ? null : swapped;
 				}
-				return r;
+				if (r) return r;
 			} catch (_) {
 				// fall through to numeric
 			}
@@ -1005,16 +1198,37 @@ class EditorSelectionController {
 
 	// Method: _nativeCaretPointFromClientPoint
 	// Resolves a native DOM point from viewport coordinates when available.
-	_nativeCaretPointFromClientPoint(x, y) {
+	_nativeCaretPointFromClientPoint(x, y, affinity = "after") {
+		let node = null;
+		let offset = 0;
 		const position = document.caretPositionFromPoint?.(x, y);
 		if (position?.offsetNode) {
-			return { node: position.offsetNode, offset: position.offset };
+			node = position.offsetNode;
+			offset = position.offset;
+		} else {
+			const range = document.caretRangeFromPoint?.(x, y);
+			if (range?.startContainer) {
+				node = range.startContainer;
+				offset = range.startOffset;
+			}
 		}
-		const range = document.caretRangeFromPoint?.(x, y);
-		if (range?.startContainer) {
-			return { node: range.startContainer, offset: range.startOffset };
+		if (!node) return null;
+		if (node.nodeType === Node.TEXT_NODE && node.data.length > 0) {
+			if (affinity === "before" && offset > 0) {
+				const probe = document.createRange();
+				probe.setStart(node, offset - 1);
+				probe.setEnd(node, offset);
+				const rect = probe.getBoundingClientRect();
+				if (rect.width > 0 && x < rect.left + rect.width / 2) offset -= 1;
+			} else if (affinity === "after" && offset < node.data.length) {
+				const probe = document.createRange();
+				probe.setStart(node, offset);
+				probe.setEnd(node, offset + 1);
+				const rect = probe.getBoundingClientRect();
+				if (rect.width > 0 && x > rect.left + rect.width / 2) offset += 1;
+			}
 		}
-		return null;
+		return { node, offset };
 	}
 
 	// Method: _edgePlacement
@@ -1107,9 +1321,10 @@ class EditorSelectionController {
 
 	// Method: resolveOffsetFromPoint
 	// Resolves a structural text offset from viewport coordinates without moving the cursor or syncing native selection.
-	resolveOffsetFromPoint(root, x, y, session = null) {
+	resolveOffsetFromPoint(root, x, y, session = null, options = {}) {
 		if (!root?.isConnected) return null;
-		const nativePoint = this._nativeCaretPointFromClientPoint(x, y);
+		const affinity = options.affinity === "before" ? "before" : "after";
+		const nativePoint = this._nativeCaretPointFromClientPoint(x, y, affinity);
 		if (nativePoint && this._pointWithin(root, nativePoint.node)) {
 			this.editor.text.ensurePositions();
 			const index = this.editor.text.indexOfPoint(nativePoint);

@@ -1188,6 +1188,71 @@ async function runWithFresh(fn) {
 	}
 }
 
+test("placeholder: overlay sits on the empty line without growing the editor", async () => {
+	await runWithFresh(async (page) => {
+		const result = await page.evaluate(() => {
+			const root = document.getElementById("editor");
+			const style = document.createElement("style");
+			style.textContent = `#editor[data-placeholder]::before { content: attr(data-placeholder); }`;
+			document.head.appendChild(style);
+			root.setAttribute("data-placeholder", "Text");
+			window.__test.setHTML("<p><br></p>");
+			window.__editor.input.cursor.moveTo(0);
+			window.__editor.placeholder?.sync();
+			const overlay = window.__editor.placeholder?.node;
+			const p = root.querySelector("p");
+			const pRect = p.getBoundingClientRect();
+			const overlayRect = overlay?.getBoundingClientRect();
+			const point = window.__editor.text.pointAt(window.__editor.input.cursor.offset);
+			return {
+				empty: root.hasAttribute("data-empty"),
+				overlayText: overlay?.textContent ?? "",
+				overlayVisible: overlay ? getComputedStyle(overlay).visibility : null,
+				overlayInsideEditor: !!(overlay && root.contains(overlay)),
+				beforeContent: getComputedStyle(root, "::before").content,
+				lineHeight: Number.parseFloat(getComputedStyle(p).lineHeight) || pRect.height,
+				pHeight: pRect.height,
+				overlayTop: overlayRect?.top ?? null,
+				pTop: pRect.top,
+				afterBr: !!(point?.node === p && point.offset > 0),
+			};
+		});
+		expect(result.empty).toBe(true);
+		expect(result.overlayText).toBe("Text");
+		expect(result.overlayVisible).toBe("visible");
+		expect(result.overlayInsideEditor).toBe(false);
+		expect(result.beforeContent === "none" || result.beforeContent === "normal").toBe(true);
+		expect(result.pHeight).toBeLessThan(result.lineHeight * 1.8);
+		expect(Math.abs((result.overlayTop ?? 0) - result.pTop)).toBeLessThan(6);
+		expect(result.afterBr).toBe(false);
+	});
+});
+
+test("placeholder: typing hides the overlay and emptying shows it again", async () => {
+	await runWithFresh(async (page) => {
+		const result = await page.evaluate(() => {
+			const root = document.getElementById("editor");
+			root.setAttribute("data-placeholder", "Text");
+			window.__test.setHTML("<p><br></p>");
+			window.__editor.input.cursor.moveTo(0);
+			window.__editor.placeholder?.sync();
+			const overlay = window.__editor.placeholder?.node;
+			const shown = overlay ? getComputedStyle(overlay).visibility : null;
+			window.__editor.input.cursor.insertText("x");
+			window.__editor.placeholder?.sync();
+			const hidden = overlay ? getComputedStyle(overlay).visibility : null;
+			window.__editor.input.cursor.backspace();
+			window.__editor.placeholder?.sync();
+			const shownAgain = overlay ? getComputedStyle(overlay).visibility : null;
+			return { shown, hidden, shownAgain, empty: root.hasAttribute("data-empty") };
+		});
+		expect(result.shown).toBe("visible");
+		expect(result.hidden).toBe("hidden");
+		expect(result.shownAgain).toBe("visible");
+		expect(result.empty).toBe(true);
+	});
+});
+
 test("symptom: delete then type at same caret — text must appear and caret visible (no 'typed text doesnt appear')", async () => {
 	await runWithFresh(async (page) => {
 		await page.evaluate(() => window.__test.setHTML("<p>abc</p>"));
@@ -1881,6 +1946,234 @@ test("performance: long single paragraph keeps keyboard editing interactions res
 			if (operation.median > FRAME_BUDGET_MS) {
 				throw new Error(
 					`${operation.name} median=${operation.median}ms exceeds the ${FRAME_BUDGET_MS.toFixed(2)}ms 60 FPS frame budget; diagnostics=${JSON.stringify(result)}`,
+				);
+			}
+		}
+	});
+});
+
+const WRAPPING_THREAD_CHUNK =
+	"Name\u00a0\u00a0[11:28 AM]\nYup\n[11:28 AM]and the guides that ive been trying to use are jus slop\nOther\u00a0\u00a0[11:29 AM]\nYeah, that's the style.\n[11:33 AM]All these guides should not be necessary, and instead we should have thought about how to make the UX easy to discover and use... crazy.\nName\u00a0\u00a0[11:35 AM]\nno way\nOther\u00a0\u00a0[11:37 AM]\nI want to replace this tool\nName\u00a0\u00a0[11:37 AM]\ndo it\n";
+const HUGE_WRAPPING_PARAGRAPH = `sadasdas${WRAPPING_THREAD_CHUNK.repeat(36)}`;
+const HUGE_WRAPPING_DOCUMENT = [
+	'<p class="focus">asdadsasdassdas</p>',
+	'<p class="">asdsaasd</p>',
+	'<p class="">asddas</p>',
+	`<p class="focus">${HUGE_WRAPPING_PARAGRAPH}</p>`,
+	`<p class="">${WRAPPING_THREAD_CHUNK}</p>`,
+	'<p class=""><br></p>',
+].join("");
+
+test("performance: mixed short blocks plus huge wrapping paragraph keeps keyboard editing responsive", async () => {
+	await runWithFresh(async (page) => {
+		const result = await page.evaluate(
+			({ html, hugeLength }) => {
+				const root = document.getElementById("editor");
+				const editor = window.__editor;
+				const cursor = editor.input.cursor;
+				const text = editor.text;
+				const samplesPerOperation = 5;
+
+				window.__test.setHTML(html);
+				const paragraphs = [...root.querySelectorAll("p")];
+				const hugeNode = paragraphs[3]?.firstChild;
+				if (!hugeNode || hugeNode.nodeType !== Node.TEXT_NODE) {
+					throw new Error("huge wrapping fixture did not create a text node in paragraph 4");
+				}
+				if (hugeNode.data.length < hugeLength) {
+					throw new Error(
+						`huge wrapping paragraph too small: ${hugeNode.data.length} < ${hugeLength}`,
+					);
+				}
+
+				const midpoint = text.indexOfPoint({
+					node: hugeNode,
+					offset: Math.floor(hugeNode.data.length / 2),
+				});
+				if (midpoint < 0) {
+					throw new Error("could not resolve the huge wrapping paragraph midpoint");
+				}
+
+				const dispatch = (key, shiftKey = false) => {
+					document.dispatchEvent(
+						new KeyboardEvent("keydown", {
+							key,
+							shiftKey,
+							bubbles: true,
+							cancelable: true,
+						}),
+					);
+				};
+				const caretIsVisible = () =>
+					!!cursor.caret.node && getComputedStyle(cursor.caret.node).visibility === "visible";
+				const median = (samples) => {
+					const sorted = [...samples].sort((a, b) => a - b);
+					return sorted[Math.floor(sorted.length / 2)];
+				};
+				const snapshotStats = () => ({
+					rebuildCount: text.stats.rebuildCount,
+					bcrCount: text.stats.bcrCount,
+					positionsLength: text.stats.positionsLength,
+					lastBuildMs: text.stats.lastBuildMs,
+				});
+				const measure = (name, action, verify) => {
+					const samples = [];
+					cursor.moveTo(midpoint);
+					action();
+					for (let i = 0; i < samplesPerOperation; i += 1) {
+						cursor.moveTo(midpoint);
+						const before = {
+							offset: cursor.offset,
+							textLength: root.textContent.length,
+							caretTop: cursor.caret.node?.style.top ?? "",
+							stats: snapshotStats(),
+						};
+						const started = performance.now();
+						action();
+						samples.push(performance.now() - started);
+						verify(before);
+					}
+					return { name, samples, median: median(samples) };
+				};
+
+				cursor.moveTo(midpoint);
+				dispatch("ArrowRight");
+				cursor.moveTo(midpoint);
+				dispatch("x");
+				cursor.backspace();
+				cursor.moveTo(midpoint);
+				dispatch("ArrowDown");
+
+				const operations = [
+					measure(
+						"cursor movement",
+						() => dispatch("ArrowRight"),
+						(before) => {
+							if (cursor.offset <= before.offset || !caretIsVisible()) {
+								throw new Error("ArrowRight did not advance a visible caret");
+							}
+						},
+					),
+					measure(
+						"range selection",
+						() => dispatch("ArrowRight", true),
+						(before) => {
+							if (
+								cursor.selectionKind !== "range" ||
+								cursor.selection.focusOffset <= before.offset
+							) {
+								throw new Error("Shift+ArrowRight did not extend the selection");
+							}
+						},
+					),
+					measure(
+						"text insertion",
+						() => dispatch("x"),
+						(before) => {
+							if (
+								root.textContent.length !== before.textLength + 1 ||
+								cursor.offset <= before.offset ||
+								!caretIsVisible()
+							) {
+								throw new Error("text insertion did not update text and caret");
+							}
+						},
+					),
+					measure(
+						"backspace",
+						() => dispatch("Backspace"),
+						(before) => {
+							if (
+								root.textContent.length !== before.textLength - 1 ||
+								cursor.offset >= before.offset ||
+								!caretIsVisible()
+							) {
+								throw new Error("backspace did not delete text and move caret");
+							}
+						},
+					),
+					measure(
+						"vertical movement",
+						() => dispatch("ArrowDown"),
+						(before) => {
+							if (cursor.offset === before.offset || !caretIsVisible()) {
+								throw new Error("ArrowDown did not move a visible caret");
+							}
+						},
+					),
+				];
+
+				cursor.moveTo(midpoint);
+				const burstBefore = {
+					textLength: root.textContent.length,
+					offset: cursor.offset,
+					stats: snapshotStats(),
+				};
+				const burstStarted = performance.now();
+				for (let i = 0; i < 10; i += 1) dispatch("x");
+				const burstMs = performance.now() - burstStarted;
+				if (
+					root.textContent.length !== burstBefore.textLength + 10 ||
+					cursor.offset !== burstBefore.offset + 10 ||
+					!caretIsVisible()
+				) {
+					throw new Error("sequential insertion burst did not type 10 characters");
+				}
+
+				const phase = (name, action) => {
+					const samples = [];
+					for (let i = 0; i < samplesPerOperation; i += 1) {
+						cursor.moveTo(midpoint);
+						const started = performance.now();
+						action();
+						samples.push(performance.now() - started);
+					}
+					return { name, samples, median: median(samples) };
+				};
+				const phases = [
+					phase("insertAtIndex", () => {
+						text.insertAtIndex(cursor.offset, "x");
+					}),
+					phase("visualPositionAt", () => {
+						text._visualCache?.clear();
+						text.visualPositionAt(cursor.offset);
+					}),
+					phase("indexFromLineMove", () => {
+						text._visualCache?.clear();
+						text.indexFromLineMove(cursor.offset, 1, null);
+					}),
+					phase("insertText", () => {
+						cursor.insertText("x");
+					}),
+				];
+
+				return {
+					paragraphLength: hugeNode.data.length,
+					positions: text.positions().length,
+					operations,
+					phases,
+					burst: {
+						name: "sequential insertion",
+						totalMs: burstMs,
+						perCharMs: burstMs / 10,
+						count: 10,
+					},
+					stats: text.stats,
+					statsBeforeBurst: burstBefore.stats,
+				};
+			},
+			{ html: HUGE_WRAPPING_DOCUMENT, hugeLength: HUGE_WRAPPING_PARAGRAPH.length },
+		);
+
+		expect(result.paragraphLength).toBeGreaterThanOrEqual(12000);
+		expect(result.positions).toBeGreaterThanOrEqual(12000);
+		const interactiveBudgetMs = 1000 / 60;
+		for (const operation of [...result.operations, result.burst]) {
+			const cost = operation.perCharMs ?? operation.median;
+			const label = operation.perCharMs != null ? "perChar" : "median";
+			if (cost > interactiveBudgetMs) {
+				throw new Error(
+					`${operation.name} ${label}=${cost}ms exceeds the ${interactiveBudgetMs.toFixed(2)}ms 60 FPS frame budget; diagnostics=${JSON.stringify(result)}`,
 				);
 			}
 		}

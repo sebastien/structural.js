@@ -66,16 +66,17 @@ class Modification {
 		const el = anchor?.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor;
 		if (!el || !this.editor.root.contains(el)) {
 			return {
-				strong: false, em: false, u: false, code: false, link: false,
+				strong: false, em: false, u: false, s: false, code: false, link: false,
 				h1: false, h2: false, h3: false,
-				ul: false, ol: false, blockquote: false,
+				ul: false, ol: false, blockquote: false, pre: false, task: false,
 			};
 		}
 		return {
 			strong:     !!el.closest('strong, b'),
 			em:         !!el.closest('em, i'),
 			u:          !!el.closest('u'),
-			code:       !!el.closest('code'),
+			s:          !!el.closest('s, del, strike'),
+			code:       !!el.closest('code') && !el.closest('pre'),
 			link:       !!el.closest('a'),
 			h1:         !!el.closest('h1'),
 			h2:         !!el.closest('h2'),
@@ -83,6 +84,8 @@ class Modification {
 			ul:         !!el.closest('ul'),
 			ol:         !!el.closest('ol'),
 			blockquote: !!el.closest('blockquote'),
+			pre:        !!el.closest('pre'),
+			task:       !!el.closest('ul[data-task]'),
 		};
 	}
 
@@ -197,6 +200,49 @@ class Modification {
 		return true;
 	}
 
+	// Method: clearFormatting
+	// Unwraps inline marks and converts headings/lists/quotes/code blocks to paragraphs.
+	clearFormatting() {
+		this._savePoint();
+		const inlineTags = ["strong", "em", "u", "s", "code", "a"];
+		let range = this.rangeFromCursor();
+		if (range && !range.collapsed) {
+			for (const tag of inlineTags) {
+				const live = this.editor.range.selected(this.editor.root, this.session) || range;
+				if (!live || live.collapsed) break;
+				for (const el of [...this._overlappingTags(live, tag)]) {
+					if (el?.isConnected) this.coalesceText(this.unwrapElement(el));
+				}
+			}
+		} else {
+			const anchor = this.cursor.anchor;
+			const el = anchor?.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor;
+			for (const tag of inlineTags) {
+				const wrap = el?.closest?.(tag);
+				if (wrap && this.editor.root.contains(wrap)) this.coalesceText(this.unwrapElement(wrap));
+			}
+		}
+		const selected = this.editor.range.selected(this.editor.root, this.session);
+		let blocks = this._blocksInRange(selected);
+		if (!blocks.length) {
+			const block = this.findBlock(this.cursor.anchor);
+			if (block && block !== this.editor.root) blocks = [block];
+		}
+		this._unwrapListItems(blocks.filter((block) => block.tagName.toLowerCase() === "li"));
+		for (const block of blocks) {
+			if (!block.isConnected) continue;
+			const tag = block.tagName.toLowerCase();
+			if (tag === "blockquote") this.unwrapElement(block);
+			else if (["h1", "h2", "h3", "pre"].includes(tag)) this.changeTagName(block, "p");
+		}
+		this.text.refresh();
+		this._restoreCursor();
+		try {
+			this.editor.selection?.syncToNative(this.session ?? this.editor.localSession);
+		} catch (_) {}
+		return true;
+	}
+
 	// Method: _overlappingTags
 	// Internal helper to find tags of type `tag` overlapping with the given `range`.
 	_overlappingTags(range, tag) {
@@ -268,16 +314,19 @@ class Modification {
 	// Method: toggleBlock
 	// Toggles block tag style (e.g. `ul`, `ol`, `blockquote`, headings) on the current block.
 	toggleBlock(tag) {
-		this.editor.selection.syncFromNative(this.editor.root, this.session);
 		const selected = this.editor.range.selected(this.editor.root, this.session);
 		const selectedBlocks = this._blocksInRange(selected);
-		if (selectedBlocks.length > 0 && (tag === "ul" || tag === "ol")) {
+		if (selectedBlocks.length > 0 && (tag === "ul" || tag === "ol" || tag === "task")) {
 			this._savePoint();
-			const allInList = selectedBlocks.every((block) =>
-				block.tagName.toLowerCase() === "li" && block.closest(tag),
-			);
-			if (allInList) this._unwrapListItems(selectedBlocks);
-			else this._toggleListBlocks(tag, selectedBlocks);
+			if (tag === "task") {
+				this._toggleTaskBlocks(selectedBlocks);
+			} else {
+				const allInList = selectedBlocks.every((block) =>
+					block.tagName.toLowerCase() === "li" && block.closest(tag),
+				);
+				if (allInList) this._unwrapListItems(selectedBlocks);
+				else this._toggleListBlocks(tag, selectedBlocks);
+			}
 			this._restoreCursor();
 			this.editor.selection.syncToNative(this.session);
 			return true;
@@ -302,13 +351,17 @@ class Modification {
 		const currentTag = target.tagName.toLowerCase();
 		const isActive = tag === 'blockquote'
 			? !!target.closest('blockquote')
-			: tag === 'ul' || tag === 'ol'
-				? !!target.closest(tag)
-				: currentTag === tag;
-		if (!isActive && !this.allowsBlock(tag)) return false;
+			: tag === 'task'
+				? !!target.closest('ul[data-task]')
+				: tag === 'ul' || tag === 'ol'
+					? !!target.closest(tag)
+					: currentTag === tag;
+		if (!isActive && tag !== "task" && !this.allowsBlock(tag)) return false;
 		this._savePoint();
 
-		if (tag === 'ul' || tag === 'ol') {
+		if (tag === 'task') {
+			this._toggleTask(target);
+		} else if (tag === 'ul' || tag === 'ol') {
 			this._toggleList(tag, target);
 		} else if (tag === 'blockquote') {
 			this._toggleBbq(target);
@@ -329,9 +382,11 @@ class Modification {
 	// Method: rangeFromCursor
 	// Returns a valid native DOM Range from the cursor position or active selection.
 	rangeFromCursor() {
-		this.editor.selection.syncFromNative(this.editor.root, this.session);
 		const selected = this.editor.range.selected(this.editor.root, this.session);
 		if (selected) return selected;
+		this.editor.selection.syncFromNative(this.editor.root, this.session);
+		const fromNative = this.editor.range.selected(this.editor.root, this.session);
+		if (fromNative) return fromNative;
 		const word = this.expandToWord();
 		if (word) {
 			const startPt = this.text.pointAt(word.start);
@@ -644,9 +699,15 @@ class Modification {
 		const other = block.closest(tag === 'ul' ? 'ol' : 'ul');
 
 		if (list) {
-			this.unwrapList(list);
+			if (tag === 'ul' && list.hasAttribute('data-task')) {
+				this._clearTaskList(list);
+			} else {
+				this.unwrapList(list);
+			}
 		} else if (other) {
-			this.changeTagName(other, tag);
+			const hadTask = other.hasAttribute('data-task');
+			const converted = this.changeTagName(other, tag);
+			if (hadTask) this._clearTaskList(converted);
 		} else {
 			const li = document.createElement('li');
 			const wrapper = document.createElement(tag);
@@ -654,6 +715,46 @@ class Modification {
 			wrapper.appendChild(li);
 			block.parentNode.replaceChild(wrapper, block);
 			this._mergeAdjacentLists(wrapper);
+		}
+	}
+
+	// Method: _clearTaskList
+	// Removes task semantics from `list`, keeping it as a plain list.
+	_clearTaskList(list) {
+		list.removeAttribute('data-task');
+		for (const li of list.querySelectorAll(':scope > li')) {
+			li.removeAttribute('data-checked');
+		}
+	}
+
+	// Method: _toggleTask
+	// Toggles a checklist (`ul[data-task]`) on target `block`.
+	_toggleTask(block) {
+		const list = block.closest('ul, ol');
+		if (list?.hasAttribute('data-task')) {
+			this._clearTaskList(list);
+			return;
+		}
+		if (list) {
+			const ul = list.tagName.toLowerCase() === 'ul' ? list : this.changeTagName(list, 'ul');
+			this._markTaskList(ul);
+			return;
+		}
+		const li = document.createElement('li');
+		const wrapper = document.createElement('ul');
+		while (block.firstChild) li.appendChild(block.firstChild);
+		wrapper.appendChild(li);
+		block.parentNode.replaceChild(wrapper, block);
+		this._markTaskList(wrapper);
+		this._mergeAdjacentLists(wrapper);
+	}
+
+	// Method: _markTaskList
+	// Marks `list` as a task list and initializes unchecked items.
+	_markTaskList(list) {
+		list.setAttribute('data-task', '');
+		for (const li of list.querySelectorAll(':scope > li')) {
+			if (!li.hasAttribute('data-checked')) li.setAttribute('data-checked', 'false');
 		}
 	}
 
@@ -685,6 +786,20 @@ class Modification {
 			wrapper.appendChild(li);
 			block.parentNode.replaceChild(wrapper, block);
 			this._mergeAdjacentLists(wrapper);
+		}
+	}
+
+	// Applies a task-list toggle to every block touched by the active selection.
+	_toggleTaskBlocks(blocks) {
+		const allTask = blocks.every((block) => !!block.closest("ul[data-task]"));
+		for (const block of blocks) {
+			if (!block.isConnected) continue;
+			if (allTask) {
+				const list = block.closest("ul[data-task]");
+				if (list) this._clearTaskList(list);
+				continue;
+			}
+			if (!block.closest("ul[data-task]")) this._toggleTask(block);
 		}
 	}
 
@@ -847,7 +962,7 @@ class RichTextClipboard {
 		const template = document.createElement("template");
 		template.innerHTML = html;
 		const allowed = new Set([
-			"blockquote", "br", "code", "em", "h1", "h2", "h3", "li", "ol", "p", "pre", "strong", "ul",
+			"a", "blockquote", "br", "code", "em", "h1", "h2", "h3", "li", "ol", "p", "pre", "s", "strong", "ul",
 		]);
 		const clean = (node) => {
 			for (const child of [...node.childNodes]) {
@@ -867,6 +982,30 @@ class RichTextClipboard {
 		return template.content;
 	}
 
+	wrapInlinePaste(fragment, schema) {
+		const out = document.createDocumentFragment();
+		let run = [];
+		const flush = () => {
+			if (!run.length) return;
+			const paragraph = document.createElement("p");
+			for (const node of run) paragraph.appendChild(node);
+			out.appendChild(paragraph);
+			run = [];
+		};
+		for (const node of [...fragment.childNodes]) {
+			const block =
+				node.nodeType === Node.ELEMENT_NODE && schema.rule(node)?.type === "block";
+			if (block) {
+				flush();
+				out.appendChild(node);
+			} else {
+				run.push(node);
+			}
+		}
+		flush();
+		return out.childNodes.length ? out : fragment;
+	}
+
 	// Inserts supported clipboard HTML and lets the editor normalizer repair structure.
 	pasteHTML(html, session = null, event = null) {
 		const plugin = this.plugin;
@@ -882,7 +1021,8 @@ class RichTextClipboard {
 			event.stopPropagation();
 		}
 		plugin.editor.history.run("paste", () => {
-			const inserted = [...fragment.childNodes];
+			const payload = this.wrapInlinePaste(fragment, plugin.editor.schema);
+			const inserted = [...payload.childNodes];
 			const normalized = active.cursor.selection.normalizedRange();
 			const documentLength = plugin.editor.root.innerText?.length ?? plugin.editor.root.textContent?.length ?? 0;
 			const fullDocument = normalized.start === 0 && normalized.end >= documentLength;
@@ -890,13 +1030,20 @@ class RichTextClipboard {
 				node.nodeType === Node.ELEMENT_NODE && plugin.editor.schema.rule(node)?.type === "block",
 			);
 			const block = plugin.currentEditableBlock(active);
-			if (fullDocument) plugin.editor.root.replaceChildren(fragment);
+			if (fullDocument) plugin.editor.root.replaceChildren(payload);
 			else if (hasBlock && block && plugin.isEmptyBlock(block)) block.replaceWith(...inserted);
 			else {
 				range.deleteContents();
-				range.insertNode(fragment);
+				range.insertNode(payload);
 			}
 			const last = inserted.at(-1);
+			// Resolve the end of the pasted content to a text node: block wrappers may
+			// be unwrapped/removed by normalization, which would otherwise drop the caret
+			// back to the start of the editor root.
+			const endNode = last
+				? (plugin.editor.lastTextNode(last) ??
+					(last.nodeType === Node.TEXT_NODE ? last : null))
+				: null;
 			if (last?.parentNode) {
 				range.setStartAfter(last);
 				range.collapse(true);
@@ -905,12 +1052,14 @@ class RichTextClipboard {
 			plugin.editor.setContent(undefined, {
 				session: active,
 				history: true,
-				selection: last?.nodeType === Node.TEXT_NODE
-					? { node: last, offset: last.length }
-					: last
-						? { node: last, position: "end" }
-						: undefined,
 			});
+			if (endNode?.isConnected) {
+				plugin.editor.selection.setCaret(
+					endNode,
+					endNode.data?.length ?? 0,
+					active,
+				);
+			}
 		}, active);
 		return true;
 	}
@@ -1095,7 +1244,7 @@ const richTextRules = {
 		type: "root",
 		contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"],
 		default: "p",
-		normalize: { empty: "fill", text: "wrap", invalidChild: "lift" },
+		normalize: { empty: "fill", text: "wrap", invalidChild: "wrap" },
 	},
 	"@inline": ["strong", "em", "u", "code", "a"],
 	section: { type: "block", contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
