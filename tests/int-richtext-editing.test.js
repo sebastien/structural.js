@@ -585,7 +585,7 @@ async function runWithFresh(fn) {
 	}
 }
 
-test("placeholder: overlay sits on the empty line without growing the editor", async () => {
+test("placeholder: in-flow hint fills the empty block", async () => {
 	await runWithFresh(async (page) => {
 		const result = await page.evaluate(() => {
 			const root = document.getElementById("editor");
@@ -594,38 +594,42 @@ test("placeholder: overlay sits on the empty line without growing the editor", a
 			document.head.appendChild(style);
 			root.setAttribute("data-placeholder", "Text");
 			window.__test.setHTML("<p><br></p>");
-			window.__editor.input.cursor.moveTo(0);
 			window.__editor.placeholder?.sync();
-			const overlay = window.__editor.placeholder?.node;
+			window.__editor.text.refresh();
+			window.__editor.input.cursor.moveTo(0);
+			const hint = window.__editor.placeholder?.node;
 			const p = root.querySelector("p");
 			const pRect = p.getBoundingClientRect();
-			const overlayRect = overlay?.getBoundingClientRect();
+			const hintRect = hint?.getBoundingClientRect();
 			const point = window.__editor.text.pointAt(window.__editor.input.cursor.offset);
+			const snap = window.__editor.history.snapshot();
 			return {
 				empty: root.hasAttribute("data-empty"),
-				overlayText: overlay?.textContent ?? "",
-				overlayVisible: overlay ? getComputedStyle(overlay).visibility : null,
-				overlayInsideEditor: !!(overlay && root.contains(overlay)),
+				hintText: hint?.textContent ?? "",
+				hintInsideP: !!(hint && p.contains(hint)),
+				skipped: !!hint?.classList.contains("skipped"),
 				beforeContent: getComputedStyle(root, "::before").content,
-				lineHeight: Number.parseFloat(getComputedStyle(p).lineHeight) || pRect.height,
 				pHeight: pRect.height,
-				overlayTop: overlayRect?.top ?? null,
-				pTop: pRect.top,
-				afterBr: !!(point?.node === p && point.offset > 0),
+				hintHeight: hintRect?.height ?? 0,
+				caretOnP: point?.node === p && point.offset === 0,
+				liveHasHint: root.innerHTML.includes("data-structural-hint"),
+				snapHasHint: snap.html.includes("data-structural-hint"),
 			};
 		});
 		expect(result.empty).toBe(true);
-		expect(result.overlayText).toBe("Text");
-		expect(result.overlayVisible).toBe("visible");
-		expect(result.overlayInsideEditor).toBe(false);
+		expect(result.hintText).toBe("Text");
+		expect(result.hintInsideP).toBe(true);
+		expect(result.skipped).toBe(true);
 		expect(result.beforeContent === "none" || result.beforeContent === "normal").toBe(true);
-		expect(result.pHeight).toBeLessThan(result.lineHeight * 1.8);
-		expect(Math.abs((result.overlayTop ?? 0) - result.pTop)).toBeLessThan(6);
-		expect(result.afterBr).toBe(false);
+		expect(result.pHeight).toBeGreaterThan(0);
+		expect(result.pHeight).toBeGreaterThanOrEqual(result.hintHeight - 1);
+		expect(result.caretOnP).toBe(true);
+		expect(result.liveHasHint).toBe(true);
+		expect(result.snapHasHint).toBe(false);
 	});
 });
 
-test("placeholder: typing hides the overlay and emptying shows it again", async () => {
+test("placeholder: typing removes the hint and emptying restores it", async () => {
 	await runWithFresh(async (page) => {
 		const result = await page.evaluate(() => {
 			const root = document.getElementById("editor");
@@ -633,19 +637,20 @@ test("placeholder: typing hides the overlay and emptying shows it again", async 
 			window.__test.setHTML("<p><br></p>");
 			window.__editor.input.cursor.moveTo(0);
 			window.__editor.placeholder?.sync();
-			const overlay = window.__editor.placeholder?.node;
-			const shown = overlay ? getComputedStyle(overlay).visibility : null;
+			const hint = window.__editor.placeholder?.node;
+			const p = () => root.querySelector("p");
+			const shown = !!(hint && p()?.contains(hint));
 			window.__editor.input.cursor.insertText("x");
 			window.__editor.placeholder?.sync();
-			const hidden = overlay ? getComputedStyle(overlay).visibility : null;
+			const hidden = !hint?.isConnected;
 			window.__editor.input.cursor.backspace();
 			window.__editor.placeholder?.sync();
-			const shownAgain = overlay ? getComputedStyle(overlay).visibility : null;
+			const shownAgain = !!(hint && p()?.contains(hint));
 			return { shown, hidden, shownAgain, empty: root.hasAttribute("data-empty") };
 		});
-		expect(result.shown).toBe("visible");
-		expect(result.hidden).toBe("hidden");
-		expect(result.shownAgain).toBe("visible");
+		expect(result.shown).toBe(true);
+		expect(result.hidden).toBe(true);
+		expect(result.shownAgain).toBe(true);
 		expect(result.empty).toBe(true);
 	});
 });

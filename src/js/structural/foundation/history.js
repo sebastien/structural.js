@@ -1,3 +1,4 @@
+import { htmlWithoutPlaceholder } from "./document.js";
 
 // Project: structural.js
 // Author:  Sébastien Pierre
@@ -38,7 +39,7 @@ class EditorHistory {
 		} else {
 			selection = { kind: "caret", offset: cursor?.offset ?? 0 };
 		}
-		return { html: this.editor.root.innerHTML, selection };
+		return { html: htmlWithoutPlaceholder(this.editor.root), selection };
 	}
 
 	// Method: restore

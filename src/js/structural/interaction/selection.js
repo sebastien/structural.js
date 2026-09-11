@@ -1,4 +1,4 @@
-import { LEGACY_STRUCTURAL_SELECTOR, firstTextNode, lastTextNode } from "../foundation/document.js";
+import { LEGACY_STRUCTURAL_SELECTOR, firstTextNode, isPlaceholderHint, lastTextNode } from "../foundation/document.js";
 // Project: structural.js
 // Author: Sebastien Pierre
 // License: Revised BSD License
@@ -372,11 +372,11 @@ export { Caret };
 
 const PLACEHOLDER_STYLE_ID = "structural-placeholder-style";
 const DEFAULT_PLACEHOLDER_STYLE = {
-	position: "absolute",
+	position: "static",
 	pointerEvents: "none",
 	userSelect: "none",
 	color: "rgba(0, 0, 0, 0.35)",
-	whiteSpace: "nowrap",
+	whiteSpace: "normal",
 };
 
 export function ensurePlaceholderStylesheet(doc = document) {
@@ -404,15 +404,8 @@ class PlaceholderOverlay {
 		this._onCursorMove = () => this._schedule();
 		this._observer = null;
 		const root = editor?.root;
-		const host = this._config.node ?? document.createElement("div");
+		const host = this._config.node ?? document.createElement("span");
 		this.node = host;
-		host.setAttribute("aria-hidden", "true");
-		const container = this._config.container ?? root?.parentNode;
-		prepareOverlayHost(host, container?.nodeType === Node.ELEMENT_NODE ? container : null);
-		const caretNode = editor?.input?.cursor?.caret?.node;
-		if (host.parentNode && caretNode && caretNode.parentNode === host.parentNode) {
-			host.parentNode.insertBefore(host, caretNode);
-		}
 		if (root) {
 			root.setAttribute("data-structural-placeholder", "");
 			ensurePlaceholderStylesheet(root.ownerDocument);
@@ -470,11 +463,12 @@ class PlaceholderOverlay {
 
 	_isEmptyBlock(block) {
 		if (!block) return true;
-		if ((block.textContent ?? "").replace(/\u200b/g, "").trim()) return false;
 		for (const child of block.childNodes) {
+			if (isPlaceholderHint(child)) continue;
 			if (child.nodeType === Node.TEXT_NODE && !(child.data ?? "").replace(/\u200b/g, "").trim()) continue;
 			if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "BR") continue;
-			return false;
+			if ((child.textContent ?? "").replace(/\u200b/g, "").trim()) return false;
+			if (child.nodeType === Node.ELEMENT_NODE) return false;
 		}
 		return true;
 	}
@@ -482,8 +476,8 @@ class PlaceholderOverlay {
 	_isEmpty() {
 		const root = this.editor?.root;
 		if (!root) return true;
-		const blocks = [...root.children].filter((n) => n.nodeType === Node.ELEMENT_NODE);
-		if (blocks.length === 0) return !(root.textContent ?? "").replace(/\u200b/g, "").trim();
+		const blocks = [...root.children].filter((n) => n.nodeType === Node.ELEMENT_NODE && !isPlaceholderHint(n));
+		if (blocks.length === 0) return this._isEmptyBlock(root);
 		if (blocks.length !== 1) return false;
 		return this._isEmptyBlock(blocks[0]);
 	}
@@ -491,12 +485,33 @@ class PlaceholderOverlay {
 	_emptyBlock() {
 		const root = this.editor?.root;
 		if (!root) return null;
-		const blocks = [...root.children].filter((n) => n.nodeType === Node.ELEMENT_NODE);
+		const blocks = [...root.children].filter((n) => n.nodeType === Node.ELEMENT_NODE && !isPlaceholderHint(n));
 		return blocks.length === 1 && this._isEmptyBlock(blocks[0]) ? blocks[0] : null;
 	}
 
 	hide() {
-		if (this.node) this.node.style.visibility = "hidden";
+		const node = this.node;
+		if (!node) return;
+		const parent = node.parentNode;
+		if (!parent) return;
+		node.remove();
+		if (parent !== this.editor?.root && this._isEmptyBlock(parent)) {
+			let hasBr = false;
+			for (const child of parent.childNodes) {
+				if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "BR") {
+					hasBr = true;
+					break;
+				}
+			}
+			if (!hasBr) parent.appendChild(document.createElement("br"));
+		}
+	}
+
+	_prepareHint() {
+		if (!this.node) return;
+		this.node.setAttribute("aria-hidden", "true");
+		this.node.setAttribute("data-structural-hint", "");
+		this.node.classList.add("skipped");
 	}
 
 	_applyStyles() {
@@ -518,34 +533,34 @@ class PlaceholderOverlay {
 		}
 		this._managedStyleProps = applied;
 		if (this._config.className) this.node.className = this._config.className;
+		this._prepareHint();
 	}
 
 	sync() {
 		if (this.disabled || !this.node || !this.editor?.root) return;
-		const root = this.editor.root;
-		const empty = this._isEmpty();
-		root.toggleAttribute("data-empty", empty);
-		const label = this.text();
-		if (!empty || !label) {
-			this.hide();
-			return;
-		}
-		this.node.textContent = label;
-		this._applyStyles();
-		const target = this._emptyBlock() || root;
-		const cs = getComputedStyle(target);
-		const rect = target.getBoundingClientRect();
-		const x = rect.left + (Number.parseFloat(cs.paddingLeft) || 0);
-		const y = rect.top + (Number.parseFloat(cs.paddingTop) || 0);
-		const local = clientToOffsetParent(x, y, this.node);
-		this.node.style.left = `${snapCssPx(local.x)}px`;
-		this.node.style.top = `${snapCssPx(local.y)}px`;
-		this.node.style.visibility = "visible";
-		if (!this._config.style?.font && !this._config.styles?.default?.font && cs.font) {
-			this.node.style.font = cs.font;
-		}
-		if (!this._config.style?.lineHeight && !this._config.styles?.default?.lineHeight && cs.lineHeight) {
-			this.node.style.lineHeight = cs.lineHeight;
+		this._observer?.disconnect();
+		try {
+			const root = this.editor.root;
+			const empty = this._isEmpty();
+			root.toggleAttribute("data-empty", empty);
+			const label = this.text();
+			if (!empty || !label) {
+				this.hide();
+				return;
+			}
+			if (this.node.textContent !== label) this.node.textContent = label;
+			this._applyStyles();
+			const target = this._emptyBlock() || root;
+			for (const child of [...target.childNodes]) {
+				if (child !== this.node && child.nodeType === Node.ELEMENT_NODE && child.tagName === "BR") {
+					child.remove();
+				}
+			}
+			if (this.node.parentNode !== target) target.appendChild(this.node);
+		} finally {
+			if (this._observer && this.editor?.root) {
+				this._observer.observe(this.editor.root, { subtree: true, childList: true, characterData: true });
+			}
 		}
 	}
 }

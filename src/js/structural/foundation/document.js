@@ -97,6 +97,18 @@ export function wordRangeAtIndex(text, index) {
 
 // Legacy structural DOM markers. Keep these compatibility aliases outside core
 // editor behavior so applications can migrate to schema-defined roles over time.
+export function isPlaceholderHint(node) {
+	return node?.nodeType === Node.ELEMENT_NODE && node.hasAttribute?.("data-structural-hint");
+}
+
+export function htmlWithoutPlaceholder(root) {
+	if (!root) return "";
+	if (!root.querySelector?.("[data-structural-hint]")) return root.innerHTML ?? "";
+	const clone = root.cloneNode(true);
+	for (const n of clone.querySelectorAll("[data-structural-hint]")) n.remove();
+	return clone.innerHTML;
+}
+
 export function isLegacySkipped(node) {
 	return (
 		node?.classList?.contains("skipped") ||
@@ -330,7 +342,7 @@ class TextAdapter {
 	// Method: isSkipped
 	// Checks if the given `node` is marked to be skipped during traversal.
 	isSkipped(node) {
-		return isLegacySkipped(node);
+		return isLegacySkipped(node) || isPlaceholderHint(node);
 	}
 
 	// Method: isContainer
@@ -1564,6 +1576,7 @@ class TextAdapter {
 		const point = this.pointAt(clamped);
 		this._beginEdit();
 		try {
+			this._removePlaceholderHints(point?.node);
 			const insertOffset = point?.offset ?? 0;
 			const insertedPoint = point ? this.insertAtPoint(point, text) : null;
 			if (point?.node?.nodeType === Node.TEXT_NODE) {
@@ -1837,7 +1850,12 @@ class TextAdapter {
 		if (!el || el.nodeType !== Node.ELEMENT_NODE || el === this.root) return false;
 		const selector = blockSelectorFromSchema(this._schema);
 		if (!el.matches(selector)) return false;
-		return !(el.textContent ?? "").replace(/\u200b/g, "").trim();
+		let text = "";
+		for (const child of el.childNodes) {
+			if (isPlaceholderHint(child)) continue;
+			text += child.textContent ?? "";
+		}
+		return !text.replace(/\u200b/g, "").trim();
 	}
 
 	_isEmptyBlockBreak(node, parent) {
@@ -1851,6 +1869,35 @@ class TextAdapter {
 			return false;
 		}
 		return true;
+	}
+
+	_isPlaceholderOnlyBlock(el) {
+		if (!el || el.nodeType !== Node.ELEMENT_NODE || el === this.root) return false;
+		const selector = blockSelectorFromSchema(this._schema);
+		if (!el.matches(selector)) return false;
+		let hint = false;
+		for (const child of el.childNodes) {
+			if (isPlaceholderHint(child)) {
+				hint = true;
+				continue;
+			}
+			if (child.nodeType === Node.TEXT_NODE && !(child.data ?? "").replace(/\u200b/g, "").trim()) {
+				continue;
+			}
+			if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "BR") continue;
+			return false;
+		}
+		return hint;
+	}
+
+	_removePlaceholderHints(fromNode) {
+		const el = asElement(fromNode);
+		if (!el || !this.root) return;
+		const selector = blockSelectorFromSchema(this._schema);
+		const block =
+			el.nodeType === Node.ELEMENT_NODE && el.matches(selector) ? el : el.closest?.(selector);
+		const scope = block && this.root.contains(block) ? block : this.root;
+		for (const hint of [...scope.querySelectorAll("[data-structural-hint]")]) hint.remove();
 	}
 
 	// Method: _shouldEmitBoundary
@@ -2033,6 +2080,13 @@ class TextAdapter {
 						point: { node: parent, offset: childIndex },
 						focusNode: parent,
 					};
+				}
+				if (this._isPlaceholderOnlyBlock(current)) {
+					yield {
+						point: { node: current, offset: 0 },
+						focusNode: current,
+					};
+					return;
 				}
 				const children = Array.from(current.childNodes);
 				if (children.length === 0) {

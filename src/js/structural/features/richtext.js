@@ -1,4 +1,4 @@
-import { DEFAULT_BLOCK_SELECTOR, asElement, wordRangeAtIndex } from "../foundation/document.js";
+import { DEFAULT_BLOCK_SELECTOR, asElement, htmlWithoutPlaceholder, isPlaceholderHint, wordRangeAtIndex } from "../foundation/document.js";
 import { EditorSchema } from "../foundation/schema.js";
 import { editorKeymap } from "../runtime/editor.js";
 // Project: structural.js
@@ -896,6 +896,7 @@ class RichTextClipboard {
 	// Plain text for the current structural (or native) selection.
 	selectedPlainText(session = null) {
 		const plugin = this.plugin;
+		if (plugin.editor.root?.hasAttribute?.("data-empty")) return "";
 		const range = plugin.editor.range.selected(plugin.editor.root, session);
 		return range ? range.toString() : "";
 	}
@@ -907,9 +908,12 @@ class RichTextClipboard {
 		if (!range) return "";
 		const normalized = plugin.editor.activeSession(session).cursor.selection.normalizedRange();
 		const documentLength = plugin.editor.root.innerText?.length ?? plugin.editor.root.textContent?.length ?? 0;
-		if (normalized.start === 0 && normalized.end >= documentLength) return plugin.editor.root.innerHTML;
+		if (normalized.start === 0 && normalized.end >= documentLength) {
+			return htmlWithoutPlaceholder(plugin.editor.root);
+		}
 		const container = document.createElement("div");
 		container.appendChild(range.cloneContents());
+		for (const n of container.querySelectorAll("[data-structural-hint]")) n.remove();
 		return container.innerHTML;
 	}
 
@@ -1478,7 +1482,15 @@ class RichText {
 	}
 
 	isEmptyBlock(block) {
-		return !!block && this.blockText(block) === "";
+		if (!block) return false;
+		for (const child of block.childNodes) {
+			if (isPlaceholderHint(child)) continue;
+			if (child.nodeType === Node.TEXT_NODE && !(child.data ?? "").replace(/\u200b/g, "").trim()) continue;
+			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") continue;
+			if ((child.textContent ?? "").replace(/\u200b/g, "").trim()) return false;
+			if (child.nodeType === Node.ELEMENT_NODE) return false;
+		}
+		return true;
 	}
 
 	removePlaceholderInCurrentBlock(session = null) {
@@ -1486,7 +1498,8 @@ class RichText {
 		if (!block || !this.isEmptyBlock(block)) return false;
 		let removed = false;
 		for (const child of [...block.childNodes]) {
-			if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() === "br") {
+			if (child.nodeType !== Node.ELEMENT_NODE) continue;
+			if (child.tagName.toLowerCase() === "br" || isPlaceholderHint(child)) {
 				child.remove();
 				removed = true;
 			}
