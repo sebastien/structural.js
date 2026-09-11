@@ -10,26 +10,16 @@ export {
 	blockSelectorFromSchema,
 	firstTextNode,
 	lastTextNode,
-	wordBoundsInData,
 	wordRangeAtIndex,
 	DEFAULT_BLOCK_SELECTOR,
-	isLegacyAtom,
-	isLegacyContainer,
-	isLegacySkipped,
-	LEGACY_ATOM_SELECTOR,
-	LEGACY_CONTAINER_SELECTOR,
-	LEGACY_SKIPPED_SELECTOR,
-	LEGACY_STRUCTURAL_SELECTOR,
 } from "./foundation/document.js";
 export { Caret, Cursor } from "./interaction/cursor.js";
 export { EditorSelectionController, PlaceholderOverlay, SelectionOverlay, TextSelection } from "./interaction/selection.js";
 export { Modification } from "./features/richtext.js";
-export { EditorPluginHost, HISTORY_SKIP, blockWhenDomain, matchInputRuleKey, matchInputRuleWhen } from "./runtime/editor.js";
 export {
 	Editor,
 	EditorClassController,
 	EditorCommand,
-	EditorCursor,
 	EditorHistory,
 	editorKeymap,
 	EditorNormalizer,
@@ -43,23 +33,15 @@ export {
 	RichText,
 	richTextClasses,
 	richTextKeymap,
-	richTextNormalizer,
-	richTextRules,
 	richTextSchema,
 } from "./features/richtext.js";
-export { Shorthands, normalizeDefinition } from "./features/shorthands.js";
-
-export { default as richtext } from "./features/richtext.js";
-
+export { Shorthands } from "./features/shorthands.js";
 export {
 	BlockMenus,
 	BlockSchema,
 	Blocks,
-	ListMenu,
 	defaultBlockInput,
 	blockEl,
 	blockKeymap,
 	blockSchema,
 } from "./features/blocks.js";
-
-export { default as blocks } from "./features/blocks.js";

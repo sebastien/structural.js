@@ -567,7 +567,7 @@ export class BlockMenus {
 
 	attach(editor) {
 		this.editor = editor;
-		this.blocks = editor.capability?.("blocks") ?? editor.blocks ?? editor.plugin("blocks");
+		this.blocks = editor.blocks ?? editor.plugin("blocks");
 		editor.root.addEventListener("CursorMove", this._onCursorMove);
 		editor.root.addEventListener("click", this._onClick);
 		document.addEventListener("mousedown", this._onMouseDown);
@@ -793,14 +793,6 @@ export class BlockMenus {
 		this.activeEmptySlot = null;
 	}
 
-	moveChooser(delta) {
-		this._chooserMenu?.move(delta);
-	}
-
-	confirmChooser() {
-		return this._chooserMenu?.confirm() === true;
-	}
-
 	chooserShortcut(key, items = this.chooserItems()) {
 		const op = this.blocks?.schema?.opFromKey(key);
 		if (op && this.activeEmptySlot) {
@@ -840,14 +832,6 @@ export class BlockMenus {
 	hideOpMenu() {
 		this._opMenu?.hide();
 		this.activeOpEl = null;
-	}
-
-	moveOpMenu(delta) {
-		this._opMenu?.move(delta);
-	}
-
-	confirmOpMenu() {
-		return this._opMenu?.confirm() === true;
 	}
 
 	opMenuShortcut(key) {
@@ -897,14 +881,6 @@ export class BlockMenus {
 		this._autoMenu?.hide();
 		this.activeVarLeaf = null;
 		this.autoItems = [];
-	}
-
-	moveAuto(delta) {
-		this._autoMenu?.move(delta);
-	}
-
-	confirmAuto() {
-		return this._autoMenu?.confirm() === true;
 	}
 
 	applyVarName(name) {
@@ -1965,14 +1941,3 @@ export { Blocks };
 
 
 export { el as blockEl };
-
-export default {
-	BlockMenus,
-	BlockSchema,
-	Blocks,
-	ListMenu,
-	defaultBlockInput,
-	blockEl: el,
-	blockKeymap,
-	blockSchema,
-};

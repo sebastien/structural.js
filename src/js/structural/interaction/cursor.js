@@ -738,14 +738,8 @@ class Cursor {
 			options.preserveSemanticBoundaries !== false;
 		this.collapseBoundary = options.collapseBoundary !== false;
 		let caretCfg = options.caret;
-		if (caretCfg === undefined) {
-			if (options.caretNode) {
-				caretCfg = { node: options.caretNode };
-			} else {
-				// legacy fallback for backward compat when not configured
-				const legacy = document.getElementById("caret");
-				caretCfg = legacy || null;
-			}
+		if (caretCfg === undefined && options.caretNode) {
+			caretCfg = { node: options.caretNode };
 		}
 		// allow shorthand caret: "native" | "virtual"
 		if (typeof caretCfg === "string") {

@@ -1,5 +1,5 @@
 import { DEFAULT_BLOCK_SELECTOR, asElement, wordRangeAtIndex } from "../foundation/document.js";
-import { EditorNormalizer, EditorSchema } from "../foundation/schema.js";
+import { EditorSchema } from "../foundation/schema.js";
 import { editorKeymap } from "../runtime/editor.js";
 // Project: structural.js
 // Author:  Sébastien Pierre
@@ -1284,13 +1284,7 @@ function richTextSchema(overrides = {}, options = {}) {
 	});
 }
 
-// Function: richTextNormalizer
-// Helper to construct a standard EditorNormalizer.
-function richTextNormalizer(schema = richTextSchema(), options = {}) {
-	return new EditorNormalizer(schema, options);
-}
-
-export { richTextNormalizer, richTextRules, richTextSchema };
+export { richTextRules, richTextSchema };
 
 // Project: structural.js
 // Author:  Sebastien Pierre
@@ -1339,7 +1333,6 @@ class RichText {
 				}
 				return new Modification(context.session, { schema: editor.schema }).toggleLink(target);
 			},
-			beforeTextInput: (_command, context) => this.removePlaceholderInCurrentBlock(context.session),
 			splitBlock: (_command, context) => this.splitCurrentBlock(context.session),
 			insertLineBreak: (_command, context) => this.insertLineBreak(context.session),
 			deleteSmart: (_command, context) =>
@@ -1520,74 +1513,6 @@ class RichText {
 		return active.currentBlock?.isConnected ? active.currentBlock : null;
 	}
 
-	selectionRangeFor(node) {
-		if (!node?.isConnected) {
-			return null;
-		}
-		this.editor.text.refresh();
-		const endOffset = Math.max(0, this.editor.text.offsetWithin(node, {
-			node,
-			offset: node.childNodes.length,
-		}));
-		const startPoint = this.editor.text.pointAtOffsetWithin(node, 0, "forward");
-		const endPoint = this.editor.text.pointAtOffsetWithin(node, endOffset, "backward");
-		// indexOfPoint expands window as needed
-		const start = startPoint ? this.editor.text.indexOfPoint(startPoint) : -1;
-		const end = endPoint ? this.editor.text.indexOfPoint(endPoint) : -1;
-		if (start < 0 || end < 0 || start === end) {
-			return null;
-		}
-		return { start, end };
-	}
-
-	selectionScopes(session = null) {
-		const block = this.currentEditableBlock(session);
-		if (!block) {
-			return [];
-		}
-		const scopes = [];
-		let current = block;
-		while (current?.isConnected) {
-			const range = this.selectionRangeFor(current);
-			if (range && !scopes.some(scope => scope.start === range.start && scope.end === range.end)) {
-				scopes.push(range);
-			}
-			if (current === this.editor.root) {
-				break;
-			}
-			current = current.parentElement;
-		}
-		return scopes;
-	}
-
-	selectCurrentBlock(session = null, mode = "expand") {
-		const scopes = this.selectionScopes(session);
-		if (scopes.length === 0) {
-			return false;
-		}
-		const active = this.editor.activeSession(session);
-		const normalized = active.cursor.selection.normalizedRange();
-		const currentIndex = scopes.findIndex(scope =>
-			normalized.start === scope.start && normalized.end === scope.end,
-		);
-		const targetIndex =
-			mode === "contract"
-				? currentIndex > 0
-					? currentIndex - 1
-					: 0
-				: currentIndex >= 0
-					? Math.min(scopes.length - 1, currentIndex + 1)
-					: 0;
-		const target = scopes[targetIndex];
-		const selected = target
-			? this.editor.selection.select(target.start, target.end, session)
-			: false;
-		if (selected) {
-			this.editor.selection.syncToNative(session);
-		}
-		return selected;
-	}
-
 	shouldInsertText(text, session = null) {
 		if (text !== " ") {
 			return true;
@@ -1612,18 +1537,6 @@ class RichText {
 			return !/\s/.test(before) && !/\s/.test(after);
 		}
 		return !/\s/.test(context?.char?.before ?? "") && !/\s/.test(context?.char?.after ?? "");
-	}
-
-	expandSelection(direction, session = null) {
-		const cursor = this.editor.activeSession(session).cursor;
-		if (!cursor) return false;
-		if (direction === "left") cursor.left(true);
-		else if (direction === "right") cursor.right(true);
-		else if (direction === "up") cursor.up(true);
-		else if (direction === "down") cursor.down(true);
-		else return false;
-		this.editor.selection.syncToNative(session);
-		return true;
 	}
 
 	isFullySelectedBlock(range, block) {
@@ -1881,18 +1794,6 @@ class RichText {
 		return true;
 	}
 
-	ensureTextTarget(block) {
-		if (!block) return null;
-		const tn = this.firstTextNode(block);
-		if (tn) return tn;
-		for (const ch of block.childNodes) {
-			if (ch.nodeType === Node.TEXT_NODE) return ch;
-		}
-		const t = document.createTextNode("");
-		block.appendChild(t);
-		return t;
-	}
-
 	splitListItem(item, range, session = null) {
 		if (this.isEmptyBlock(item)) return this.exitEmptyBlock(item, session);
 		const nextItem = document.createElement("li");
@@ -2021,46 +1922,5 @@ class RichText {
 }
 
 export { RichText };
-
-// EOF
-
-// Project: structural.js
-// Author:  Sebastien Pierre
-// License: Revised BSD License
-// Created: 2026-06-26
-
-// Module: richtext
-// Installs rich-text schema presets, keymaps, classes, and block editing behavior.
-
-
-// Short aliases for convenient default import usage:
-//   import richtext from "structural"
-//   richtext.schema(...)
-//   new Editor(node, { ...richtext.options, caret: ... })
-export {
-  richTextSchema as schema,
-  richTextKeymap as keymap,
-  richTextClasses as classes,
-  richTextNormalizer as normalizer,
-  richTextRules as rules,
-};
-
-const richtext = {
-  RichText,
-  schema: richTextSchema,
-  keymap: richTextKeymap,
-  classes: richTextClasses,
-  normalizer: richTextNormalizer,
-  rules: richTextRules,
-  options: {
-    schema: richTextSchema({}, { atoms: ["aos-ref", "aos-key"] }),
-    keymap: richTextKeymap(),
-    classes: richTextClasses(),
-    plugins: [RichText],
-  },
-};
-
-export { richtext };
-export default richtext;
 
 // EOF

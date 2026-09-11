@@ -1,4 +1,4 @@
-import { Cursor as EditorCursor } from "../interaction/cursor.js";
+import { Cursor } from "../interaction/cursor.js";
 import { EditorTextInput } from "../interaction/input.js";
 import { EditorSelectionController, PlaceholderOverlay } from "../interaction/selection.js";
 import { EditorHistory } from "../foundation/history.js";
@@ -7,45 +7,6 @@ import { EditorCommand, EditorNormalizer, EditorSchema, EditorTransaction } from
 // Project: structural.js
 // Author: Sebastien Pierre
 // License: Revised BSD License
-
-// Collects plugin-provided capabilities without coupling Editor to feature types.
-class EditorPluginHost {
-	constructor(editor) {
-		this.editor = editor;
-		this._capabilities = new Map();
-	}
-
-	register(name, value) {
-		if (!name || !value) return value;
-		const values = this._capabilities.get(name) ?? [];
-		if (!values.includes(value)) values.push(value);
-		this._capabilities.set(name, values);
-		return value;
-	}
-
-	registerPlugin(plugin) {
-		if (!plugin) return plugin;
-		const name = plugin.constructor?.pluginName ?? plugin.pluginName ?? null;
-		if (name) this.register(name, plugin);
-		this.register("plugin", plugin);
-		if (typeof plugin.scopeNodes === "function") this.register("scope-provider", plugin);
-		return plugin;
-	}
-
-	get(name) {
-		return this._capabilities.get(name)?.[0] ?? null;
-	}
-
-	all(name) {
-		return [...(this._capabilities.get(name) ?? [])];
-	}
-
-	clear() {
-		this._capabilities.clear();
-	}
-}
-
-export { EditorPluginHost };
 
 // Project: structural.js
 // Author:  Sébastien Pierre
@@ -91,7 +52,6 @@ export function editorKeymap(overrides = {}) {
 // Commands that only move selection — never push history.
 export const HISTORY_SKIP = new Set([
 	"moveCursor",
-	"selectAll",
 	"selectStructuralScope",
 	"moveStructural",
 	"moveTraversal",
@@ -124,24 +84,6 @@ export function matchInputRuleWhen(when, ctx, event, options = {}) {
 
 	for (const [key, expected] of Object.entries(when)) {
 		if (expected === undefined) continue;
-		if (key === "not") {
-			if (matchInputRuleWhen(expected, ctx, event, options)) return false;
-			continue;
-		}
-		if (key === "or") {
-			const list = Array.isArray(expected) ? expected : [expected];
-			if (!list.some((item) => matchInputRuleWhen(item, ctx, event, options))) return false;
-			continue;
-		}
-		if (key === "and") {
-			const list = Array.isArray(expected) ? expected : [expected];
-			if (!list.every((item) => matchInputRuleWhen(item, ctx, event, options))) return false;
-			continue;
-		}
-		if (key === "test" && typeof expected === "function") {
-			if (!expected(ctx, event)) return false;
-			continue;
-		}
 		if (domain && typeof domain[key] === "function") {
 			const handled = domain[key](expected, ctx, event, when);
 			if (handled !== undefined) {
@@ -226,24 +168,8 @@ export const blockWhenDomain = {
 		}
 		return undefined;
 	},
-	slotEmpty(expected, ctx) {
-		return !!ctx.slotEmpty === !!expected;
-	},
 	selected(expected, ctx) {
-		const sel = expected;
-		if (sel === "op") return !!ctx.isOpSelected;
-		if (sel === "hole") return !!ctx.isHoleSelected;
-		if (sel === "unit") return !!ctx.isUnitSelected;
-		if (sel === "node") return ctx.selectionKind === "node";
-		if (sel === true) return ctx.selectionKind === "node";
-		if (typeof sel === "string") {
-			return ctx.selectedRole === sel || !!ctx.selected?.classList?.contains?.(sel);
-		}
-		return undefined;
-	},
-	unit(expected, ctx) {
-		if (expected === true) return !!ctx.unit;
-		if (expected === false) return !ctx.unit;
+		if (expected === "op") return !!ctx.isOpSelected;
 		return undefined;
 	},
 	edge(expected, ctx) {
@@ -253,22 +179,8 @@ export const blockWhenDomain = {
 		if (expected === "boundary") return ctx.edge === "start" || ctx.edge === "end";
 		return undefined;
 	},
-	leaf(expected, ctx) {
-		if (expected === true) return !!ctx.leaf;
-		if (expected === false) return !ctx.leaf;
-		if (typeof expected === "string") return !!ctx.leaf?.classList?.contains?.(expected);
-		return undefined;
-	},
 	inLeaf(expected, ctx) {
 		return !!ctx.inLeaf === !!expected;
-	},
-	block(expected, ctx) {
-		if (expected === true) return !!ctx.block;
-		if (typeof expected === "string") return ctx.block?.dataset?.op === expected;
-		return undefined;
-	},
-	role(expected, ctx) {
-		return ctx.role === expected || ctx.selectedRole === expected;
 	},
 };
 
@@ -320,7 +232,7 @@ class EditorSession {
 			cursorOpts.caret = options.caret;
 		if (options.selection !== undefined && cursorOpts.selection === undefined)
 			cursorOpts.selection = options.selection;
-		this.cursor = new EditorCursor(this, cursorOpts);
+		this.cursor = new Cursor(this, cursorOpts);
 		this.classes = options.classes
 			? new EditorClassController(this, options.classes).attach()
 			: null;
@@ -724,9 +636,7 @@ class Editor {
 		this.inputRules = [];
 		if (Array.isArray(options.inputRules)) this.addInputRules(options.inputRules);
 		this.history = new EditorHistory(this, options.history);
-		this.sessions = new Map();
 		this.plugins = [];
-		this.pluginHost = new EditorPluginHost(this);
 		this._active = false;
 		this._currentBlock = null;
 		// Optional app/plugin hook: (session) => partial context merged into contextAt().
@@ -761,7 +671,7 @@ class Editor {
 		if (topSel !== undefined) {
 			sessionOpts.selection = topSel;
 		}
-		this.localSession = this.session("local", sessionOpts);
+		this.localSession = new EditorSession(this, "local", sessionOpts);
 		this.range = new EditorRangeController(this);
 		this.selection = new EditorSelectionController(this);
 		this.input = new EditorTextInput(this, { ...options, session: this.localSession });
@@ -788,10 +698,6 @@ class Editor {
 						return false;
 				}
 				return true;
-			},
-			selectAll: (_command, { session }) => {
-				const end = this.text.clampIndex(0x7fffffff);
-				return session.cursor.select(0, end);
 			},
 			selectStructuralScope: (command, { session }) =>
 				this.selectStructuralScope(command.args.mode, session),
@@ -880,12 +786,8 @@ class Editor {
 	// Ladder for selectStructuralScope. Consults registered scope providers first.
 	scopeNodes(session = null) {
 		const active = this.activeSession(session);
-		const providers = [
-			...this.pluginHost.all("scope-provider"),
-			...(this.scopeProvider ? [this.scopeProvider] : []),
-		];
-		for (const provider of new Set(providers)) {
-			if (typeof provider?.scopeNodes !== "function") continue;
+		const provider = this.scopeProvider;
+		if (typeof provider?.scopeNodes === "function") {
 			const nodes = provider.scopeNodes(active);
 			if (Array.isArray(nodes)) return nodes;
 		}
@@ -896,12 +798,8 @@ class Editor {
 	// Selects a scope ladder node. Default: text range. Provider may node-select.
 	applyScopeSelection(node, session = null, options = {}) {
 		const active = this.activeSession(session);
-		const providers = [
-			...this.pluginHost.all("scope-provider"),
-			...(this.scopeProvider ? [this.scopeProvider] : []),
-		];
-		for (const provider of new Set(providers)) {
-			if (typeof provider?.applyScopeSelection !== "function") continue;
+		const provider = this.scopeProvider;
+		if (typeof provider?.applyScopeSelection === "function") {
 			const result = provider.applyScopeSelection(node, active, options);
 			if (result !== undefined) return result;
 		}
@@ -915,12 +813,8 @@ class Editor {
 	// Exits the scope ladder to a caret (or provider-specific inner focus).
 	collapseScopeSelection(session = null) {
 		const active = this.activeSession(session);
-		const providers = [
-			...this.pluginHost.all("scope-provider"),
-			...(this.scopeProvider ? [this.scopeProvider] : []),
-		];
-		for (const provider of new Set(providers)) {
-			if (typeof provider?.collapseScopeSelection !== "function") continue;
+		const provider = this.scopeProvider;
+		if (typeof provider?.collapseScopeSelection === "function") {
 			const result = provider.collapseScopeSelection(active);
 			if (result !== undefined) return result;
 		}
@@ -1189,26 +1083,22 @@ class Editor {
 		this.placeholder?.destroy();
 		this.placeholder = null;
 		for (const plugin of this.plugins) plugin.detach?.(this);
-		this.pluginHost.clear();
-		for (const session of this.sessions.values()) session.destroy();
+		this.localSession?.destroy();
 		this.input.unbind();
 		this.text.detach();
 	}
 
 	// Method: session
-	// Creates or retrieves a collaborative or local editing session by `id`.
-	session(id = "local", options = {}) {
+	// Returns the local session, or `id` when it is already an EditorSession.
+	session(id = "local", _options = {}) {
 		if (id instanceof EditorSession) return id;
-		if (!this.sessions.has(id)) {
-			this.sessions.set(id, new EditorSession(this, id, options));
-		}
-		return this.sessions.get(id);
+		return this.localSession;
 	}
 
 	// Method: activeSession
 	// Resolves current active or fallback session.
 	activeSession(session = null) {
-		return this.session(session ?? this.localSession ?? "local");
+		return session instanceof EditorSession ? session : this.localSession;
 	}
 
 	// Method: configureActions
@@ -1261,20 +1151,6 @@ class Editor {
 			plugin.enrichContext?.(ctx, active);
 		}
 		return ctx;
-	}
-
-	// Method: matchInputRule
-	// Returns the first input rule matching event + context, or null.
-	matchInputRule(event, context = null) {
-		if (!event || !this.inputRules?.length) return null;
-		const ctx = context ?? this.contextAt();
-		for (const rule of this.inputRules) {
-			if (!rule || rule.enabled === false) continue;
-			if (!matchInputRuleWhen(rule.when, ctx, event)) continue;
-			if (!matchInputRuleKey(rule, event)) continue;
-			return rule;
-		}
-		return null;
 	}
 
 	// Method: handleInputEvent
@@ -1337,40 +1213,16 @@ class Editor {
 	// Installs a single editor plugin instance, class, or factory.
 	installPlugin(plugin) {
 		if (!plugin) return null;
-		const instance =
-			typeof plugin === "function"
-				? plugin.prototype?.attach
-					? new plugin()
-					: plugin(this)
-				: plugin;
+		const instance = typeof plugin === "function" ? new plugin() : plugin;
 		instance?.attach?.(this);
-		if (instance) {
-			this.plugins.push(instance);
-			this.pluginHost.registerPlugin(instance);
-		}
+		if (instance) this.plugins.push(instance);
 		return instance ?? null;
-	}
-
-	// Method: capability
-	// Resolves the first plugin registered for a capability name.
-	capability(name) {
-		return this.pluginHost.get(name);
-	}
-
-	// Method: capabilities
-	// Returns every plugin registered for a capability name in installation order.
-	capabilities(name) {
-		return this.pluginHost.all(name);
 	}
 
 	// Method: plugin
 	// Resolves an installed plugin by constructor, name, or exact instance.
 	plugin(type) {
 		if (!type) return null;
-		if (typeof type === "string") {
-			const registered = this.capability(type);
-			if (registered) return registered;
-		}
 		for (const plugin of this.plugins) {
 			if (plugin === type) return plugin;
 			if (typeof type === "string") {
@@ -1524,7 +1376,6 @@ class Editor {
 export {
 	Editor,
 	EditorCommand,
-	EditorCursor,
 	EditorHistory,
 	EditorNormalizer,
 	EditorSchema,

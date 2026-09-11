@@ -160,11 +160,6 @@ class Caret {
 		this._applyClasses(cfg)
 		this._applyInlineStyles(cfg)
 	}
-	setFocused(focused) {
-		this.focused = !!focused
-		if (this.mode !== "native" && this.node && this.node.style.visibility === "visible")
-			this._applyState(this.focused ? "focus" : "default")
-	}
 	destroy() {
 		if (this._destroyed) return
 		this._destroyed = true
@@ -371,21 +366,6 @@ class Caret {
 		this._hide()
 		return { visible: false, editable, source: result?.source ?? null }
 	}
-	set(node, offset, focus = true) {
-		if (!node) return
-		const selection = window.getSelection()
-		const range = document.createRange()
-		try {
-			range.setStart(node, offset)
-			range.collapse(true)
-			selection.removeAllRanges()
-			selection.addRange(range)
-			if (focus && node.parentElement) node.parentElement.focus()
-			return range
-		} catch (_e) {
-			console.error(`[hed] Unable to set caret: ${_e}`, { node, offset }, _e)
-		}
-	}
 }
 
 export { Caret };
@@ -413,12 +393,6 @@ export function ensurePlaceholderStylesheet(doc = document) {
 
 class PlaceholderOverlay {
 	constructor(editor, config = {}) {
-		if (config === false) {
-			this.disabled = true;
-			this.editor = editor;
-			this.node = null;
-			return;
-		}
 		if (typeof config === "string") config = { text: config };
 		if (config && (config.nodeType === 1 || config instanceof HTMLElement)) config = { node: config };
 		this.disabled = false;
@@ -807,15 +781,6 @@ class TextSelection {
 		this.mode = (selCfg?.mode) || selCfg?.selectionMode || "virtual";
 		// normalize shorthand
 		const overlayCfg = (typeof selCfg === "object" && selCfg) ? { ...selCfg, mode: this.mode } : { mode: this.mode };
-		// legacy hostId support
-		if (!overlayCfg.node && selCfg?.hostId) {
-			overlayCfg.node = document.getElementById(selCfg.hostId);
-		}
-		if (!overlayCfg.node && !selCfg?.node) {
-			// legacy default id only if not explicitly given a node
-			const legacy = document.getElementById("selection");
-			if (legacy) overlayCfg.node = legacy;
-		}
 		this.overlay = new SelectionOverlay(overlayCfg);
 	}
 
@@ -1274,40 +1239,6 @@ class EditorSelectionController {
 		active.cursor.moveTo(index);
 		this._syncSessionBlock(active);
 		return this.syncToNative(active);
-	}
-
-	// Method: previewCaretAtIndex
-	// Moves only the virtual caret for hover/drag previews without syncing native selection.
-	previewCaretAtIndex(index, session = null, options = {}) {
-		const active = this.editor.activeSession(session);
-		this.editor.text.ensureIndex(index);
-		const move = active.cursor._resolveMoveOffset(index, options);
-		if (!move) return false;
-		active.cursor._clearNodeSelection();
-		active.cursor.selection.clear();
-		active.cursor.selectionKind = "caret";
-		active.cursor.offset = move.clamped;
-		active.cursor.anchor = move.position.focusNode;
-		active.cursor.delta = move.position.point.offset;
-		active.cursor.direction = move.direction;
-		active.cursor.caret.setVirtual(move.position, { editable: options.editable !== false });
-		this._syncSessionBlock(active);
-		return move.clamped;
-	}
-
-	// Method: previewCaretFromPoint
-	// Places only the virtual caret from viewport coordinates using cached text positions.
-	previewCaretFromPoint(root, x, y, session = null, options = {}) {
-		if (!root?.isConnected) return false;
-		const nativePoint = this._nativeCaretPointFromClientPoint(x, y);
-		if (nativePoint && this._pointWithin(root, nativePoint.node)) {
-			this.editor.text.ensurePositions();
-			const index = this.editor.text.indexOfPoint(nativePoint);
-			return index >= 0 ? this.previewCaretAtIndex(index, session, options) : false;
-		}
-		const active = this.editor.activeSession(session);
-		const offset = active.cursor.offsetFromPointIn(root, x, y);
-		return offset !== null ? this.previewCaretAtIndex(offset, active, options) : false;
 	}
 
 	// Method: select

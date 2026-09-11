@@ -189,11 +189,9 @@ class TextAdapter {
 		// Block window state (hierarchical)
 		this._blockIndex = new Map(); // blockEl -> {start, end, length}
 		this._blockOrder = []; // top-to-bottom block elements in current window
-		this._prefixLengths = []; // parallel to _positions, prefix grapheme length up to slot i (for fast textOffsetAtIndex)
 		// Scheduling
 		this._rebuildScheduled = false;
 		this._rebuildRafId = 0;
-		this._idleScheduled = false;
 		// Programmatic edits rebuild explicitly; skip MutationObserver double-work.
 		this._editDepth = 0;
 		// Caches for hot paths
@@ -1009,49 +1007,6 @@ class TextAdapter {
 				: setTimeout(rebuild, 0);
 	}
 
-	// Method: _rebuildWindowStats
-	// Updates lightweight stats after a rebuild.
-	_rebuildWindowStats() {
-		// positionsLength and window info are derived on demand via getters below
-	}
-
-	// Method: _scheduleIdleExpand
-	// Schedules a best-effort expansion of the window using idle time (rIC or timeout).
-	_scheduleIdleExpand() {
-		if (this._idleScheduled) return;
-		this._idleScheduled = true;
-		const doExpand = () => {
-			this._idleScheduled = false;
-			try {
-				const blocks = this._getTopLevelBlocks();
-				const have = new Set(this._blockOrder);
-				let added = 0;
-				const budget = Math.max(1, this.eagerBlockCount | 0);
-				for (const b of blocks) {
-					if (have.has(b)) continue;
-					const start = this._positions.length;
-					const news = this._collectPositionSlotsFor(b, start);
-					this._positions.push(...news);
-					this._blockIndex.set(b, { start, end: this._positions.length, length: news.length });
-					this._blockOrder.push(b);
-					this._rebuildPrefixTextOffsetsForAppended(start);
-					have.add(b);
-					added++;
-					if (added >= budget) break;
-				}
-				if (added > 0) {
-					this._windowGen += 1;
-					this._enforceMemoryCap();
-				}
-			} catch {}
-		};
-		if (typeof requestIdleCallback === "function") {
-			requestIdleCallback(() => doExpand(), { timeout: 1200 });
-		} else {
-			setTimeout(doExpand, 0);
-		}
-	}
-
 	// Debug/stats accessors (instrumentation)
 	get stats() {
 		return {
@@ -1570,34 +1525,6 @@ class TextAdapter {
 		}
 	}
 
-	// Method: positionFromPoint
-	// Finds the text caret position corresponding to client coordinates `x` and `y`.
-	positionFromPoint(x, y) {
-		const pos =
-			document.caretPositionFromPoint?.(x, y) ??
-			document.caretRangeFromPoint?.(x, y);
-		const node = pos?.offsetNode ?? pos?.startContainer;
-		const offset = pos?.offset ?? pos?.startOffset;
-		if (!node || offset == null) return null;
-		const position = this.positionFromNode(node);
-		if (!position) return null;
-		position.offset +=
-			node.nodeType === Node.TEXT_NODE
-				? this._graphemeIndexAtCodeUnit(node.data, offset)
-				: offset;
-		return position;
-	}
-
-	// Method: positionFromNode
-	// Finds the caret position matching the specified DOM `node`.
-	positionFromNode(node) {
-		for (const p of this.iwalk(this.root, { mode: "text" })) {
-			if (p.node === node) {
-				return p;
-			}
-		}
-	}
-
 	// Method: positionAt
 	// Finds the caret position at the specified linear text `offset`.
 	positionAt(offset) {
@@ -1794,13 +1721,6 @@ class TextAdapter {
 	//
 	// ----------------------------------------------------------------------------
 
-	// Method: insertAt
-	// Inserts `text` at the specified linear text `offset`.
-	insertAt(offset, text) {
-		const { node, codeUnitOffset } = this.positionAt(offset);
-		return this.insertAtPoint({ node, offset: codeUnitOffset }, text);
-	}
-
 	// Method: insertAtPoint
 	// Inserts `text` at the given DOM text `point`.
 	insertAtPoint(point, text) {
@@ -1863,15 +1783,6 @@ class TextAdapter {
 			const endOffset = this._codeUnitOffsetAtGrapheme(data, delta + count);
 			node.data = `${data.slice(0, startOffset)}${data.slice(endOffset)}`;
 			remaining -= count;
-		}
-	}
-
-	// Method: replaceAt
-	// Replaces text of given `length` at `offset` with `text`.
-	replaceAt(offset, length, text) {
-		this.deleteAt(offset, length);
-		if (text?.length) {
-			this.insertAt(offset, text);
 		}
 	}
 

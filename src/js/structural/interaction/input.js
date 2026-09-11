@@ -59,31 +59,13 @@ class EditorKeyboardInput {
 
 		let handled = true;
 		switch (event.key) {
-			case "ArrowLeft":
-				input.cursor.left(event.shiftKey);
-				break;
-			case "ArrowRight":
-				input.cursor.right(event.shiftKey);
-				break;
-			case "ArrowUp":
-				input.cursor.up(event.shiftKey);
-				break;
-			case "ArrowDown":
-				input.cursor.down(event.shiftKey);
-				break;
-			case "Backspace":
-				input.cursor.backspace();
-				break;
-			case "Delete":
-				input.cursor.delete();
-				break;
 			case "Enter":
 			case "Return":
 				// Swallow newline insertion for now.
 				break;
 			case " ":
 				{
-					const rt = input.editor.capability?.("richtext") ?? input.editor.richText;
+					const rt = input.editor.richText;
 					const shouldInsert = rt?.shouldInsertText?.(event.key, input.session) !== false;
 					if (shouldInsert) {
 						rt?.removePlaceholderInCurrentBlock?.(input.session);
@@ -104,7 +86,7 @@ class EditorKeyboardInput {
 				break;
 			default:
 				if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-					const rt = input.editor.capability?.("richtext") ?? input.editor.richText;
+					const rt = input.editor.richText;
 					const shouldInsert = rt?.shouldInsertText?.(event.key, input.session) !== false;
 					if (shouldInsert) {
 						rt?.removePlaceholderInCurrentBlock?.(input.session);
@@ -410,7 +392,6 @@ class EditorTextInput {
 	// Method: constructor
 	// Initializes inputs and binds event listeners to the document.
 	constructor(editor, options = {}) {
-		this._onKeyUp = this.onKeyUp.bind(this);
 		this._onKeyDown = this.onKeyDown.bind(this);
 		this._onMouseDown = this.onMouseDown.bind(this);
 		this._onMouseMove = this.onMouseMove.bind(this);
@@ -429,24 +410,7 @@ class EditorTextInput {
 		this._suppressCollapsedNative = false;
 		this._syncingNative = false;
 		this._nativeSyncEpoch = 0;
-		let c = options.caret;
-		if (c === undefined) c = options.cursor?.caret;
-		if (typeof c === "string") c = { mode: c };
-		let s = options.selection;
-		if (s === undefined) s = options.cursor?.selection;
-		// propagate native mode hints to nativeSelection default
-		const wantNative =
-			c === "native" || (c && c.mode === "native") || s === "native" || (s && s.mode === "native");
-		const ns = options.nativeSelection ?? (wantNative ? "sync" : "none");
-		this.session =
-			options.session ??
-			editor.session("local", {
-				actor: "local",
-				nativeSelection: ns,
-				caret: c,
-				selection: s,
-				cursor: options.cursor,
-			});
+		this.session = options.session ?? editor.localSession;
 		this.cursor = this.session.cursor;
 		this.keyboard = new EditorKeyboardInput(this);
 		this.pointer = new EditorPointerInput(this);
@@ -460,7 +424,6 @@ class EditorTextInput {
 		if (this.editor !== editor) {
 			this.unbind();
 			const node = document;
-			node.addEventListener("keyup", this._onKeyUp);
 			node.addEventListener("keydown", this._onKeyDown);
 			node.addEventListener("mousedown", this._onMouseDown);
 			node.addEventListener("mousemove", this._onMouseMove);
@@ -476,7 +439,6 @@ class EditorTextInput {
 	unbind(_editor = this.editor) {
 		const node = document; // editor?.root;
 		if (node) {
-			node.removeEventListener("keyup", this._onKeyUp);
 			node.removeEventListener("keydown", this._onKeyDown);
 			node.removeEventListener("mousedown", this._onMouseDown);
 			node.removeEventListener("mousemove", this._onMouseMove);
@@ -490,13 +452,6 @@ class EditorTextInput {
 		this._mouseOwned = false;
 		this._editorActive = false;
 		return this;
-	}
-
-	// Method: onKeyUp
-	// KeyUp handler (not implemented).
-	onKeyUp(_event) {
-		// Text input is handled during keydown so control keys can be
-		// swallowed before they perform browser-default actions.
 	}
 
 	// Method: _guardNativeSync
