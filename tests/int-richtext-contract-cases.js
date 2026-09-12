@@ -549,6 +549,20 @@ const replaceRich = [
 	},
 	{
 		group: "replace.rich",
+		name: "delete mixed partial and full blocks",
+		from: "<p>a{bc</p><p>de</p><p>fg}h</p>",
+		do: { delete: 1 },
+		to: "<p>a|h</p>",
+	},
+	{
+		group: "replace.rich",
+		name: "delete mixed blocks leaves following list",
+		from: "<p>Super {excellent</p><p>Genial</p><p>asdasd}</p><ul><li>two</li></ul>",
+		do: { delete: 1 },
+		to: "<p>Super |</p><ul><li>two</li></ul>",
+	},
+	{
+		group: "replace.rich",
 		name: "replace across strong boundary",
 		from: "<p>a{b<strong>c}d</strong></p>",
 		do: { insert: "X" },
@@ -663,6 +677,13 @@ const transformInline = [
 		from: "<p>h{ell}o</p>",
 		do: { toggleInline: "strong" },
 		to: "<p>h<strong>{ell}</strong>o</p>",
+	},
+	{
+		group: "transform.inline",
+		name: "strikethrough wraps partial selection",
+		from: "<p>h{ell}o</p>",
+		do: { toggleInline: "s" },
+		to: "<p>h<s>{ell}</s>o</p>",
 	},
 	{
 		group: "transform.inline",
@@ -805,6 +826,13 @@ const transformBlock = [
 		name: "shift+enter inserts line break",
 		from: "<p>ab|cd</p>",
 		do: { shiftEnter: true },
+		to: "<p>ab<br>|cd</p>",
+	},
+	{
+		group: "transform.block",
+		name: "Mod+Enter inserts line break",
+		from: "<p>ab|cd</p>",
+		do: { key: "Mod+Enter" },
 		to: "<p>ab<br>|cd</p>",
 	},
 	{

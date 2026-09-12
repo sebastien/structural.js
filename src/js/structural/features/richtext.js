@@ -1181,7 +1181,7 @@ export { RichTextClipboard };
 // Standard CSS class selectors and states for styling focus and selections.
 function richTextClasses(options = {}) {
 	return {
-		selector: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "li", "blockquote", "strong", "em", "u", "a", "code"],
+		selector: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "li", "blockquote", "strong", "em", "u", "s", "a", "code"],
 		focus: "focus",
 		focusWithin: "focus-within",
 		selected: "selected",
@@ -1227,6 +1227,7 @@ function richTextKeymap(overrides = {}) {
 		// which is often denied — so paste would silently no-op.
 		Enter: { type: "splitBlock" },
 		"Shift+Enter": { type: "insertLineBreak" },
+		"Mod+Enter": { type: "insertLineBreak" },
 		Tab: { type: "indent" },
 		"Shift+Tab": { type: "dedent" },
 		Backspace: { type: "deleteSmart" },
@@ -1250,7 +1251,7 @@ const richTextRules = {
 		default: "p",
 		normalize: { empty: "fill", text: "wrap", invalidChild: "wrap" },
 	},
-	"@inline": ["strong", "em", "u", "code", "a"],
+	"@inline": ["strong", "em", "u", "s", "code", "a"],
 	section: { type: "block", contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
 	nav: { type: "block", contains: ["header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
 	header: { type: "block", contains: ["h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
@@ -1266,6 +1267,7 @@ const richTextRules = {
 	strong: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	em: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	u: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
+	s: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	code: { type: "inline", contains: ["#text"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	a: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 };
@@ -1278,7 +1280,7 @@ function richTextSchema(overrides = {}, options = {}) {
 		atoms.map((tag) => [tag, { type: "atom", render: { track: false } }]),
 	);
 	return new EditorSchema({ ...richTextRules, ...atomRules, ...overrides }, {
-		aliases: { b: "strong", i: "em", ...(options.aliases ?? {}) },
+		aliases: { b: "strong", i: "em", del: "s", strike: "s", ...(options.aliases ?? {}) },
 		atoms,
 		normalize: {
 			unknownElement: "unwrap",
@@ -1326,6 +1328,10 @@ class RichText {
 				new Modification(context.session, { schema: editor.schema }).toggleInline(command.args.tag),
 			toggleBlock: (command, context) =>
 				new Modification(context.session, { schema: editor.schema }).toggleBlock(command.args.tag),
+			toggleLink: (command, context) =>
+				new Modification(context.session, { schema: editor.schema }).toggleLink(command.args.target),
+			clearFormatting: (_command, context) =>
+				new Modification(context.session, { schema: editor.schema }).clearFormatting(),
 			link: (_command, context) => {
 				const target = window.prompt("Link URL", "https://");
 				if (!target) return false;
@@ -1632,8 +1638,32 @@ class RichText {
 	deleteSelectedBlocks(session = null) {
 		const blocks = this.fullySelectedBlocks(session);
 		if (blocks.length === 0) return false;
-		const afterBlock = blocks.map(block => this.firstBlockIn(block.nextElementSibling)).find(Boolean);
-		const beforeBlock = [...blocks].reverse().map(block => this.lastBlockIn(block.previousElementSibling)).find(Boolean);
+		const range = this.editor.range.selected(this.editor.root, session);
+		if (range) {
+			const start = this.editor.text.indexOfPoint({
+				node: range.startContainer,
+				offset: range.startOffset,
+			});
+			const end = this.editor.text.indexOfPoint({
+				node: range.endContainer,
+				offset: range.endOffset,
+			});
+			const first = this.editor.structuralRangeFor?.(blocks[0]);
+			const last = this.editor.structuralRangeFor?.(blocks[blocks.length - 1]);
+			if (start >= 0 && end >= 0 && first && last) {
+				const a = Math.min(start, end);
+				const b = Math.max(start, end);
+				if (a < first.start || b > last.end) return false;
+			}
+		}
+		const selected = new Set(blocks);
+		const afterBlock = blocks
+			.map(block => this.firstBlockIn(block.nextElementSibling))
+			.find(block => block && !selected.has(block));
+		const beforeBlock = [...blocks]
+			.reverse()
+			.map(block => this.lastBlockIn(block.previousElementSibling))
+			.find(block => block && !selected.has(block));
 		for (const block of blocks) this.removeBlock(block);
 		this.editor.setContent(undefined, {
 			session,
@@ -1934,6 +1964,181 @@ class RichText {
 	onPaste(event) { return this.clipboard.onPaste(event); }
 }
 
-export { RichText };
+// Class: RichTextCommandMenu
+// Tracks a slash command entered at the start of an empty paragraph. Rendering is
+// deliberately left to the host application; state changes are emitted from the
+// editor root as `RichTextCommandMenuChange` events.
+class RichTextCommandMenu {
+	static pluginName = "richtext-command-menu";
+
+	constructor(options = {}) {
+		this.options = options;
+		this.commands = options.commands ?? [
+			{ id: "paragraph", label: "Paragraph", tag: "p" },
+			{ id: "heading-1", label: "Heading 1", tag: "h1" },
+			{ id: "heading-2", label: "Heading 2", tag: "h2" },
+			{ id: "heading-3", label: "Heading 3", tag: "h3" },
+			{ id: "checklist", label: "Checklist", tag: "task" },
+			{ id: "bulleted-list", label: "Bulleted list", tag: "ul" },
+			{ id: "numbered-list", label: "Numbered list", tag: "ol" },
+			{ id: "quote", label: "Quote", tag: "blockquote" },
+			{ id: "code-block", label: "Code block", tag: "pre" },
+		];
+		this.editor = null;
+		this.block = null;
+		this.query = "";
+		this.index = 0;
+		this.opened = false;
+		this._rules = [];
+		this._onCursorMove = this.onCursorMove.bind(this);
+	}
+
+	attach(editor) {
+		this.editor = editor;
+		editor.commandMenu = this;
+		editor.root.addEventListener("CursorMove", this._onCursorMove);
+		this._rules = [
+			{
+				when: (_ctx, event) => event.key === "/" && this.canOpen(),
+				key: "/",
+				do: () => this.open(),
+			},
+			{
+				when: () => this.opened,
+				key: "ArrowDown",
+				do: () => this.move(1),
+			},
+			{
+				when: () => this.opened,
+				key: "ArrowUp",
+				do: () => this.move(-1),
+			},
+			{
+				when: () => this.opened,
+				key: ["Enter", "Tab"],
+				do: () => this.pick(),
+			},
+			{
+				when: () => this.opened,
+				key: "Escape",
+				do: () => this.close(),
+			},
+			{
+				when: () => this.opened,
+				key: "Backspace",
+				do: () => this.backspace(),
+			},
+			{
+				when: () => this.opened,
+				match: /^.$/,
+				do: (args) => this.append(args.key),
+			},
+		];
+		editor.addInputRules(this._rules, { prepend: true });
+		return this;
+	}
+
+	detach() {
+		if (!this.editor) return this;
+		this.editor.root.removeEventListener("CursorMove", this._onCursorMove);
+		this.editor.removeInputRules(this._rules);
+		this._rules = [];
+		if (this.editor.commandMenu === this) delete this.editor.commandMenu;
+		this.editor = null;
+		this.close();
+		return this;
+	}
+
+	get items() {
+		const query = this.query.toLowerCase();
+		return this.commands.filter((command) =>
+			!query || `${command.label} ${command.id}`.toLowerCase().split(/[^a-z0-9]+/).some((word) => word.startsWith(query)),
+		);
+	}
+
+	state() {
+		return {
+			open: this.opened,
+			query: this.query,
+			index: this.index,
+			items: this.items,
+			block: this.block,
+		};
+	}
+
+	canOpen() {
+		const richText = this.editor?.richText;
+		const cursor = this.editor?.localSession?.cursor;
+		const block = richText?.currentEditableBlock();
+		return cursor?.selectionKind === "caret" && block?.tagName?.toLowerCase() === "p" && richText.isEmptyBlock(block);
+	}
+
+	open() {
+		if (!this.canOpen()) return false;
+		this.block = this.editor.richText.currentEditableBlock();
+		this.query = "";
+		this.index = 0;
+		this.opened = true;
+		this.changed();
+		return true;
+	}
+
+	close() {
+		if (!this.opened) return true;
+		this.opened = false;
+		this.block = null;
+		this.query = "";
+		this.index = 0;
+		this.changed();
+		return true;
+	}
+
+	move(delta) {
+		const count = this.items.length;
+		if (!count) return true;
+		this.index = (this.index + delta + count) % count;
+		this.changed();
+		return true;
+	}
+
+	append(key) {
+		this.query += key;
+		this.index = 0;
+		this.changed();
+		return true;
+	}
+
+	backspace() {
+		if (!this.query) return this.close();
+		this.query = this.query.slice(0, -1);
+		this.index = 0;
+		this.changed();
+		return true;
+	}
+
+	pick(command = this.items[this.index]) {
+		if (!this.opened || !this.block?.isConnected || !this.editor) return false;
+		if (!command) return true;
+		this.close();
+		if (command.tag === "p") return this.editor.action({ type: "clearFormatting" });
+		return this.editor.action({ type: "toggleBlock", args: { tag: command.tag } });
+	}
+
+	onCursorMove() {
+		if (!this.opened) return;
+		const block = this.editor.richText?.currentEditableBlock();
+		if (block !== this.block) this.close();
+	}
+
+	changed() {
+		this.editor?.root.dispatchEvent(
+			new CustomEvent("RichTextCommandMenuChange", {
+				detail: this.state(),
+			}),
+		);
+	}
+}
+
+export { RichText, RichTextCommandMenu };
 
 // EOF

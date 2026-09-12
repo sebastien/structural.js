@@ -1033,11 +1033,23 @@ class TextSelection {
 		}
 	}
 
+	// Method: toDisplayRange
+	// Returns the literal text range for ordinary virtual text selection; structural
+	// ranges remain normalized for editing operations.
+	toDisplayRange() {
+		if (this.mode !== "virtual-text") return this.toDomRange();
+		return this.toDomRange({
+			start: this.start,
+			end: this.end,
+			collapsed: this.isCollapsed,
+		});
+	}
+
 	// Method: apply
 	// Renders the selection range to the DOM.
 	apply() {
 		const normalized = this.normalizedRange();
-		const range = this.toDomRange(normalized);
+		const range = this.toDisplayRange();
 		const render = this.overlay.apply(range, this.mode);
 		return { ...normalized, ...render };
 	}
@@ -1070,20 +1082,7 @@ class TextSelection {
 		const startBlock = editor?.blockFor?.(domRange.startContainer);
 		const endBlock = editor?.blockFor?.(domRange.endContainer);
 		const crosses = !!(startBlock && endBlock && startBlock !== endBlock);
-		let spanned = 1;
-		if (crosses && editor?.root) {
-			const selector = editor.blockSelector?.() ?? "p, h1, h2, h3, li, pre, blockquote";
-			const blocks = [...editor.root.querySelectorAll(selector)].filter((block) => {
-				try {
-					return domRange.intersectsNode(block);
-				} catch (_) {
-					return false;
-				}
-			});
-			spanned = blocks.filter(
-				(block) => !blocks.some((other) => other !== block && other.contains(block)),
-			).length;
-		}
+		const endNext = crosses ? endBlock.nextElementSibling : null;
 		adapter._beginEdit();
 		try {
 			let point = null;
@@ -1099,11 +1098,16 @@ class TextSelection {
 						? { node: last, offset: last.data.length }
 						: { node: startBlock, offset: startBlock.childNodes.length };
 				}
-				for (let i = 1; i < spanned; i += 1) {
-					const following = startBlock.nextElementSibling;
-					if (!following) break;
-					while (following.firstChild) startBlock.appendChild(following.firstChild);
+				if (endBlock?.isConnected && endBlock !== startBlock) {
+					while (endBlock.firstChild) startBlock.appendChild(endBlock.firstChild);
+					endBlock.remove();
+				}
+				let following = startBlock.nextElementSibling;
+				while (following && following !== endNext) {
+					const next = following.nextElementSibling;
+					if ((following.textContent ?? "").replace(/\u200b/g, "").trim()) break;
 					following.remove();
+					following = next;
 				}
 			} else if (text.length > 0) {
 				const node = document.createTextNode(text);
@@ -1321,24 +1325,30 @@ class EditorSelectionController {
 			const selection = window.getSelection();
 			if (!selection) return false;
 			if (active.cursor.selectionKind === "range") {
-				const range = active.cursor.selection.toDomRange();
+				const range = active.cursor.selection.toDisplayRange();
 				if (!range) return false;
+				const structuralSelection = active.cursor.selection;
+				const reverse = structuralSelection.anchorOffset > structuralSelection.focusOffset;
+				const anchorNode = reverse ? range.endContainer : range.startContainer;
+				const anchorOffset = reverse ? range.endOffset : range.startOffset;
+				const focusNode = reverse ? range.startContainer : range.endContainer;
+				const focusOffset = reverse ? range.startOffset : range.endOffset;
 				if (
 					selection.rangeCount === 1 &&
 					!selection.isCollapsed &&
-					selection.anchorNode === range.startContainer &&
-					selection.anchorOffset === range.startOffset &&
-					selection.focusNode === range.endContainer &&
-					selection.focusOffset === range.endOffset
+					selection.anchorNode === anchorNode &&
+					selection.anchorOffset === anchorOffset &&
+					selection.focusNode === focusNode &&
+					selection.focusOffset === focusOffset
 				) {
 					return true;
 				}
 				if (typeof selection.setBaseAndExtent === "function") {
 					selection.setBaseAndExtent(
-						range.startContainer,
-						range.startOffset,
-						range.endContainer,
-						range.endOffset,
+						anchorNode,
+						anchorOffset,
+						focusNode,
+						focusOffset,
 					);
 				} else {
 					selection.removeAllRanges();

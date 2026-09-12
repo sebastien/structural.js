@@ -13,6 +13,7 @@ test("controllers: subtree range snapshots and native selection sync", async () 
 		restored: true,
 		restoredText: "ct some te",
 		html: "Sele<em>ct some te</em>xt",
+		reverseNativeDirection: true,
 		collapsedSync: true,
 		collapsedOffset: 2,
 		collapsedSnapshot: null,

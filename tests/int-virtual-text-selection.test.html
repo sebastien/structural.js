@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Virtual Text Selection Test</title>
+  <script type="importmap">
+  { "imports": { "structural": "/src/js/structural/index.js" }}
+  </script>
+</head>
+<body>
+  <div id="editor">A<span class="container">BC</span>D</div>
+  <div id="selection"></div>
+  <script type="module">
+    import { Editor } from "structural";
+
+    try {
+      const root = document.getElementById("editor");
+      const selectionHost = document.getElementById("selection");
+      const editor = new Editor(root, {
+        selection: { mode: "virtual-text", node: selectionHost },
+      });
+      const text = root.querySelector(".container").firstChild;
+      const tail = root.lastChild;
+      const start = editor.text.indexOfPoint({ node: text, offset: 1 });
+      const end = editor.text.indexOfPoint({ node: tail, offset: 1 });
+
+      editor.input.cursor.select(start, end);
+      const selection = editor.input.cursor.selection;
+      window.__result = {
+        structuralText: selection.toDomRange()?.toString(),
+        displayText: selection.toDisplayRange()?.toString(),
+        nativeText: window.getSelection()?.toString(),
+        overlays: selectionHost.children.length,
+      };
+    } catch (error) {
+      window.__result = { error: error?.stack ?? String(error) };
+    }
+  </script>
+</body>
+</html>

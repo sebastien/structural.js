@@ -533,15 +533,19 @@ class TextAdapter {
 			}
 			return this._blockIndex.has(block);
 		}
-		const start = this._positions.length;
-		const news = this._collectPositionSlotsFor(block, start);
-		this._positions.push(...news);
-		this._blockIndex.set(block, { start, end: this._positions.length, length: news.length });
-		this._blockOrder.push(block);
-		this._rebuildPrefixTextOffsetsForAppended(start);
+		for (const b of blocks) {
+			if (this._blockIndex.has(b)) continue;
+			const start = this._positions.length;
+			const news = this._collectPositionSlotsFor(b, start);
+			this._positions.push(...news);
+			this._blockIndex.set(b, { start, end: this._positions.length, length: news.length });
+			this._blockOrder.push(b);
+			this._rebuildPrefixTextOffsetsForAppended(start);
+			if (b === block) break;
+		}
 		this._windowGen += 1;
 		this._enforceMemoryCap();
-		return true;
+		return this._blockIndex.has(block);
 	}
 
 	_blockForPoint(point) {
@@ -1406,7 +1410,10 @@ class TextAdapter {
 		// Walk from current in the movement direction, collect the first different line
 		let i = clamped + dir;
 		const targetLine = [];
-		while (i >= 0 && i < this._positions.length) {
+		while (true) {
+			if (i < 0) break;
+			this.ensureIndex(i);
+			if (i >= this._positions.length) break;
 			const pos = this._positions[i];
 			if (!isLineCandidate(pos, i)) {
 				i += dir;

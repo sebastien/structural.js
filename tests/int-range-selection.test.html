@@ -57,6 +57,16 @@
       const restored = editor.range.restore(snapshot, paragraph, editor.localSession);
       const restoredRange = editor.range.selected(paragraph, editor.localSession);
 
+      editor.selection.select(14, 4, editor.localSession);
+      const reverseNative = window.getSelection();
+      const reverseNativeAnchor = editor.text.pointAt(14);
+      const reverseNativeFocus = editor.text.pointAt(4);
+      const reverseNativeDirection =
+        reverseNative?.anchorNode === reverseNativeAnchor?.node &&
+        reverseNative?.anchorOffset === reverseNativeAnchor?.offset &&
+        reverseNative?.focusNode === reverseNativeFocus?.node &&
+        reverseNative?.focusOffset === reverseNativeFocus?.offset;
+
       selectRange(2, 2);
       const collapsedSync = editor.selection.syncFromNative(paragraph, editor.localSession);
       const collapsedRange = editor.range.current(paragraph, editor.localSession);
@@ -88,6 +98,7 @@
         restored,
         restoredText: restoredRange?.toString() ?? null,
         html: paragraph.innerHTML,
+        reverseNativeDirection,
         collapsedSync,
         collapsedOffset: collapsedRange?.startOffset ?? null,
         collapsedSnapshot,

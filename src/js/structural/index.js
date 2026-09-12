@@ -31,6 +31,7 @@ export {
 } from "./runtime/editor.js";
 export {
 	RichText,
+	RichTextCommandMenu,
 	richTextClasses,
 	richTextKeymap,
 	richTextSchema,

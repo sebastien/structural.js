@@ -238,6 +238,46 @@ test("editing: enter then type creates new block with text", async () => {
 	expect(state.html.match(/<p/g)?.length || 0).toBeGreaterThanOrEqual(2);
 });
 
+test("command menu: slash in an empty paragraph filters and applies a block", async () => {
+	const page = await loadHarness(null, "<p></p>");
+	try {
+		await page.evaluate(() => {
+			window.__editor.root.focus();
+			window.__editor.input._editorActive = true;
+			window.__editor.input.cursor.moveTo(0);
+		});
+		await press(page, "/");
+		await press(page, "h");
+		const open = await page.evaluate(() => window.__editor.commandMenu.state());
+		expect(open.open).toBe(true);
+		expect(open.query).toBe("h");
+		expect(open.items[0].id).toBe("heading-1");
+		await press(page, "Enter");
+		const state = await getState(page);
+		expect(state.html).toMatch(/^<h1(?:\s[^>]*)?>/);
+	} finally {
+		await closePage(page);
+	}
+});
+
+test("command menu: Backspace dismisses an empty slash query", async () => {
+	const page = await loadHarness(null, "<p></p>");
+	try {
+		await page.evaluate(() => {
+			window.__editor.root.focus();
+			window.__editor.input._editorActive = true;
+			window.__editor.input.cursor.moveTo(0);
+		});
+		await press(page, "/");
+		await press(page, "Backspace");
+		const state = await page.evaluate(() => window.__editor.commandMenu.state());
+		expect(state.open).toBe(false);
+		expect((await getState(page)).text).toBe("");
+	} finally {
+		await closePage(page);
+	}
+});
+
 test("selection: Shift+ArrowUp reaches the first of three blocks", async () => {
 	const page = await loadHarness(null, "<p>One</p><p>Two</p><p>Three</p>");
 	await clickAtText(page, "Three", "Three".length);
@@ -683,6 +723,37 @@ test("selection: type after direct range delete replaces the deleted span", asyn
 			throw new Error(`range replace wrong: ${JSON.stringify(state)}`);
 		}
 		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: deleting all selected blocks leaves an editable caret", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>one</p><p>two</p>"));
+		const start = await page.evaluate(() => window.__test.indexOfText("one", 0));
+		const end = await page.evaluate(() => window.__test.indexOfText("two", 3));
+		await directSelect(page, start, end);
+		await press(page, "Delete");
+		const state = await getState(page);
+		if (state.text !== "" || state.anchorTag !== "p") {
+			throw new Error(`all-block delete did not retain an editable block: ${JSON.stringify(state)}`);
+		}
+		expect(state.caretVisible).toBe(true);
+	});
+});
+
+test("selection: deleting adjacent blocks keeps the caret at the deletion boundary", async () => {
+	await runWithFresh(async (page) => {
+		await page.evaluate(() => window.__test.setHTML("<p>before</p><p>one</p><p>two</p><p>after</p>"));
+		const start = await page.evaluate(() => window.__test.indexOfText("one", 0));
+		const end = await page.evaluate(() => window.__test.indexOfText("two", 3));
+		await directSelect(page, start, end);
+		await press(page, "Delete");
+		const state = await getState(page);
+		if (state.text !== "beforeafter" || state.anchorTag !== "p") {
+			throw new Error(`adjacent-block delete moved the caret: ${JSON.stringify(state)}`);
+		}
+		await type(page, "X");
+		expect((await getState(page)).text).toBe("beforeXafter");
 	});
 });
 
@@ -1397,5 +1468,31 @@ test("editing: replacing a late selection keeps the next insert in that paragrap
 
 		expect(state.target).toBe("Alice felt XX tired");
 		expect(state.previous).toBe("White Rabbit");
+	});
+});
+
+test("movement: up/down across late blocks with a small window", async () => {
+	await runWithFresh(async (page) => {
+		const result = await page.evaluate(() => {
+			window.__editor.text.eagerBlockCount = 2;
+			window.__test.setHTML("<p>aaa</p><p>bbb</p><p>ccc</p><p>ddd</p><p></p><p>eee</p>");
+			const cur = window.__editor.input.cursor;
+			const blockText = () => {
+				const point = window.__editor.text.pointAt(cur.offset);
+				const el =
+					point?.node?.nodeType === Node.TEXT_NODE ? point.node.parentElement : point?.node;
+				return (el?.closest("p, li")?.textContent ?? "").replace(/\u200b/g, "");
+			};
+			cur.moveTo(window.__test.indexOfText("ddd", 0));
+			const onD = blockText();
+			cur.down();
+			const afterDown = blockText();
+			cur.up();
+			const backD = blockText();
+			cur.up();
+			const onC = blockText();
+			return { onD, afterDown, backD, onC };
+		});
+		expect(result).toEqual({ onD: "ddd", afterDown: "", backD: "ddd", onC: "ccc" });
 	});
 });

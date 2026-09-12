@@ -129,6 +129,7 @@ import { Editor, Modification, richTextSchema } from "./src/js/structural/index.
 - `Caret(caretNode)`: Virtual caret placement helper.
 - `TextSelection(cursor, options?)`: Selection coordinator mapping ranges to structural boundaries.
 - `SelectionOverlay(overlayNode)`: Helper drawing virtual highlighting rectangles.
+- `selection: { mode: "virtual-text", node }`: Virtual selection that highlights literal text endpoints without expanding structural containers.
 - `Modification(editor, options?)`: High-level utility for rich-text styling and block transforms.
 - `Shorthands(options?)`: Configurable `#tag`, `@mention`, `+task`, date, and topic recognition with popup events.
 

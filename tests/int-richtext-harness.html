@@ -51,7 +51,7 @@
 
   <script type="module">
     import { Editor } from "structural";
-    import { richTextSchema, richTextKeymap, richTextClasses, RichText } from "structural";
+    import { richTextSchema, richTextKeymap, richTextClasses, RichText, RichTextCommandMenu } from "structural";
     import { Modification } from "structural";
 
     const root = document.getElementById("editor");
@@ -62,7 +62,7 @@
       schema: richTextSchema(),
       keymap: richTextKeymap(),
       classes: richTextClasses(),
-      plugins: [RichText],
+      plugins: [RichText, RichTextCommandMenu],
       // Windowed lazy positions for perf; tests use small docs so eager is generous
       text: { eagerBlockCount: 32, maxCacheBytes: 100 * 1024 * 1024 },
       caret: {
