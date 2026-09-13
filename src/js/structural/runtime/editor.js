@@ -2,6 +2,7 @@ import { Cursor } from "../interaction/cursor.js";
 import { EditorTextInput } from "../interaction/input.js";
 import { EditorSelectionController, PlaceholderOverlay } from "../interaction/selection.js";
 import { EditorHistory } from "../foundation/history.js";
+import { captureAnchor, resolveAnchor } from "../foundation/anchor.js";
 import { TextAdapter, asElement, blockSelectorFromSchema, firstTextNode as domFirstTextNode, lastTextNode as domLastTextNode } from "../foundation/document.js";
 import { EditorCommand, EditorNormalizer, EditorSchema, EditorTransaction } from "../foundation/schema.js";
 // Project: structural.js
@@ -1318,14 +1319,20 @@ class Editor {
 
 	// Method: handleKeyEvent
 	// Evaluates keyboard combinations against configured hotkeys.
-	// Matched bindings always swallow the event so browser chords (Ctrl+B bookmark,
-	// Ctrl+I info panel, …) cannot fire even when the action is a no-op.
+	// Matched bindings swallow the event so browser chords (Ctrl+B bookmark,
+	// Ctrl+I info panel, …) cannot fire — except bindings marked `native`
+	// (copy/cut), which never swallow: the document clipboard event carries
+	// the synchronous payload even when the async Clipboard API is denied.
 	handleKeyEvent(event, session = null) {
 		const spec = this.keymap?.[this.keyCombo(event)] ?? this.keymap?.[event.key];
 		if (!spec) return false;
 		this.action(spec, { event, session });
-		event.preventDefault();
-		event.stopPropagation();
+		if (!spec.native) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
+		// A matched binding always claims the key: the caller still needs to
+		// resync native selection even when the action itself was a no-op.
 		return true;
 	}
 
@@ -1342,7 +1349,10 @@ class Editor {
 		);
 	}
 
-	/* Replaces or commits editor content and resolves after paint. */
+	/* Replaces or commits editor content and resolves after paint. Accepts a
+	Node (moved into the root), an HTML string, or nothing for a refresh.
+	External replaces re-anchor the cursor onto matching content unless an
+	explicit `options.selection` is given or `options.anchor === false`. */
 	setContent(content = undefined, options = {}) {
 		const active = this.activeSession(options.session);
 		const range = active.cursor.selection.normalizedRange();
@@ -1350,13 +1360,31 @@ class Editor {
 			start: range.start ?? active.cursor.offset ?? 0,
 			end: range.end ?? active.cursor.offset ?? 0,
 		};
+		if (typeof content === "string") {
+			const template = this.root.ownerDocument.createElement("template");
+			template.innerHTML = content;
+			content = template.content;
+		}
+		const replacing = content !== undefined && content !== this.root;
+		// Capture before the old DOM (and its slot table) is gone.
+		const anchor =
+			replacing && options.anchor !== false && !options.selection
+				? captureAnchor(this, active)
+				: null;
 		// External content replace resets history; internal refresh keeps it.
-		if (content !== undefined && content !== this.root && options.history !== true) {
+		if (replacing && options.history !== true) {
 			this.history.clear();
 		}
-		if (content !== undefined && content !== this.root) this.root.replaceChildren(content);
+		if (replacing) this.root.replaceChildren(content);
 		this.lastNormalization = this.normalize(this.root, { session: active });
 		this.text.refresh();
+		if (anchor) {
+			const resolved = resolveAnchor(this, anchor);
+			if (resolved) {
+				selection.start = resolved.start;
+				selection.end = resolved.end;
+			}
+		}
 		if (selection.node?.isConnected) {
 			if (selection.position) this.selection._setEdgeCaret(selection.node, selection.position, active);
 			else this.selection.setCaret(selection.node, selection.offset ?? 0, active);

@@ -64,7 +64,8 @@
       });
       const afterForeign = root.textContent;
 
-      // Key chords for copy/cut are bound; paste is document-event only.
+      // Key chords for copy/cut pass through (native bindings): the document
+      // copy/cut event carries the synchronous payload. Paste is document-event only.
       function prevented(init) {
         const event = new KeyboardEvent("keydown", {
           bubbles: true,
@@ -73,6 +74,27 @@
         });
         document.dispatchEvent(event);
         return event.defaultPrevented;
+      }
+      function clipboardPayload() {
+        return {
+          bubbles: true,
+          cancelable: true,
+          target: root,
+          defaultPrevented: false,
+          preventDefault() {
+            this.defaultPrevented = true;
+          },
+          stopPropagation() {},
+          clipboardData: {
+            data: {},
+            setData(type, value) {
+              this.data[type] = value;
+            },
+            getData(type) {
+              return this.data[type] ?? "";
+            },
+          },
+        };
       }
       root.focus();
       editor.input._editorActive = true;
@@ -100,6 +122,16 @@
       const eventPasteOk = editor.richText.pasteText(null, null, pastePayload);
       const afterEventPaste = root.textContent;
 
+      // Document copy/cut events carry the synchronous payload (the path
+      // real Ctrl+C/X takes now that keydown chords pass through).
+      editor.input.cursor.select(0, 5);
+      const copyPayload = clipboardPayload();
+      editor.richText.onCopy(copyPayload);
+      editor.input.cursor.select(0, 5);
+      const cutPayload = clipboardPayload();
+      editor.richText.onCut(cutPayload);
+      const afterEventCut = root.textContent;
+
       window.__result = {
         copied,
         afterCopy,
@@ -118,6 +150,11 @@
         pasteEventPrevented: pastePayload.defaultPrevented,
         modC: prevented({ key: "c", ctrlKey: true }),
         modX: prevented({ key: "x", ctrlKey: true }),
+        eventCopyPrevented: copyPayload.defaultPrevented,
+        eventCopyText: copyPayload.clipboardData.data["text/plain"],
+        eventCutPrevented: cutPayload.defaultPrevented,
+        eventCutText: cutPayload.clipboardData.data["text/plain"],
+        afterEventCut,
       };
     </script>
   </body>

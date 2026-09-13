@@ -233,7 +233,7 @@ class Modification {
 			if (!block.isConnected) continue;
 			const tag = block.tagName.toLowerCase();
 			if (tag === "blockquote") this.unwrapElement(block);
-			else if (["h1", "h2", "h3", "pre"].includes(tag)) this.changeTagName(block, "p");
+			else if (["h1", "h2", "h3", "h4", "h5", "h6", "pre"].includes(tag)) this.changeTagName(block, "p");
 		}
 		this.text.refresh();
 		this._restoreCursor();
@@ -864,7 +864,6 @@ export { Modification };
 class RichTextClipboard {
 	constructor(plugin) {
 		this.plugin = plugin;
-		this._clipboardChordAt = 0;
 	}
 
 	// True when clipboard events should target this editor (not a foreign input).
@@ -966,7 +965,7 @@ class RichTextClipboard {
 		const template = document.createElement("template");
 		template.innerHTML = html;
 		const allowed = new Set([
-			"a", "blockquote", "br", "code", "em", "h1", "h2", "h3", "li", "ol", "p", "pre", "s", "strong", "ul",
+			"a", "blockquote", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ol", "p", "pre", "s", "strong", "ul",
 		]);
 		const clean = (node) => {
 			for (const child of [...node.childNodes]) {
@@ -1068,22 +1067,8 @@ class RichTextClipboard {
 		return true;
 	}
 
-	// Notes a keymap-driven clipboard op so the matching document event is ignored.
-	_markClipboardChord() {
-		this._clipboardChordAt = performance.now();
-	}
-
-	// True when a document cut/copy/paste event is the echo of a just-handled keymap chord.
-	_fromClipboardChord() {
-		return performance.now() - this._clipboardChordAt < 100;
-	}
-
 	// Copies the current selection to the clipboard.
 	copySelection(event = null) {
-		if (event && this._fromClipboardChord()) {
-			event.preventDefault();
-			return true;
-		}
 		if (event && !this.ownsClipboard(event)) return false;
 		if (!event && !this.ownsClipboard()) return false;
 		const text = this.selectedPlainText();
@@ -1099,10 +1084,6 @@ class RichTextClipboard {
 	// Copies the selection then deletes it (one history unit).
 	cutSelection(event = null) {
 		const plugin = this.plugin;
-		if (event && this._fromClipboardChord()) {
-			event.preventDefault();
-			return true;
-		}
 		if (event && !this.ownsClipboard(event)) return false;
 		if (!event && !this.ownsClipboard()) return false;
 		const session = plugin.editor.activeSession();
@@ -1181,7 +1162,7 @@ export { RichTextClipboard };
 // Standard CSS class selectors and states for styling focus and selections.
 function richTextClasses(options = {}) {
 	return {
-		selector: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "li", "blockquote", "strong", "em", "u", "s", "a", "code"],
+		selector: ["section", "nav", "header", "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "li", "blockquote", "strong", "em", "u", "s", "a", "code"],
 		focus: "focus",
 		focusWithin: "focus-within",
 		selected: "selected",
@@ -1220,8 +1201,8 @@ function richTextKeymap(overrides = {}) {
 			type: "moveCursor",
 			args: { direction: "right", word: true, extend: true },
 		},
-		"Mod+C": { type: "copy" },
-		"Mod+X": { type: "cut" },
+		"Mod+C": { type: "copy", native: true },
+		"Mod+X": { type: "cut", native: true },
 		// Paste is handled only via the document `paste` event (has clipboardData).
 		// Binding Mod+V on keydown would preventDefault and force async clipboard.readText,
 		// which is often denied — so paste would silently no-op.
@@ -1247,15 +1228,15 @@ export { richTextKeymap };
 const richTextRules = {
 	":root": {
 		type: "root",
-		contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"],
+		contains: ["section", "nav", "header", "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "ul", "ol", "blockquote"],
 		default: "p",
 		normalize: { empty: "fill", text: "wrap", invalidChild: "wrap" },
 	},
 	"@inline": ["strong", "em", "u", "s", "code", "a"],
-	section: { type: "block", contains: ["section", "nav", "header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
-	nav: { type: "block", contains: ["header", "h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
-	header: { type: "block", contains: ["h1", "h2", "h3", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
-	blockquote: { type: "block", contains: ["p", "h1", "h2", "h3", "pre", "ul", "ol"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	section: { type: "block", contains: ["section", "nav", "header", "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	nav: { type: "block", contains: ["header", "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	header: { type: "block", contains: ["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "ul", "ol", "blockquote"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
+	blockquote: { type: "block", contains: ["p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "ul", "ol"], default: "p", normalize: { empty: "prune", text: "wrap", invalidChild: "lift" } },
 	ul: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ul"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
 	ol: { type: "block", contains: ["li", "ul", "ol"], absorb: ["ol"], default: "li", normalize: { empty: "prune", invalidChild: "wrap" } },
 	li: { type: "block", contains: ["#text", "@inline", "p", "ul", "ol"], wrapIn: "ul", default: "p", normalize: { empty: "placeholder", text: "preserve", invalidChild: "lift" }, enter: { next: "same" } },
@@ -1264,6 +1245,9 @@ const richTextRules = {
 	h1: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
 	h2: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
 	h3: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
+	h4: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
+	h5: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
+	h6: { type: "block", contains: ["#text", "@inline"], normalize: { empty: "placeholder", invalidChild: "unwrap" }, enter: { next: "parentDefault" } },
 	strong: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	em: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
 	u: { type: "inline", contains: ["#text", "@inline"], normalize: { empty: "unwrap", invalidChild: "lift" } },
@@ -1313,6 +1297,7 @@ class RichText {
 		this._onCopy = this.onCopy.bind(this);
 		this._onCut = this.onCut.bind(this);
 		this._onPaste = this.onPaste.bind(this);
+		this._markdownRule = null;
 	}
 
 	attach(editor) {
@@ -1372,17 +1357,22 @@ class RichText {
 				}, context.session),
 			indent: (_command, context) => this.indentCurrentListItem(context.session),
 			dedent: (_command, context) => this.dedentCurrentListItem(context.session),
-			// Copy/cut key chords. Paste is document `paste` only (see richTextKeymap).
-			// Mark chord here so the matching document copy/cut event is not double-applied.
-			copy: () => {
-				this._markClipboardChord();
-				return this.copySelection();
-			},
-			cut: () => {
-				this._markClipboardChord();
-				return this.cutSelection();
-			},
+			// Copy/cut key chords. Best-effort async write only: the binding is
+			// `native`, so the document copy/cut event is not swallowed and
+			// carries the synchronous payload (works without clipboard
+			// permissions). No chord marking here, or the event would be
+			// suppressed as an echo.
+			copy: () => this.copySelection(),
+			cut: () => this.cutSelection(),
 		});
+		// Only space and backtick can complete a markdown prefix. Matching every
+		// single-character key would run applyMarkdownShortcut (an O(block)
+		// textBetween) on every keystroke.
+		this._markdownRule = {
+			match: /^[ `]$/u,
+			do: (args) => this.applyMarkdownShortcut(args.key, args.session),
+		};
+		editor.addInputRules([this._markdownRule], { prepend: true });
 		return this;
 	}
 
@@ -1391,9 +1381,46 @@ class RichText {
 		document.removeEventListener("copy", this._onCopy);
 		document.removeEventListener("cut", this._onCut);
 		document.removeEventListener("paste", this._onPaste);
+		this.editor.removeInputRules([this._markdownRule]);
+		this._markdownRule = null;
 		if (this.editor.richText === this) delete this.editor.richText;
 		this.editor = null;
 		return this;
+	}
+
+	// Method: applyMarkdownShortcut
+	// Replaces a markdown block prefix with its corresponding rich-text block.
+	applyMarkdownShortcut(key, session = null) {
+		const active = this.editor.activeSession(session);
+		const cursor = active.cursor;
+		if (cursor.selectionKind !== "caret") return false;
+		const block = this.currentEditableBlock(active);
+		if (!block || block === this.editor.root || block.tagName.toLowerCase() !== "p") return false;
+		const first = this.firstTextNode(block);
+		const blockStart = first ? this.editor.text.indexOfPoint({ node: first, offset: 0 }) : -1;
+		if (blockStart < 0 || cursor.offset < blockStart) return false;
+		const before = this.editor.text.textBetween(blockStart, cursor.offset);
+		let match = null;
+		if (key === "`" && before === "``") match = { prefix: "``", tag: "pre" };
+		else if (key === " " && before === "*") match = { prefix: "*", tag: "ul" };
+		else if (key === " " && before === "-") match = { prefix: "-", tag: "ul" };
+		else if (key === " " && before === "[ ]") match = { prefix: "[ ]", tag: "task" };
+		else if (key === " " && /^\[[xX]\]$/.test(before)) match = { prefix: before, tag: "task", checked: true };
+		else if (key === " ") {
+			const heading = /^(#{1,6})$/.exec(before);
+			if (heading) match = { prefix: before, tag: `h${heading[1].length}` };
+		}
+		if (!match) return false;
+		this.editor.history.run("markdown", () => {
+			for (let i = 0; i < match.prefix.length; i++) cursor.backspace();
+			const changed = this.editor.action({ type: "toggleBlock", args: { tag: match.tag } }, { session: active, history: false });
+			if (changed && match.checked) {
+				const item = this.currentEditableBlock(active);
+				const list = item?.closest("ul[data-task]");
+				if (list && item.tagName.toLowerCase() === "li") item.setAttribute("data-checked", "true");
+			}
+		}, active);
+		return true;
 	}
 
 	// blockSelector / blockFor / firstTextNode / lastTextNode: Editor core defaults.
@@ -1946,10 +1973,6 @@ class RichText {
 	sanitizeClipboardHTML(html) { return this.clipboard.sanitizeClipboardHTML(html); }
 
 	pasteHTML(html, session = null, event = null) { return this.clipboard.pasteHTML(html, session, event); }
-
-	_markClipboardChord() { return this.clipboard._markClipboardChord(); }
-
-	_fromClipboardChord() { return this.clipboard._fromClipboardChord(); }
 
 	copySelection(event = null) { return this.clipboard.copySelection(event); }
 

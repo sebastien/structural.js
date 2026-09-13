@@ -13,6 +13,7 @@ export {
 	wordRangeAtIndex,
 	DEFAULT_BLOCK_SELECTOR,
 } from "./foundation/document.js";
+export { captureAnchor, resolveAnchor } from "./foundation/anchor.js";
 export { Caret, Cursor } from "./interaction/cursor.js";
 export { EditorSelectionController, PlaceholderOverlay, SelectionOverlay, TextSelection } from "./interaction/selection.js";
 export { Modification } from "./features/richtext.js";

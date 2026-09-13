@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <script type="importmap">
+    {
+      "imports": {
+        "structural": "/src/js/structural/index.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import { Editor } from "structural";
+      import { richTextKeymap, richTextSchema, RichText } from "structural";
+
+      function fresh() {
+        const host = document.createElement("div");
+        host.innerHTML = "<p>alpha</p><p>bravo</p><p>charlie</p>";
+        document.body.appendChild(host);
+        const editor = new Editor(host, {
+          schema: richTextSchema(),
+          keymap: richTextKeymap(),
+          plugins: [RichText],
+        });
+        return { host, editor, cursor: editor.input.cursor };
+      }
+
+      function done({ host, editor }) {
+        editor.destroy?.();
+        host.remove();
+      }
+
+      // Slot offset for `textOff` graphemes into block `which`.
+      function slotOf(editor, host, which, textOff) {
+        const block = host.querySelectorAll("p")[which];
+        return editor.text.indexOfPoint({ node: block.firstChild, offset: textOff });
+      }
+
+      // Caret described in block space (layout-agnostic).
+      function caretInfo(editor) {
+        const off = editor.input.cursor.offset;
+        const point = editor.text.pointAt(off);
+        const block = point?.node ? editor.blockFor(point.node) : null;
+        return {
+          blockText: block?.textContent ?? null,
+          inner: block ? editor.text.offsetWithin(block, point) : null,
+        };
+      }
+
+      async function main() {
+        const result = {};
+
+        // 1. Text inserted inside the caret block before the caret: the
+        // caret stays glued to its content (inner offset preserved).
+        {
+          const { host, editor, cursor } = fresh();
+          cursor.moveTo(slotOf(editor, host, 1, 2));
+          await editor.setContent("<p>alpha</p><p>ZZ bravo</p><p>charlie</p>");
+          result.insertBefore = caretInfo(editor);
+          done({ host, editor });
+        }
+
+        // 2. The caret block is deleted with no surviving context: the
+        // legacy numeric offset is preserved.
+        {
+          const { host, editor, cursor } = fresh();
+          const placed = slotOf(editor, host, 1, 2);
+          cursor.moveTo(placed);
+          await editor.setContent("<p>alpha</p><p>charlie</p>");
+          const point = editor.text.pointAt(cursor.offset);
+          const block = point?.node ? editor.blockFor(point.node) : null;
+          result.deletedBlock = {
+            sameOffset: cursor.offset === placed,
+            blockText: block?.textContent ?? null,
+          };
+          done({ host, editor });
+        }
+
+        // 3. Range endpoints are tracked across an insertion before them.
+        {
+          const { host, editor, cursor } = fresh();
+          const start = slotOf(editor, host, 1, 0);
+          cursor.select(start, slotOf(editor, host, 1, 5));
+          await editor.setContent("<p>alpha</p><p>ZZ bravo</p><p>charlie</p>");
+          const range = cursor.selection.normalizedRange();
+          const at = (slot) => {
+            const point = editor.text.pointAt(slot);
+            const block = editor.blockFor(point.node);
+            return {
+              blockText: block.textContent,
+              inner: editor.text.offsetWithin(block, point),
+            };
+          };
+          result.rangeStart = at(range.start);
+          result.rangeEnd = at(range.end);
+          done({ host, editor });
+        }
+
+        // 4. Opt-out restores the legacy numeric behavior.
+        {
+          const { host, editor, cursor } = fresh();
+          const placed = slotOf(editor, host, 1, 2);
+          cursor.moveTo(placed);
+          await editor.setContent("<p>alpha</p><p>ZZ bravo</p><p>charlie</p>", {
+            anchor: false,
+          });
+          result.optOutSameOffset = cursor.offset === placed;
+          done({ host, editor });
+        }
+
+        // 5. An explicit selection wins over anchoring.
+        {
+          const { host, editor, cursor } = fresh();
+          cursor.moveTo(slotOf(editor, host, 1, 2));
+          await editor.setContent("<p>alpha</p><p>ZZ bravo</p><p>charlie</p>", {
+            selection: { start: 0, end: 0 },
+          });
+          result.explicitSelection = cursor.offset;
+          done({ host, editor });
+        }
+
+        // 6. External replaces clear history by default, preserve it on request.
+        {
+          const { host, editor, cursor } = fresh();
+          cursor.moveTo(host.textContent.length);
+          cursor.insertText("!");
+          result.historyBefore = editor.history.canUndo;
+          await editor.setContent("<p>alpha</p><p>bravo</p><p>charlie!</p>", {
+            history: true,
+          });
+          result.historyPreserved = editor.history.canUndo;
+          await editor.setContent("<p>alpha</p><p>bravo</p><p>charlie?</p>");
+          result.historyCleared = editor.history.canUndo;
+          done({ host, editor });
+        }
+
+        window.__result = result;
+      }
+
+      main().catch((error) => {
+        window.__result = { error: String(error?.stack || error) };
+      });
+    </script>
+  </body>
+</html>

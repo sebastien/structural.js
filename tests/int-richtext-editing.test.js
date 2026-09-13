@@ -855,6 +855,63 @@ test("selection: select paragraph, toggle blockquote", async () => {
 	});
 });
 
+test("markdown prefixes transform blocks and keep the caret", async () => {
+	await runWithFresh(async (page) => {
+		const result = await page.evaluate(async () => {
+			const editor = window.__editor;
+			const test = window.__test;
+			const cases = [
+				["* ", "ul"],
+				["- ", "ul"],
+				["[ ] ", "task"],
+				["[X] ", "checked"],
+				["# ", "h1"],
+				["## ", "h2"],
+				["### ", "h3"],
+				["#### ", "h4"],
+				["##### ", "h5"],
+				["###### ", "h6"],
+				["```", "pre"],
+			];
+			const output = [];
+			for (const [input, expected] of cases) {
+				test.setHTML("<p></p>");
+				for (const key of input) editor.input.onKeyDown(new KeyboardEvent("keydown", { key, cancelable: true }));
+				await new Promise((resolve) => requestAnimationFrame(resolve));
+				const block = editor.root.firstElementChild;
+				output.push({
+					expected,
+					tag: block?.tagName.toLowerCase(),
+					text: block?.textContent ?? "",
+					checked: block?.querySelector("li")?.dataset.checked ?? null,
+					offset: test.getState().offset,
+				});
+			}
+			test.setHTML("<p></p>");
+			for (const key of "# ") editor.input.onKeyDown(new KeyboardEvent("keydown", { key, cancelable: true }));
+			const undone = editor.undo();
+			return { output, undone, undoHTML: editor.root.innerHTML.replace(/ class="[^"]*"/u, "") };
+		});
+		expect(result).toEqual({
+			output: [
+				{ expected: "ul", tag: "ul", text: "", checked: null, offset: 1 },
+				{ expected: "ul", tag: "ul", text: "", checked: null, offset: 1 },
+				{ expected: "task", tag: "ul", text: "", checked: "false", offset: 1 },
+				{ expected: "checked", tag: "ul", text: "", checked: "true", offset: 1 },
+				{ expected: "h1", tag: "h1", text: "", checked: null, offset: 1 },
+				{ expected: "h2", tag: "h2", text: "", checked: null, offset: 1 },
+				{ expected: "h3", tag: "h3", text: "", checked: null, offset: 1 },
+				{ expected: "h4", tag: "h4", text: "", checked: null, offset: 1 },
+				{ expected: "h5", tag: "h5", text: "", checked: null, offset: 1 },
+				{ expected: "h6", tag: "h6", text: "", checked: null, offset: 1 },
+				{ expected: "pre", tag: "pre", text: "", checked: null, offset: 0 },
+			],
+			undone: true,
+			undoHTML: "<p>#</p>",
+		});
+	});
+});
+
 test("selection: toggle list across blocks and join adjacent lists", async () => {
 	await runWithFresh(async (page) => {
 		await page.evaluate(() => window.__test.setHTML("<ul><li>one</li></ul><p>two</p><ul><li>three</li></ul>"));

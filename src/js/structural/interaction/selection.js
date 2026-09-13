@@ -86,11 +86,65 @@ class Caret {
 		this._managedClasses = new Set()
 		this._managedStyleProps = new Set()
 		this._destroyed = false
+		this._lastShown = null
 		this._measureCanvas = document.createElement("canvas")
 		this._onSelectionChange = this._onSelectionChange.bind(this)
 		if (this.mode !== "native") document.addEventListener("selectionchange", this._onSelectionChange)
+		this._onFocusIn = this._onFocusIn.bind(this)
+		this._onFocusOut = this._onFocusOut.bind(this)
+		if (this.mode !== "native") {
+			const doc = this.node?.ownerDocument ?? globalThis.document
+			doc?.addEventListener?.("focusin", this._onFocusIn)
+			doc?.addEventListener?.("focusout", this._onFocusOut)
+		}
 		if (this.mode === "virtual" && this.node && this._blink) ensureCaretStylesheet(this.node.ownerDocument)
 		this._applyInitialVisual()
+	}
+
+	// Resolves the host element caret visibility is scoped to: the explicit
+	// container when set, otherwise the overlay node's parent.
+	_editorHost() {
+		return this._container ?? this.node?.parentNode ?? null
+	}
+
+	// Hides the virtual caret while DOM focus lives outside the editor so a
+	// second caret (e.g. a title or search input) never shows next to it.
+	// Focus returning to the editor restores the caret at its last position.
+	_onFocusIn(event) {
+		if (this.mode === "native" || this._destroyed) return
+		const host = this._editorHost()
+		const target = event?.target
+		if (host && target && (host === target || host.contains(target))) {
+			this.focused = true
+			if (this._lastShown) this._showAt(this._lastShown.x, this._lastShown.y, this._lastShown.height)
+		} else {
+			this.focused = false
+			this._hide()
+		}
+	}
+
+	_onFocusOut(event) {
+		if (this.mode === "native" || this._destroyed) return
+		const host = this._editorHost()
+		const next = event?.relatedTarget
+		if (!host || !next || !(host === next || host.contains(next))) {
+			this.focused = false
+			this._hide()
+		}
+	}
+
+	// Method: setFocused
+	// Explicitly marks the caret as focused or not. Losing focus hides the
+	// virtual caret; regaining it restores the caret at its last position.
+	setFocused(focused) {
+		this.focused = !!focused
+		if (this.mode === "native" || !this.node || this._destroyed) return this
+		if (this.focused) {
+			if (this._lastShown) this._showAt(this._lastShown.x, this._lastShown.y, this._lastShown.height)
+		} else {
+			this._hide()
+		}
+		return this
 	}
 
 	setContainer(container) {
@@ -164,6 +218,9 @@ class Caret {
 		if (this._destroyed) return
 		this._destroyed = true
 		document.removeEventListener("selectionchange", this._onSelectionChange)
+		const doc = this.node?.ownerDocument ?? globalThis.document
+		doc?.removeEventListener?.("focusin", this._onFocusIn)
+		doc?.removeEventListener?.("focusout", this._onFocusOut)
 		if (this.node) {
 			for (const c of this._managedClasses) this.node.classList.remove(c)
 			for (const p of this._managedStyleProps)
@@ -176,7 +233,7 @@ class Caret {
 	_onSelectionChange() {
 		const sel = window.getSelection()
 		if (!sel || sel.isCollapsed) return
-		const host = this._container ?? this.node?.parentNode
+		const host = this._editorHost()
 		const anchor = sel.anchorNode
 		if (host && anchor && (host === anchor || host.contains(anchor))) return
 		this._hide()
@@ -262,8 +319,15 @@ class Caret {
 	_hide() {
 		if (this.node) this.node.style.visibility = "hidden"
 	}
+	// Hides the caret and forgets its position: focus returning later must
+	// not resurrect a caret the editor itself already discarded.
+	_clearPosition() {
+		this._lastShown = null
+		this._hide()
+	}
 	_showAt(x, y, height) {
 		if (this.node) {
+			this._lastShown = { x, y, height }
 			this.node.style.left = `${snapCssPx(x)}px`
 			this.node.style.top = `${snapCssPx(y)}px`
 			if (height !== undefined) this.node.style.height = `${Math.max(1, snapCssPx(height))}px`
@@ -335,7 +399,7 @@ class Caret {
 		const editable = options.editable === true
 		const point = position?.point
 		if (!point) {
-			this._hide()
+			this._clearPosition()
 			return { visible: false, editable: false, source: null }
 		}
 		const trailingSpaceWidth = this._collapsedTrailingSpaceWidth(position)
@@ -363,7 +427,7 @@ class Caret {
 			else this._hide()
 			return { ...boundary, x, visible: editable, editable }
 		}
-		this._hide()
+		this._clearPosition()
 		return { visible: false, editable, source: result?.source ?? null }
 	}
 }

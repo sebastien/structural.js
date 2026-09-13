@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Caret Focus Test</title>
+  <style>
+    body { margin: 0; font: 14px/1.25 system-ui, sans-serif; }
+    .shell { position: relative; padding: 14px; margin: 16px; width: 420px; border: 1px solid #ccc; }
+    #editor p { margin: 0; }
+  </style>
+  <script type="importmap">
+  { "imports": {
+    "structural": "/src/js/structural/index.js"
+  }}
+  </script>
+</head>
+<body>
+  <div class="shell" id="shell">
+    <div id="editor" tabindex="-1"><p>hello world</p></div>
+    <div id="caret"></div>
+  </div>
+  <input id="foreign" type="text" value="" />
+  <script type="module">
+    import { Editor } from "structural";
+
+    const visibilityOf = (el) => getComputedStyle(el).visibility;
+
+    try {
+      const shell = document.getElementById("shell");
+      const root = document.getElementById("editor");
+      const caretNode = document.getElementById("caret");
+      const foreign = document.getElementById("foreign");
+
+      const editor = new Editor(root, {
+        caret: { mode: "virtual", node: caretNode, focused: true },
+      });
+      const caret = editor.input.cursor.caret;
+      editor.input.cursor.moveTo(2);
+      const visibleBefore = visibilityOf(caretNode);
+
+      // Moving DOM focus outside the editor hides the virtual caret so it
+      // never doubles a foreign input's native caret.
+      foreign.focus();
+      const visibleForeign = visibilityOf(caretNode);
+
+      // Focus back inside the editor restores the caret at its last position.
+      root.focus();
+      const visibleReturn = visibilityOf(caretNode);
+
+      // Explicit API: setFocused(false) hides, setFocused(true) restores.
+      caret.setFocused(false);
+      const visibleApiOff = visibilityOf(caretNode);
+      caret.setFocused(true);
+      const visibleApiOn = visibilityOf(caretNode);
+
+      window.__result = {
+        hasSetFocused: typeof caret.setFocused === "function",
+        visibleBefore,
+        visibleForeign,
+        visibleReturn,
+        visibleApiOff,
+        visibleApiOn,
+      };
+    } catch (error) {
+      window.__result = { error: String(error?.message || error) };
+    }
+  </script>
+</body>
+</html>
